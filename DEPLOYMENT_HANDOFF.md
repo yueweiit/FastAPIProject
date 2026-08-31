@@ -291,6 +291,8 @@ SHOW TABLES;
 
 项目可以使用 GitHub 私有仓库作为代码源。仓库中只提交应用代码、Docker 配置和说明文档，不提交服务器 `.env`、`uploads/`、`output/`、`.deploy/`、虚拟环境或任何压缩发布包。首次准备仓库时执行：
 
+本项目当前私有仓库：`https://github.com/2932543558/FastAPIProject`，默认分支为 `main`。
+
 ```bash
 git init
 git add .
