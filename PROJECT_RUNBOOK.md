@@ -160,7 +160,7 @@ python migrations/20260820_add_batch_dingtalk_fields.py
 
 ## GitHub 代码发布与服务器更新
 
-当前 GitHub 私有仓库为 `https://github.com/2932543558/FastAPIProject`，默认分支为 `main`。推荐使用 GitHub 私有仓库保存代码，服务器通过 `git pull --ff-only` 获取新版本。`.gitignore` 排除了 `.env`、`uploads/`、`output/`、`.deploy/`、虚拟环境和压缩包；仓库只保存代码、Docker 配置和文档。首次发布可参考 `DEPLOYMENT_HANDOFF.md` 第 13 节。服务器更新前必须先确认 `.env` 和 `uploads/` 仍在项目目录，并备份数据库；更新后执行 `docker compose build web` 和 `docker compose up -d --force-recreate web`，再检查容器、日志和 `curl` 页面状态。私有仓库建议给服务器配置只读 Deploy Key，禁止将个人 Token、数据库密码或服务器密码提交到 GitHub。
+当前 GitHub 公有仓库为 `https://github.com/yueweiit/FastAPIProject`，默认分支为 `main`。服务器通过 `git pull --ff-only` 获取新版本，公有仓库无需在服务器配置 GitHub Token 或 Deploy Key。`.gitignore` 排除了 `.env`、`uploads/`、`output/`、`.deploy/`、虚拟环境和压缩包；仓库只保存代码、Docker 配置和文档。首次发布可参考 `DEPLOYMENT_HANDOFF.md` 第 13 节。服务器更新前必须先确认 `.env` 和 `uploads/` 仍在项目目录，并备份数据库；更新后执行 `docker compose build web` 和 `docker compose up -d --force-recreate web`，再检查容器、日志和 `curl` 页面状态。禁止将个人 Token、数据库密码或服务器密码提交到 GitHub。
 
 ## 审阅来源
 

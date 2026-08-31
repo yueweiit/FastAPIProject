@@ -289,22 +289,22 @@ SHOW TABLES;
 
 ## 13. GitHub 部署方式
 
-项目可以使用 GitHub 私有仓库作为代码源。仓库中只提交应用代码、Docker 配置和说明文档，不提交服务器 `.env`、`uploads/`、`output/`、`.deploy/`、虚拟环境或任何压缩发布包。首次准备仓库时执行：
+项目当前使用 GitHub 公有仓库作为代码源。仓库中只提交应用代码、Docker 配置和说明文档，不提交服务器 `.env`、`uploads/`、`output/`、`.deploy/`、虚拟环境或任何压缩发布包。首次准备仓库时执行：
 
-本项目当前私有仓库：`https://github.com/2932543558/FastAPIProject`，默认分支为 `main`。
+本项目当前公有仓库：`https://github.com/yueweiit/FastAPIProject`，默认分支为 `main`。
 
 ```bash
 git init
 git add .
 git commit -m "Initial FastAPI inventory application"
-gh repo create <GITHUB_OWNER>/FastAPIProject --private --source=. --remote=origin --push
+gh repo create yueweiit/FastAPIProject --public --source=. --remote=origin --push
 ```
 
-服务器首次部署（服务器需已安装 Git，并具有该私有仓库的只读 SSH 或 HTTPS 访问权限）：
+服务器首次部署（服务器需已安装 Git；公有仓库无需 GitHub 登录或 Deploy Key）：
 
 ```bash
 cd /www/wwwroot
-git clone git@github.com:<GITHUB_OWNER>/FastAPIProject.git FastAPIProject
+git clone https://github.com/yueweiit/FastAPIProject.git FastAPIProject
 cd FastAPIProject
 # 将服务器原有 .env 和 uploads/ 放回此目录，不从仓库复制
 docker compose build web
@@ -323,5 +323,5 @@ docker compose logs --tail=200 web
 curl -fsS http://127.0.0.1:8006/ && echo 'page loaded'
 ```
 
-如果仓库默认分支不是 `main`，将命令中的 `main` 换成实际分支。不要在服务器执行 `git clean -fdx`，它可能删除 `.env`、上传图片或其他运行数据；不要用 `docker compose down` 作为普通更新步骤。私有仓库访问建议使用服务器专用 Deploy Key（只读），不要把个人 GitHub Token 写入项目文件或命令历史。
+如果仓库默认分支不是 `main`，将命令中的 `main` 换成实际分支。不要在服务器执行 `git clean -fdx`，它可能删除 `.env`、上传图片或其他运行数据；不要用 `docker compose down` 作为普通更新步骤。公有仓库不需要在服务器保存 GitHub Token；数据库密码、服务器密码和 JWT 密钥仍不得提交到仓库。
 ```
