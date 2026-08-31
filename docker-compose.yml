@@ -1,0 +1,16 @@
+services:
+  web:
+    build: .
+    container_name: fifo-inventory
+    restart: unless-stopped
+    ports:
+      - "8006:8000"
+    volumes:
+      - ./uploads:/app/uploads
+    environment:
+      MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST is required}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
+      MYSQL_USER: ${MYSQL_USER:?MYSQL_USER is required}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-inventory_fifo}
+

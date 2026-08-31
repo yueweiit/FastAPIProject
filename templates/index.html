@@ -1,0 +1,1290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIFO库存成本核算系统</title>
+    <style>
+        :root { --ink:#152238; --muted:#687386; --line:#e1e6ee; --surface:#fff; --canvas:#f2f4f7; --accent:#e94560; --accent-dark:#c9334d; --teal:#0f766e; }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--canvas); color:var(--ink); line-height:1.45; }
+        .header { background:#101b33 !important; color:#fff; padding:18px 36px !important; border-bottom:1px solid #263453; }
+        .header h1 { font-size:21px; letter-spacing:.2px; }
+        .nav { display:flex; gap:0; background:#fff; padding:0 36px; flex-wrap:wrap; border-bottom:1px solid var(--line); box-shadow:0 2px 8px rgba(21,34,56,.06); }
+        .nav button { background:none; border:0; color:#647084; padding:15px 20px 13px; cursor:pointer; font-size:14px; border-bottom:3px solid transparent; transition:.18s ease; }
+        .nav button.active { color:var(--ink); border-bottom-color:var(--accent); font-weight:700; }
+        .nav button:hover { color:var(--accent); background:#fff7f8; }
+        .container { max-width:1680px; margin:24px auto; padding:0 28px; }
+        .card { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:24px; margin-bottom:20px; box-shadow:0 4px 14px rgba(21,34,56,.05); }
+        .card h3 { margin-bottom:16px; font-size:18px; color:var(--ink); letter-spacing:.1px; }
+        .form-row { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+        #sec-batches > .card:first-child .form-row, #edit-batch-modal .form-row { display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)); gap:14px; }
+        .form-group { display:flex; flex-direction:column; gap:6px; min-width:0; }
+        .form-group label { font-size:12px; color:var(--muted); font-weight:600; }
+        .form-group input, .form-group select { padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; width:170px; background:#fff; color:var(--ink); transition:.18s ease; }
+        #sec-batches > .card:first-child .form-group input, #sec-batches > .card:first-child .form-group select, #edit-batch-modal .form-group input, #edit-batch-modal .form-group select { width:100%; }
+        .form-group input:focus, .form-group select:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
+        button.btn { padding:10px 18px; border:1px solid transparent; border-radius:7px; cursor:pointer; font-size:13px; font-weight:700; transition:.18s ease; }
+        .btn-primary { background:var(--accent); color:#fff; box-shadow:0 3px 8px rgba(233,69,96,.2); }
+        .btn-primary:hover { background:var(--accent-dark); transform:translateY(-1px); }
+        .btn-secondary { background:#f4f6f8; color:#3b4657; border-color:#e0e5ec !important; }
+        .btn-secondary:hover { background:#e9edf2; border-color:#ccd4df !important; }
+        .table-scroll { overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:#fff; }
+        #batches-table-scroll { max-height:min(62vh, 720px); overflow:auto; scrollbar-gutter:stable; }
+        #batches-table-scroll thead th { position:sticky; top:0; z-index:2; }
+        #batches-table-scroll::-webkit-scrollbar { width:12px; height:12px; }
+        #batches-table-scroll::-webkit-scrollbar-thumb { background:#9da8b7; border:3px solid transparent; border-radius:999px; background-clip:padding-box; }
+        #batches-table-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
+        table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
+        .table-scroll table { width:max-content; min-width:100%; }
+        th { background:#f7f9fb; text-align:left; padding:13px 14px; font-weight:700; color:#526074; border-bottom:1px solid #dce2ea; white-space:nowrap; }
+        td { padding:13px 14px; border-bottom:1px solid #edf0f4; white-space:nowrap; vertical-align:middle; color:#263449; }
+        tbody tr:last-child td { border-bottom:0; }
+        tbody tr:hover { background:#fff8f9; }
+        .batch-table { min-width:2320px !important; }
+        .batch-table th, .batch-table td { min-width:108px; }
+        .batch-table th:first-child, .batch-table td:first-child { min-width:124px; }
+        .batch-table th:nth-child(2), .batch-table td:nth-child(2) { min-width:148px; }
+        .batch-table th:nth-child(4), .batch-table td:nth-child(4) { min-width:150px; }
+        .batch-table th:nth-child(11), .batch-table td:nth-child(11), .batch-table th:nth-child(13), .batch-table td:nth-child(13), .batch-table th:nth-child(15), .batch-table td:nth-child(15) { min-width:158px; }
+        .batch-table th:first-child, .batch-table td:first-child { min-width:54px; width:54px; text-align:center; }
+        .batch-table input[type="checkbox"] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+        .product-table th:first-child, .product-table td:first-child { min-width:54px; width:54px; text-align:center; }
+        .product-table input[type="checkbox"] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
+        .tag { display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+        .tag-green { background:#e4f7ef; color:#087f5b; }
+        .tag-red { background:#fde8ec; color:#c9334d; }
+        .tag-blue { background:#e6f0ff; color:#245db3; }
+        .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
+        .stat-card { background:#f7f9fb; border:1px solid var(--line); border-radius:9px; padding:16px; text-align:center; }
+        .stat-card .value { font-size:22px; font-weight:800; color:var(--ink); }
+        .stat-card .label { font-size:12px; color:#7b8797; margin-top:4px; }
+        .msg { padding:11px 16px; border-radius:8px; margin-bottom:14px; font-size:13px; border:1px solid transparent; }
+        .msg-ok { background:#e9f8f0; color:#087f5b; border-color:#c8eddc; }
+        .msg-err { background:#fff0f2; color:#c9334d; border-color:#f8cbd3; }
+        .section { display:none; }
+        .section.active { display:block; }
+        .empty { text-align:center; padding:44px !important; color:#9aa5b4; }
+        .cost-detail { font-size:12px; color:var(--teal); margin-top:6px; font-weight:600; }
+        .flex-between { display:flex; justify-content:space-between; align-items:center; gap:18px; }
+        .import-zone { border:2px dashed #d4dce7; border-radius:8px; padding:20px; text-align:center; margin-top:12px; cursor:pointer; }
+        .import-zone:hover { border-color:var(--accent); background:#fff8f9; }
+        .login-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,18,36,.72); display:flex; align-items:center; justify-content:center; z-index:999; }
+        .login-box { background:#fff; border-radius:14px; padding:40px; width:380px; box-shadow:0 16px 42px rgba(0,0,0,.22); }
+        .login-box h2 { margin-bottom:24px; text-align:center; color:var(--ink); }
+        .login-box input { width:100%; padding:12px; margin-bottom:12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; }
+        .login-box input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
+        .login-box .btn { width:100%; padding:12px; }
+        .user-bar { display:flex; align-items:center; gap:8px; color:#d9e1ef; font-size:13px; }
+        .user-bar .tag { font-size:12px; }
+        .hidden { display:none !important; }
+        .batch-list-actions { display:flex; align-items:center; gap:8px; position:relative; }
+        .field-picker { position:relative; }
+        .field-picker-menu { display:none; position:absolute; right:0; top:calc(100% + 8px); width:288px; max-height:320px; overflow:auto; z-index:20; padding:14px; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 12px 28px rgba(21,34,56,.16); }
+        .field-picker-menu.open { display:block; }
+        .field-picker-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+        .field-picker-grid label { display:flex; align-items:center; gap:6px; font-size:12px; color:#465365; cursor:pointer; white-space:nowrap; }
+        .field-picker-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #edf0f4; }
+        .batch-column-hidden { display:none !important; }
+        .pagination { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; padding-top:16px; color:var(--muted); font-size:13px; }
+        .pagination-summary { margin-right:auto; }
+        .pagination button { min-width:34px; padding:6px 9px; border:1px solid var(--line); border-radius:6px; background:#fff; color:#465365; cursor:pointer; font-size:13px; }
+        .pagination button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+        .pagination button.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+        .pagination button:disabled { color:#a8b1bd; background:#f6f7f9; cursor:not-allowed; }
+        .pagination select { padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:#465365; background:#fff; }
+        .gallery-download { position:absolute; right:10px; bottom:10px; padding:6px 10px !important; font-size:12px !important; text-decoration:none; background:rgba(255,255,255,.94); }
+        #gallery-grid > div { border:1px solid var(--line); box-shadow:0 4px 14px rgba(21,34,56,.06) !important; }
+        .edit-modal { position:fixed !important; z-index:1000; top:50%; left:50%; transform:translate(-50%,-50%); width:min(1060px, calc(100vw - 72px)); max-height:calc(100vh - 72px); overflow:auto; margin:0 !important; border:1px solid #f3a0ad !important; box-shadow:0 22px 60px rgba(15,27,51,.28), 0 0 0 100vmax rgba(15,27,51,.36); }
+        .edit-modal .form-row { margin-bottom:10px; }
+        .edit-modal .flex-between { position:sticky; top:0; z-index:1; padding-bottom:12px; margin-bottom:4px; background:var(--surface); }
+    </style>
+</head>
+<body>
+
+<!-- 登录弹窗 -->
+<div id="login-overlay" class="login-overlay">
+    <div class="login-box" id="login-box" style="display:none">
+        <h2>LatinGo 库存系统</h2>
+        <input id="l-user" placeholder="用户名" autocomplete="username">
+        <input id="l-pass" type="password" placeholder="密码" autocomplete="current-password">
+        <button class="btn btn-primary" onclick="doLogin()">登 录</button>
+        <div id="l-err" style="color:#e94560;font-size:13px;text-align:center;margin-top:12px;display:none"></div>
+        <p style="text-align:center;margin-top:16px;font-size:13px;color:#888">
+            没有账号？<a href="#" onclick="showRegister()" style="color:#e94560">注册</a>
+        </p>
+    </div>
+    <div class="login-box" id="register-box" style="display:none">
+        <h2>注册账号</h2>
+        <input id="r-user" placeholder="用户名" autocomplete="username">
+        <input id="r-pass" type="password" placeholder="密码（至少3位）">
+        <div style="margin-bottom:12px;display:flex;align-items:center;gap:4px">
+            <span style="font-size:13px;color:#666;margin-right:12px">选择身份：</span>
+            <label style="font-size:13px;margin-right:14px;cursor:pointer;display:flex;align-items:center;gap:2px"><input type="radio" name="r-role" value="operator" checked style="vertical-align:middle"> 运营</label>
+            <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:2px"><input type="radio" name="r-role" value="viewer" style="vertical-align:middle"> 查看者</label>
+        </div>
+        <button class="btn btn-primary" onclick="doRegister()">注 册</button>
+        <div id="r-err" style="color:#e94560;font-size:13px;text-align:center;margin-top:12px;display:none"></div>
+        <p style="text-align:center;margin-top:16px;font-size:13px;color:#888">
+            已有账号？<a href="#" onclick="showLogin()" style="color:#e94560">登录</a>
+        </p>
+    </div>
+</div>
+
+<div class="header" style="display:flex;justify-content:space-between;align-items:center">
+    <h1>📦 FIFO库存成本核算系统</h1>
+    <div class="user-bar" id="user-bar">
+        <span id="curr-user">未登录</span>
+        <span id="curr-role" class="tag tag-blue"></span>
+        <button class="btn btn-secondary" style="font-size:12px;padding:4px 12px" onclick="doLogout()">退出</button>
+    </div>
+</div>
+
+<div class="nav">
+    <button class="active" onclick="switchTab('products')">商品管理</button>
+    <button onclick="switchTab('batches')">入库管理</button>
+    <button onclick="switchTab('gallery')">产品图册</button>
+    <button onclick="switchTab('sales')">销售记录</button>
+    <button onclick="switchTab('reports')">报表</button>
+    <button onclick="switchTab('users')" id="nav-users" style="display:none">用户管理</button>
+</div>
+
+<div class="container">
+    <div id="msg"></div>
+
+    <!-- ========== 商品管理 ========== -->
+    <div id="sec-products" class="section active">
+        <div class="card">
+            <h3>添加商品</h3>
+            <form id="product-form" enctype="multipart/form-data" onsubmit="return false">
+                <div class="form-row">
+                    <div class="form-group"><label>SKU</label><input id="p-sku" placeholder="BT-001"></div>
+                    <div class="form-group"><label>产品名称</label><input id="p-name" placeholder="蓝牙耳机"></div>
+                    <div class="form-group"><label>产品图片</label><input id="p-image" type="file" accept="image/*"></div>
+                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createProduct()">添加</button></div>
+                </div>
+                <div id="p-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
+            </form>
+        </div>
+        <!-- 编辑弹窗 -->
+        <div id="edit-product-modal" class="card edit-modal" style="display:none;border:2px solid #1a73e8">
+            <div class="flex-between"><h3>✏️ 编辑商品</h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditProduct()">× 取消</button></div>
+            <form enctype="multipart/form-data" onsubmit="return false">
+                <div class="form-row">
+                    <div class="form-group"><label>SKU</label><input id="ep-sku" placeholder="BT-001"></div>
+                    <div class="form-group"><label>产品名称</label><input id="ep-name" placeholder="蓝牙耳机"></div>
+                    <div class="form-group"><label>产品图片(留空不换)</label><input id="ep-image" type="file" accept="image/*"></div>
+                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditProduct()">保存</button></div>
+                </div>
+                <div id="ep-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
+            </form>
+        </div>
+        <div class="card">
+            <div class="flex-between">
+                <h3>商品列表</h3>
+                <div class="batch-list-actions">
+                    <button class="btn btn-primary" onclick="exportAllProducts()" title="导出当前商品列表">批量导出</button>
+                    <button class="btn btn-secondary" onclick="loadProducts()">刷新</button>
+                </div>
+            </div>
+            <div class="table-scroll">
+            <table class="product-table">
+                <thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)" aria-label="全选商品"></th><th>图片</th><th>SKU</th><th>名称</th><th>库存</th><th>库存价值</th><th>最近入库</th><th>操作</th></tr></thead>
+                <tbody id="products-tbody"></tbody>
+            </table>
+            </div>
+            <div class="pagination" id="products-pagination"></div>
+        </div>
+    </div>
+
+    <!-- ========== 入库管理 ========== -->
+    <div id="sec-batches" class="section">
+        <div class="card">
+            <h3>新批次入库</h3>
+            <div class="form-row">
+                <div class="form-group"><label>产品SKU</label>
+                    <select id="b-pid" style="padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:200px"><option value="">选择产品</option></select>
+                </div>
+                <div class="form-group"><label>钉钉单号</label><input id="b-dingtalk-order" type="text" maxlength="64" placeholder="可选填写"></div>
+                <div class="form-group"><label>数量</label><input id="b-qty" type="number" placeholder="100"></div>
+                <div class="form-group"><label>总金额</label><input id="b-total-amount" type="number" min="0" step="0.01" placeholder="请输入总金额"></div>
+                <div class="form-group"><label>采购单价（自动计算）</label><input id="b-price" type="number" step="0.01" placeholder="总金额 ÷ 数量" readonly></div>
+                <div class="form-group"><label>头程运费</label><input id="b-ship" type="number" step="0.01" placeholder="1500.00"></div>
+                <div class="form-group"><label>头程运费钉钉单号（可选）</label><input id="b-ship-no" type="text" maxlength="64" placeholder="可选填写"></div>
+                <div class="form-group"><label>尾程派送费</label><input id="b-lastmile" type="number" step="0.01" placeholder="300.00"></div>
+                <div class="form-group"><label>尾程派送费钉钉单号（可选）</label><input id="b-lastmile-no" type="text" maxlength="64" placeholder="可选填写"></div>
+                <div class="form-group"><label>其他成本</label><input id="b-other" type="number" step="0.01" placeholder="贴标/国内物流等"></div>
+                <div class="form-group"><label>其他成本钉钉单号（可选）</label><input id="b-other-no" type="text" maxlength="64" placeholder="可选填写"></div>
+                <div class="form-group"><label>头程发货时间</label><input id="b-shipdate" type="datetime-local"></div>
+                <div class="form-group"><label>入库时间</label><input id="b-date" type="datetime-local"></div>
+                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createBatch()">入库</button></div>
+            </div>
+            <div id="b-calc" class="cost-detail"></div>
+        </div>
+        <!-- 编辑弹窗 -->
+        <div id="edit-batch-modal" class="card edit-modal" style="display:none;border:2px solid #e94560">
+            <div class="flex-between"><h3>✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditBatch()">× 取消</button></div>
+            <div class="form-row">
+                <div class="form-group"><label>数量</label><input id="eb-qty" type="number"></div>
+                <div class="form-group"><label>总金额</label><input id="eb-total-amount" type="number" min="0" step="0.01"></div>
+                <div class="form-group"><label>采购单价（自动计算）</label><input id="eb-price" type="number" step="0.01" readonly></div>
+                <div class="form-group"><label>钉钉单号</label><input id="eb-dingtalk-order" type="text" maxlength="64"></div>
+                <div class="form-group"><label>头程运费</label><input id="eb-ship" type="number" step="0.01"></div>
+                <div class="form-group"><label>头程运费钉钉单号（可选）</label><input id="eb-ship-no" type="text" maxlength="64"></div>
+                <div class="form-group"><label>尾程派送费</label><input id="eb-lastmile" type="number" step="0.01"></div>
+                <div class="form-group"><label>尾程派送费钉钉单号（可选）</label><input id="eb-lastmile-no" type="text" maxlength="64"></div>
+                <div class="form-group"><label>其他成本</label><input id="eb-other" type="number" step="0.01"></div>
+                <div class="form-group"><label>其他成本钉钉单号（可选）</label><input id="eb-other-no" type="text" maxlength="64"></div>
+                <div class="form-group"><label>头程发货时间</label><input id="eb-shipdate" type="datetime-local"></div>
+                <div class="form-group"><label>入库时间</label><input id="eb-date" type="datetime-local"></div>
+                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditBatch()">保存</button></div>
+            </div>
+            <div id="eb-calc" class="cost-detail"></div>
+        </div>
+        <div class="card">
+            <div class="flex-between">
+                <h3>批次列表</h3>
+                <div class="batch-list-actions">
+                    <div class="field-picker" id="batch-field-picker">
+                        <button type="button" class="btn btn-secondary" onclick="toggleBatchFieldPicker()" aria-expanded="false" id="batch-field-picker-button">显示字段</button>
+                        <div class="field-picker-menu" id="batch-field-picker-menu">
+                            <div class="field-picker-grid">
+                                <label><input type="checkbox" data-batch-field-toggle="image" checked onchange="toggleBatchColumn('image', this.checked)">图片</label>
+                                <label><input type="checkbox" data-batch-field-toggle="product_name" checked onchange="toggleBatchColumn('product_name', this.checked)">产品名称</label>
+                                <label><input type="checkbox" data-batch-field-toggle="sku" checked onchange="toggleBatchColumn('sku', this.checked)">SKU</label>
+                                <label><input type="checkbox" data-batch-field-toggle="batch_no" checked onchange="toggleBatchColumn('batch_no', this.checked)">批次号</label>
+                                <label><input type="checkbox" data-batch-field-toggle="dingtalk_order_no" checked onchange="toggleBatchColumn('dingtalk_order_no', this.checked)">钉钉单号</label>
+                                <label><input type="checkbox" data-batch-field-toggle="quantity" checked onchange="toggleBatchColumn('quantity', this.checked)">入库数</label>
+                                <label><input type="checkbox" data-batch-field-toggle="remaining_quantity" checked onchange="toggleBatchColumn('remaining_quantity', this.checked)">剩余</label>
+                                <label><input type="checkbox" data-batch-field-toggle="purchase_price" checked onchange="toggleBatchColumn('purchase_price', this.checked)">采购价</label>
+                                <label><input type="checkbox" data-batch-field-toggle="total_amount" checked onchange="toggleBatchColumn('total_amount', this.checked)">总金额</label>
+                                <label><input type="checkbox" data-batch-field-toggle="shipping_cost" checked onchange="toggleBatchColumn('shipping_cost', this.checked)">头程运费</label>
+                                <label><input type="checkbox" data-batch-field-toggle="shipping_cost_no" checked onchange="toggleBatchColumn('shipping_cost_no', this.checked)">头程运费钉钉单号</label>
+                                <label><input type="checkbox" data-batch-field-toggle="last_mile_cost" checked onchange="toggleBatchColumn('last_mile_cost', this.checked)">尾程派送</label>
+                                <label><input type="checkbox" data-batch-field-toggle="last_mile_cost_no" checked onchange="toggleBatchColumn('last_mile_cost_no', this.checked)">尾程派送费钉钉单号</label>
+                                <label><input type="checkbox" data-batch-field-toggle="other_cost" checked onchange="toggleBatchColumn('other_cost', this.checked)">其他成本</label>
+                                <label><input type="checkbox" data-batch-field-toggle="other_cost_no" checked onchange="toggleBatchColumn('other_cost_no', this.checked)">其他成本钉钉单号</label>
+                                <label><input type="checkbox" data-batch-field-toggle="unit_cost" checked onchange="toggleBatchColumn('unit_cost', this.checked)">单件成本</label>
+                                <label><input type="checkbox" data-batch-field-toggle="shipping_date" checked onchange="toggleBatchColumn('shipping_date', this.checked)">头程发货</label>
+                                <label><input type="checkbox" data-batch-field-toggle="arrived_at" checked onchange="toggleBatchColumn('arrived_at', this.checked)">入库时间</label>
+                                <label><input type="checkbox" data-batch-field-toggle="actions" checked onchange="toggleBatchColumn('actions', this.checked)">操作</label>
+                            </div>
+                            <div class="field-picker-actions">
+                                <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:12px" onclick="selectAllBatchColumns()">全选</button>
+                                <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:12px" onclick="resetBatchColumns()">恢复默认</button>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="exportAllBatches()" title="导出当前批次列表">批量导出</button>
+                    <button class="btn btn-secondary" onclick="loadBatches()">刷新</button>
+                </div>
+            </div>
+            <div class="table-scroll" id="batches-table-scroll">
+            <table class="batch-table">
+                <thead><tr><th><input type="checkbox" id="batch-select-all" onchange="toggleAllBatchSelection(this.checked)" aria-label="全选批次"></th><th data-batch-column="image">图片</th><th data-batch-column="product_name">产品名称</th><th data-batch-column="sku">SKU</th><th data-batch-column="batch_no">批次号</th><th data-batch-column="dingtalk_order_no">钉钉单号</th><th data-batch-column="quantity">入库数</th><th data-batch-column="remaining_quantity">剩余</th><th data-batch-column="purchase_price">采购价</th><th data-batch-column="total_amount">总金额</th><th data-batch-column="shipping_cost">头程运费</th><th data-batch-column="shipping_cost_no">头程运费钉钉单号</th><th data-batch-column="last_mile_cost">尾程派送</th><th data-batch-column="last_mile_cost_no">尾程派送费钉钉单号</th><th data-batch-column="other_cost">其他成本</th><th data-batch-column="other_cost_no">其他成本钉钉单号</th><th data-batch-column="unit_cost">单件成本</th><th data-batch-column="shipping_date">头程发货</th><th data-batch-column="arrived_at">入库时间</th><th data-batch-column="actions">操作</th></tr></thead>
+                <tbody id="batches-tbody"></tbody>
+            </table>
+            </div>
+            <div class="pagination" id="batches-pagination"></div>
+        </div>
+    </div>
+
+    <!-- ========== 产品图册 ========== -->
+    <div id="sec-gallery" class="section">
+        <div class="card">
+            <div class="flex-between"><h3>产品图册</h3><button class="btn btn-secondary" onclick="loadGallery()">刷新</button></div>
+            <div id="gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:12px"></div>
+        </div>
+    </div>
+
+    <!-- ========== 销售记录 ========== -->
+    <div id="sec-sales" class="section">
+        <div class="card">
+            <h3>按天记录销售（FIFO自动扣库存）</h3>
+            <div class="form-row">
+                <div class="form-group"><label>产品SKU</label>
+                    <select id="s-sku" style="padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:180px"><option value="">选择产品</option></select>
+                </div>
+                <div class="form-group"><label>日期</label><input id="s-date" type="date"></div>
+                <div class="form-group"><label>数量</label><input id="s-qty" type="number" placeholder="10"></div>
+                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createSale()">录入</button></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="flex-between">
+                <h3>销售记录</h3>
+                <div>
+                    <button class="btn btn-secondary" onclick="loadSales()">刷新</button>
+                    <label class="btn btn-primary" style="margin-left:8px;cursor:pointer">导入CSV<input type="file" id="import-csv" accept=".csv" style="display:none" onchange="importCSV(this)"></label>
+                </div>
+            </div>
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>日期</th><th>SKU</th><th>产品名称</th><th>数量</th><th>总成本</th><th>成本明细</th></tr></thead>
+                <tbody id="sales-tbody"></tbody>
+            </table>
+            </div>
+        </div>
+        <div class="card">
+            <h3>CSV导入格式说明</h3>
+            <p style="font-size:13px;color:#666">CSV文件列：SKU, 日期(YYYY-MM-DD), 数量<br>示例：<code>BT-001,2024-01-15,50</code></p>
+        </div>
+    </div>
+
+    <!-- ========== 报表 ========== -->
+    <div id="sec-reports" class="section">
+        <div class="card">
+            <div class="flex-between">
+                <h3>月度产品件数售卖和库存报表</h3>
+                <div class="form-row" style="margin:0;align-items:flex-end">
+                    <div class="form-group"><label>开始</label><input id="r-start" type="date" value="2024-01-01"></div>
+                    <div class="form-group"><label>结束</label><input id="r-end" type="date" value="2024-12-31"></div>
+                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="loadMonthly()">查询</button></div>
+                </div>
+            </div>
+            <div class="stat-grid" id="monthly-stats"></div>
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>月份</th><th>SKU</th><th>产品名称</th><th>售卖件数</th><th>当前库存</th><th>库存价值</th></tr></thead>
+                <tbody id="monthly-tbody"></tbody>
+            </table>
+            </div>
+        </div>
+    <!-- ========== 用户管理 ========== -->
+    <div id="sec-users" class="section">
+        <div class="card">
+            <h3>添加用户（管理员创建）</h3>
+            <div class="form-row">
+                <div class="form-group"><label>用户名</label><input id="u-name" placeholder="用户名"></div>
+                <div class="form-group"><label>密码</label><input id="u-pass" type="password" placeholder="至少3位"></div>
+                <div class="form-group"><label>角色</label>
+                    <select id="u-role" style="padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:160px">
+                        <option value="operator">运营</option>
+                        <option value="viewer">查看者</option>
+                        <option value="admin">管理员</option>
+                    </select>
+                </div>
+                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="adminCreateUser()">创建</button></div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="flex-between"><h3>用户列表</h3><button class="btn btn-secondary" onclick="loadUsers()">刷新</button></div>
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
+                <tbody id="users-tbody"></tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = '';
+let AUTH_TOKEN = localStorage.getItem('latingo_token') || '';
+let CURRENT_ROLE = localStorage.getItem('latingo_role') || '';
+let CURRENT_USER = localStorage.getItem('latingo_user') || '';
+
+// ========== 认证 ==========
+function formatApiError(detail, fallback) {
+    if (Array.isArray(detail)) {
+        return detail.map(item => {
+            const location = Array.isArray(item.loc)
+                ? item.loc.filter(part => part !== 'body').join('.')
+                : '';
+            return location ? `${location}: ${item.msg || '输入无效'}` : (item.msg || '输入无效');
+        }).join('；');
+    }
+    if (detail && typeof detail === 'object') {
+        return detail.message || JSON.stringify(detail);
+    }
+    return detail || fallback;
+}
+
+async function api(method, url, body) {
+    const opts = { method, headers: {} };
+    if (AUTH_TOKEN) opts.headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+    if (body) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+    }
+    const res = await fetch(API + url, opts);
+    if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+    if (res.status === 403) throw new Error('权限不足');
+    const raw = await res.text();
+    let data = null;
+    if (raw) {
+        try {
+            data = JSON.parse(raw);
+        } catch {
+            if (!res.ok) {
+                throw new Error(`请求失败 (${res.status}): ${raw}`);
+            }
+            throw new Error(`服务响应无效 (${res.status})`);
+        }
+    }
+    if (!res.ok) throw new Error(formatApiError(data?.detail, raw || res.statusText));
+    return data;
+}
+
+async function doLogin() {
+    const username = document.getElementById('l-user').value;
+    const password = document.getElementById('l-pass').value;
+    const errEl = document.getElementById('l-err');
+    try {
+        const res = await fetch('/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, password})
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail);
+        AUTH_TOKEN = data.token;
+        CURRENT_ROLE = data.role;
+        CURRENT_USER = data.username;
+        localStorage.setItem('latingo_token', AUTH_TOKEN);
+        localStorage.setItem('latingo_role', CURRENT_ROLE);
+        localStorage.setItem('latingo_user', CURRENT_USER);
+        document.getElementById('login-overlay').style.display = 'none';
+        updateUserBar();
+        loadProducts();
+    } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = 'block';
+    }
+}
+
+function doLogout() {
+    localStorage.clear();
+    AUTH_TOKEN = ''; CURRENT_ROLE = ''; CURRENT_USER = '';
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.getElementById('curr-user').textContent = '未登录';
+}
+
+function updateUserBar() {
+    document.getElementById('user-bar').style.display = '';
+    document.getElementById('curr-user').textContent = CURRENT_USER;
+    document.getElementById('curr-role').textContent = CURRENT_ROLE === 'admin' ? '管理员' : CURRENT_ROLE === 'operator' ? '运营' : '查看者';
+    document.getElementById('curr-role').className = 'tag ' + (CURRENT_ROLE === 'admin' ? 'tag-red' : CURRENT_ROLE === 'operator' ? 'tag-blue' : 'tag-green');
+    document.getElementById('nav-users').style.display = isAdmin() ? '' : 'none';
+}
+
+function isAdmin() { return CURRENT_ROLE === 'admin'; }
+function isOperator() { return CURRENT_ROLE === 'admin' || CURRENT_ROLE === 'operator'; }
+function isViewer() { return CURRENT_ROLE === 'viewer'; }
+
+// ========== 用户管理 ==========
+async function adminCreateUser() {
+    const username = document.getElementById('u-name').value;
+    const password = document.getElementById('u-pass').value;
+    const role = document.getElementById('u-role').value;
+    try {
+        await api('POST', `/auth/register?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&role=${role}`);
+        showMsg(`用户 ${username} 创建成功`);
+        document.getElementById('u-name').value = '';
+        document.getElementById('u-pass').value = '';
+        loadUsers();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function loadUsers() {
+    const list = await api('GET', '/auth/users');
+    const tbody = document.getElementById('users-tbody');
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无用户</td></tr>'; return; }
+    tbody.innerHTML = list.map(u => {
+        const roleLabel = u.role==='admin'?'管理员':u.role==='operator'?'运营':'查看者';
+        const tagClass = u.role==='admin'?'tag-red':u.role==='operator'?'tag-blue':'tag-green';
+        const isSelf = u.username === CURRENT_USER;
+        return `<tr>
+            <td>${u.id}</td><td><strong>${u.username}</strong></td>
+            <td><span class="tag ${tagClass}" id="role-${u.id}">${roleLabel}</span></td>
+            <td>${u.created_at?.slice(0,16)}</td>
+            <td style="display:flex;gap:4px;flex-wrap:wrap">
+                ${!isSelf ? `
+                <select onchange="changeRole(${u.id}, this.value)" style="font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:4px;width:80px">
+                    <option value="">改角色</option>
+                    <option value="admin">管理员</option>
+                    <option value="operator">运营</option>
+                    <option value="viewer">查看者</option>
+                </select>
+                <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="resetPwd(${u.id})" title="重置密码">🔑</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:#e94560" onclick="deleteUser(${u.id})">删除</button>
+                ` : '<span style="font-size:12px;color:#888">当前用户</span>'}
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function changeRole(userId, newRole) {
+    if (!newRole) return;
+    if (!confirm(`确认修改角色？`)) { loadUsers(); return; }
+    try {
+        await api('PUT', `/auth/users/${userId}/role`, {role: newRole});
+        showMsg('角色修改成功');
+        loadUsers();
+    } catch (e) { showMsg(e.message, false); loadUsers(); }
+}
+
+async function resetPwd(userId) {
+    const newPwd = prompt('请输入新密码（至少3位）：');
+    if (!newPwd) return;
+    if (newPwd.length < 3) { showMsg('密码至少3位', false); return; }
+    try {
+        await api('PUT', `/auth/users/${userId}/password`, {new_password: newPwd});
+        showMsg('密码已重置');
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function deleteUser(id) {
+    if (!confirm('确认删除该用户？')) return;
+    try {
+        await api('DELETE', `/auth/users/${id}`);
+        showMsg('删除成功');
+        loadUsers();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+// 登录/注册切换
+function showLogin() {
+    document.getElementById('register-box').style.display = 'none';
+    document.getElementById('login-box').style.display = '';
+}
+function showRegister() {
+    document.getElementById('login-box').style.display = 'none';
+    document.getElementById('register-box').style.display = '';
+}
+
+async function doRegister() {
+    const username = document.getElementById('r-user').value;
+    const password = document.getElementById('r-pass').value;
+    const role = document.querySelector('input[name="r-role"]:checked').value;
+    const errEl = document.getElementById('r-err');
+    try {
+        const params = new URLSearchParams({username, password, role});
+        const res = await fetch(`/auth/register?${params}`, {method: 'POST'});
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail);
+        // 注册成功后自动登录
+        AUTH_TOKEN = data.token;
+        CURRENT_ROLE = data.role;
+        CURRENT_USER = data.username;
+        localStorage.setItem('latingo_token', AUTH_TOKEN);
+        localStorage.setItem('latingo_role', CURRENT_ROLE);
+        localStorage.setItem('latingo_user', CURRENT_USER);
+        document.getElementById('login-overlay').style.display = 'none';
+        updateUserBar();
+        loadProducts();
+    } catch (e) {
+        errEl.textContent = e.message;
+        errEl.style.display = 'block';
+    }
+}
+
+// 初始检查登录状态
+if (AUTH_TOKEN) {
+    document.getElementById('login-overlay').style.display = 'none';
+    updateUserBar();
+} else {
+    document.getElementById('user-bar').style.display = 'none';
+    showLogin();
+}
+
+// ========== Tab切换 ==========
+function switchTab(name) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
+    document.getElementById('sec-' + name).classList.add('active');
+    event.target.classList.add('active');
+    if (name === 'products') loadProducts();
+    if (name === 'batches') loadBatches();
+    if (name === 'gallery') loadGallery();
+    if (name === 'sales') { loadSkuOptions(); loadSales(); }
+    if (name === 'reports') loadMonthly();
+    if (name === 'users') loadUsers();
+}
+
+function showMsg(text, ok = true) {
+    const el = document.getElementById('msg');
+    el.innerHTML = `<div class="msg ${ok ? 'msg-ok' : 'msg-err'}">${text}</div>`;
+    setTimeout(() => el.innerHTML = '', 4000);
+}
+
+// ========== 商品 ==========
+document.getElementById('p-image')?.addEventListener('change', function() {
+    const file = this.files[0];
+    const preview = document.getElementById('p-preview');
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            preview.innerHTML = `<img src="${e.target.result}" style="max-height:80px;border-radius:6px">
+                <button type="button" class="btn btn-secondary" onclick="clearImage()" style="font-size:12px;padding:4px 10px">✕ 取消</button>`;
+        };
+        reader.readAsDataURL(file);
+    } else { preview.innerHTML = ''; }
+});
+
+function clearImage() {
+    document.getElementById('p-image').value = '';
+    document.getElementById('p-preview').innerHTML = '';
+}
+
+async function createProduct() {
+    try {
+        const formData = new FormData();
+        formData.append('sku', document.getElementById('p-sku').value);
+        formData.append('name', document.getElementById('p-name').value);
+        const imageFile = document.getElementById('p-image').files[0];
+        if (imageFile) formData.append('image', imageFile);
+        const res = await fetch('/products', { method: 'POST', body: formData, headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {} });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        showMsg(`商品创建成功: ${data.sku} (ID: ${data.id})`);
+        loadProducts();
+        document.getElementById('p-sku').value = '';
+        document.getElementById('p-name').value = '';
+        clearImage();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function deleteProduct(id) {
+    if (!confirm('确认删除该商品？')) return;
+    try {
+        await api('DELETE', `/products/${id}`);
+        showMsg('删除成功');
+        loadProducts();
+        loadGallery();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+let editingProductId = null;
+let currentProductList = [];
+const selectedProductIds = new Set();
+let productPage = 1;
+let productPageSize = 20;
+
+function renderProductPage() {
+    const tbody = document.getElementById('products-tbody');
+    const pageCount = Math.max(1, Math.ceil(currentProductList.length / productPageSize));
+    productPage = Math.min(productPage, pageCount);
+    const start = (productPage - 1) * productPageSize;
+    const pageItems = currentProductList.slice(start, start + productPageSize);
+    tbody.innerHTML = pageItems.length ? pageItems.map(p => `<tr>
+        <td><input type="checkbox" data-product-select="${p.id}" ${selectedProductIds.has(Number(p.id)) ? 'checked' : ''} onchange="toggleProductSelection(${p.id}, this.checked)" aria-label="选择商品 ${p.sku}"></td>
+        <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
+        <td><strong>${p.sku}</strong></td>
+        <td>${p.name}</td>
+        <td><span class="tag ${p.stock_quantity > 0 ? 'tag-green' : 'tag-red'}">${p.stock_quantity}件</span></td>
+        <td>¥${Number(p.stock_value).toFixed(2)}</td>
+        <td>${p.last_batch_at || '-'}</td>
+        <td style="display:flex;gap:4px">
+            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="exportProduct(${p.id})" title="导出此商品">导出</button>
+            ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditProduct(${p.id})">✏️</button>` : ''}
+            ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>` : ''}
+        </td>
+    </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无商品</td></tr>';
+    renderPagination('products-pagination', productPage, pageCount, currentProductList.length, productPageSize);
+    updateProductSelectionState();
+}
+
+async function loadProducts() {
+    document.querySelector('#sec-products .card:first-child').style.display = isOperator() ? '' : 'none';
+    document.getElementById('edit-product-modal').style.display = 'none';
+    const list = await api('GET', '/products');
+    const tbody = document.getElementById('products-tbody');
+    currentProductList = list;
+    const currentIds = new Set(list.map(product => Number(product.id)));
+    selectedProductIds.forEach(id => { if (!currentIds.has(id)) selectedProductIds.delete(id); });
+    if (!list.length) {
+        selectedProductIds.clear();
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无商品</td></tr>';
+        renderPagination('products-pagination', 1, 1, 0, productPageSize);
+        updateProductSelectionState();
+        return;
+    }
+    renderProductPage();
+}
+
+function toggleProductSelection(id, checked) {
+    if (checked) selectedProductIds.add(Number(id));
+    else selectedProductIds.delete(Number(id));
+    updateProductSelectionState();
+}
+
+function toggleAllProductSelection(checked) {
+    const start = (productPage - 1) * productPageSize;
+    const pageItems = currentProductList.slice(start, start + productPageSize);
+    pageItems.forEach(product => {
+        if (checked) selectedProductIds.add(Number(product.id));
+        else selectedProductIds.delete(Number(product.id));
+    });
+    document.querySelectorAll('[data-product-select]').forEach(input => { input.checked = checked; });
+    updateProductSelectionState();
+}
+
+function updateProductSelectionState() {
+    const selectAll = document.getElementById('product-select-all');
+    if (!selectAll) return;
+    const start = (productPage - 1) * productPageSize;
+    const visibleIds = currentProductList.slice(start, start + productPageSize).map(product => Number(product.id));
+    const checkedCount = visibleIds.filter(id => selectedProductIds.has(id)).length;
+    selectAll.checked = visibleIds.length > 0 && checkedCount === visibleIds.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
+}
+
+function renderPagination(containerId, page, pageCount, total, pageSize) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const buttons = [];
+    buttons.push(`<span class="pagination-summary">共 ${total} 条</span>`);
+    buttons.push(`<label>每页 <select onchange="${containerId === 'products-pagination' ? 'changeProductPageSize' : 'changeBatchPageSize'}(this.value)"><option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option><option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option><option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option></select> 条</label>`);
+    buttons.push(`<button ${page <= 1 ? 'disabled' : ''} onclick="${containerId === 'products-pagination' ? 'goProductPage' : 'goBatchPage'}(${page - 1})">上一页</button>`);
+    const from = Math.max(1, page - 2), to = Math.min(pageCount, page + 2);
+    for (let current = from; current <= to; current++) buttons.push(`<button class="${current === page ? 'active' : ''}" onclick="${containerId === 'products-pagination' ? 'goProductPage' : 'goBatchPage'}(${current})">${current}</button>`);
+    buttons.push(`<button ${page >= pageCount ? 'disabled' : ''} onclick="${containerId === 'products-pagination' ? 'goProductPage' : 'goBatchPage'}(${page + 1})">下一页</button>`);
+    container.innerHTML = buttons.join('');
+}
+function goProductPage(page) { productPage = page; renderProductPage(); }
+function changeProductPageSize(size) { productPageSize = Number(size); productPage = 1; renderProductPage(); }
+
+// ========== 编辑商品 ==========
+async function openEditProduct(id) {
+    const list = await api('GET', '/products');
+    const p = list.find(x => x.id === id);
+    if (!p) return;
+    editingProductId = id;
+    document.getElementById('ep-sku').value = p.sku;
+    document.getElementById('ep-name').value = p.name;
+    document.getElementById('ep-preview').innerHTML = p.image ? `<img src="${p.image}" style="max-height:80px;border-radius:6px">` : '';
+    document.getElementById('ep-image').value = '';
+    document.getElementById('edit-product-modal').style.display = '';
+}
+
+document.getElementById('ep-image')?.addEventListener('change', function() {
+    const file = this.files[0];
+    const preview = document.getElementById('ep-preview');
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = e => { preview.innerHTML = `<img src="${e.target.result}" style="max-height:80px;border-radius:6px">`; };
+        reader.readAsDataURL(file);
+    }
+});
+
+function closeEditProduct() {
+    editingProductId = null;
+    document.getElementById('edit-product-modal').style.display = 'none';
+}
+
+async function saveEditProduct() {
+    try {
+        const formData = new FormData();
+        formData.append('sku', document.getElementById('ep-sku').value);
+        formData.append('name', document.getElementById('ep-name').value);
+        const imageFile = document.getElementById('ep-image').files[0];
+        if (imageFile) formData.append('image', imageFile);
+
+        const res = await fetch(`/products/${editingProductId}`, {
+            method: 'PUT',
+            body: formData,
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {}
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        showMsg(`商品 ${data.sku} 更新成功`);
+        closeEditProduct();
+        loadProducts();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function downloadProductExport(ids) {
+    const selectedIds = ids.filter(Boolean);
+    if (!selectedIds.length) { showMsg('暂无可导出的商品', false); return; }
+    const query = selectedIds.map(id => `product_ids=${encodeURIComponent(id)}`).join('&');
+    try {
+        const res = await fetch(`/products/export?${query}`, {
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+        });
+        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (!res.ok) {
+            const raw = await res.text();
+            let detail = raw;
+            try { detail = JSON.parse(raw).detail || raw; } catch {}
+            throw new Error(formatApiError(detail, '导出失败'));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `商品导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showMsg(`已导出 ${selectedIds.length} 个商品`);
+    } catch (e) { showMsg(e.message, false); }
+}
+
+function exportProduct(id) { downloadProductExport([id]); }
+
+function exportAllProducts() {
+    const ids = selectedProductIds.size
+        ? currentProductList.filter(product => selectedProductIds.has(Number(product.id))).map(product => product.id)
+        : currentProductList.map(product => product.id);
+    downloadProductExport(ids);
+}
+
+// ========== 产品图册 ==========
+async function loadGallery() {
+    const list = await api('GET', '/products');
+    const el = document.getElementById('gallery-grid');
+    if (!list.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1">暂无产品</div>'; return; }
+    el.innerHTML = list.map(p => `
+        <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+            <div style="height:160px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;position:relative">
+                ${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover">` : `<span style="color:#aaa;font-size:40px">📦</span>`}
+                ${p.image ? `<a class="btn btn-secondary gallery-download" href="${p.image}" download title="下载图片">下载</a>` : ''}
+            </div>
+            <div style="padding:12px">
+                <div style="font-weight:600;font-size:14px">${p.name}</div>
+                <div style="font-size:12px;color:#888;margin-top:4px">${p.sku} · 库存${p.stock_quantity}件</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// ========== 入库 ==========
+['b-qty','b-total-amount','b-ship','b-lastmile','b-other'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', calcUnitCost);
+});
+function calcUnitCost() {
+    const qty = +document.getElementById('b-qty').value || 0;
+    const totalAmount = +document.getElementById('b-total-amount').value || 0;
+    const price = qty > 0 ? totalAmount / qty : 0;
+    const ship = +document.getElementById('b-ship').value || 0;
+    const lastmile = +document.getElementById('b-lastmile').value || 0;
+    const other = +document.getElementById('b-other').value || 0;
+    document.getElementById('b-price').value = qty > 0 ? price.toFixed(4) : '';
+    const el = document.getElementById('b-calc');
+    if (qty > 0) {
+        const unit = price + (ship + lastmile + other) / qty;
+        el.textContent = `单件成本 = ${price} + (${ship}+${lastmile}+${other})÷${qty} = ¥${unit.toFixed(2)}`;
+    } else { el.textContent = ''; }
+}
+
+async function createBatch() {
+    try {
+        const arrived = document.getElementById('b-date').value;
+        const shipdate = document.getElementById('b-shipdate').value;
+        const b = await api('POST', '/batches', {
+            product_id: +document.getElementById('b-pid').value,
+            quantity: +document.getElementById('b-qty').value,
+            dingtalk_order_no: document.getElementById('b-dingtalk-order').value.trim() || undefined,
+            total_amount: document.getElementById('b-total-amount').value === '' ? undefined : +document.getElementById('b-total-amount').value,
+            shipping_cost: +document.getElementById('b-ship').value || 0,
+            shipping_cost_no: document.getElementById('b-ship-no').value.trim() || undefined,
+            last_mile_cost: +document.getElementById('b-lastmile').value || 0,
+            last_mile_cost_no: document.getElementById('b-lastmile-no').value.trim() || undefined,
+            other_cost: +document.getElementById('b-other').value || 0,
+            other_cost_no: document.getElementById('b-other-no').value.trim() || undefined,
+            shipping_date: shipdate ? new Date(shipdate).toISOString() : undefined,
+            arrived_at: arrived ? new Date(arrived).toISOString() : undefined,
+        });
+        showMsg(`入库成功: ${b.batch_no} | ${b.quantity}件 | 单件成本 ¥${b.unit_cost}`);
+        loadBatches();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function loadBatchSkuOptions() {
+    if (!allProducts.length) allProducts = await api('GET', '/products');
+    const sel = document.getElementById('b-pid');
+    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.id}">${p.sku} - ${p.name}</option>`).join('');
+}
+
+let editingBatchId = null;
+let currentBatchList = [];
+const selectedBatchIds = new Set();
+let batchPage = 1;
+let batchPageSize = 20;
+const BATCH_COLUMNS = ['image', 'product_name', 'sku', 'batch_no', 'dingtalk_order_no', 'quantity', 'remaining_quantity', 'purchase_price', 'total_amount', 'shipping_cost', 'shipping_cost_no', 'last_mile_cost', 'last_mile_cost_no', 'other_cost', 'other_cost_no', 'unit_cost', 'shipping_date', 'arrived_at', 'actions'];
+const visibleBatchColumns = new Set(BATCH_COLUMNS);
+
+function toggleBatchFieldPicker() {
+    const menu = document.getElementById('batch-field-picker-menu');
+    const button = document.getElementById('batch-field-picker-button');
+    const isOpen = menu.classList.toggle('open');
+    button.setAttribute('aria-expanded', String(isOpen));
+}
+
+function applyBatchColumnSelection() {
+    document.querySelectorAll('[data-batch-column]').forEach(cell => {
+        cell.classList.toggle('batch-column-hidden', !visibleBatchColumns.has(cell.dataset.batchColumn));
+    });
+    document.querySelectorAll('[data-batch-field-toggle]').forEach(input => {
+        input.checked = visibleBatchColumns.has(input.dataset.batchFieldToggle);
+    });
+    const emptyCell = document.querySelector('#batches-tbody .empty');
+    if (emptyCell) emptyCell.colSpan = Math.max(visibleBatchColumns.size, 1);
+}
+
+function toggleBatchColumn(column, visible) {
+    if (visible) visibleBatchColumns.add(column);
+    else visibleBatchColumns.delete(column);
+    applyBatchColumnSelection();
+}
+
+function selectAllBatchColumns() {
+    BATCH_COLUMNS.forEach(column => visibleBatchColumns.add(column));
+    applyBatchColumnSelection();
+}
+
+function resetBatchColumns() {
+    visibleBatchColumns.clear();
+    BATCH_COLUMNS.forEach(column => visibleBatchColumns.add(column));
+    applyBatchColumnSelection();
+}
+
+function toggleBatchSelection(id, checked) {
+    if (checked) selectedBatchIds.add(Number(id));
+    else selectedBatchIds.delete(Number(id));
+    updateBatchSelectionState();
+}
+
+function toggleAllBatchSelection(checked) {
+    const start = (batchPage - 1) * batchPageSize;
+    const pageItems = currentBatchList.slice(start, start + batchPageSize);
+    pageItems.forEach(batch => {
+        if (checked) selectedBatchIds.add(Number(batch.id));
+        else selectedBatchIds.delete(Number(batch.id));
+    });
+    document.querySelectorAll('[data-batch-select]').forEach(input => { input.checked = checked; });
+    updateBatchSelectionState();
+}
+
+function updateBatchSelectionState() {
+    const selectAll = document.getElementById('batch-select-all');
+    if (!selectAll) return;
+    const start = (batchPage - 1) * batchPageSize;
+    const visibleIds = currentBatchList.slice(start, start + batchPageSize).map(batch => Number(batch.id));
+    const checkedCount = visibleIds.filter(id => selectedBatchIds.has(id)).length;
+    selectAll.checked = visibleIds.length > 0 && checkedCount === visibleIds.length;
+    selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
+}
+
+function renderBatchPage() {
+    const tbody = document.getElementById('batches-tbody');
+    const pageCount = Math.max(1, Math.ceil(currentBatchList.length / batchPageSize));
+    batchPage = Math.min(batchPage, pageCount);
+    const start = (batchPage - 1) * batchPageSize;
+    const pageItems = currentBatchList.slice(start, start + batchPageSize);
+    tbody.innerHTML = pageItems.map(b => {
+        const p = b._product || {};
+        const canEdit = b.remaining_quantity === b.quantity;
+        return `<tr>
+            <td><input type="checkbox" data-batch-select="${b.id}" ${selectedBatchIds.has(Number(b.id)) ? 'checked' : ''} onchange="toggleBatchSelection(${b.id}, this.checked)" aria-label="选择批次 ${b.batch_no}"></td>
+            <td data-batch-column="image">${p.image ? `<img src="${p.image}" style="height:36px;border-radius:4px">` : '-'}</td>
+            <td data-batch-column="product_name">${p.name || '-'}</td>
+            <td data-batch-column="sku">${p.sku || '-'}</td>
+            <td data-batch-column="batch_no"><strong>${b.batch_no}</strong></td>
+            <td data-batch-column="dingtalk_order_no">${b.dingtalk_order_no || '-'}</td>
+            <td data-batch-column="quantity">${b.quantity}</td>
+            <td data-batch-column="remaining_quantity">${b.remaining_quantity} <span class="tag ${b.remaining_quantity > 0 ? 'tag-green' : 'tag-red'}">${b.remaining_quantity > 0 ? '有库存' : '已售罄'}</span></td>
+            <td data-batch-column="purchase_price">¥${b.purchase_price}</td>
+            <td data-batch-column="total_amount">${b.total_amount == null ? '-' : `¥${b.total_amount}`}</td>
+            <td data-batch-column="shipping_cost">¥${b.shipping_cost}</td>
+            <td data-batch-column="shipping_cost_no">${b.shipping_cost_no || '-'}</td>
+            <td data-batch-column="last_mile_cost">¥${b.last_mile_cost}</td>
+            <td data-batch-column="last_mile_cost_no">${b.last_mile_cost_no || '-'}</td>
+            <td data-batch-column="other_cost">¥${b.other_cost}</td>
+            <td data-batch-column="other_cost_no">${b.other_cost_no || '-'}</td>
+            <td data-batch-column="unit_cost"><strong>¥${b.unit_cost}</strong></td>
+            <td data-batch-column="shipping_date">${b.shipping_date?.slice(0,16) || '-'}</td>
+            <td data-batch-column="arrived_at">${b.arrived_at?.slice(0,16) || '-'}</td>
+            <td data-batch-column="actions" style="display:flex;gap:4px">
+                <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="exportBatch(${b.id})" title="导出此批次">导出</button>
+                ${isOperator() && canEdit ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditBatch(${b.id})">✏️</button>` : ''}
+                ${isOperator() && canEdit ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteBatch(${b.id})">🗑</button>` : ''}
+            </td>
+        </tr>`;
+    }).join('') || `<tr><td colspan="${Math.max(visibleBatchColumns.size + 1, 1)}" class="empty">暂无批次</td></tr>`;
+    applyBatchColumnSelection();
+    renderPagination('batches-pagination', batchPage, pageCount, currentBatchList.length, batchPageSize);
+    updateBatchSelectionState();
+}
+function goBatchPage(page) { batchPage = page; renderBatchPage(); }
+function changeBatchPageSize(size) { batchPageSize = Number(size); batchPage = 1; renderBatchPage(); }
+
+document.addEventListener('click', event => {
+    const picker = document.getElementById('batch-field-picker');
+    if (picker && !picker.contains(event.target)) {
+        document.getElementById('batch-field-picker-menu').classList.remove('open');
+        document.getElementById('batch-field-picker-button').setAttribute('aria-expanded', 'false');
+    }
+});
+
+async function loadBatches() {
+    document.querySelector('#sec-batches .card:first-child').style.display = isOperator() ? '' : 'none';
+    document.getElementById('edit-batch-modal').style.display = 'none';
+    await loadBatchSkuOptions();
+    const [batchList, productList] = await Promise.all([api('GET', '/batches'), api('GET', '/products')]);
+    const productMap = {};
+    productList.forEach(p => productMap[p.id] = p);
+    const tbody = document.getElementById('batches-tbody');
+    if (!batchList.length) {
+        currentBatchList = [];
+        selectedBatchIds.clear();
+        tbody.innerHTML = `<tr><td colspan="${Math.max(visibleBatchColumns.size + 1, 1)}" class="empty">暂无批次</td></tr>`;
+        renderPagination('batches-pagination', 1, 1, 0, batchPageSize);
+        updateBatchSelectionState();
+        return;
+    }
+    currentBatchList = batchList;
+    const currentIds = new Set(batchList.map(batch => Number(batch.id)));
+    selectedBatchIds.forEach(id => { if (!currentIds.has(id)) selectedBatchIds.delete(id); });
+    currentBatchList = batchList.map(batch => ({...batch, _product: productMap[batch.product_id] || {}}));
+    renderBatchPage();
+}
+
+// ========== 批次编辑/删除 ==========
+async function openEditBatch(id) {
+    const list = await api('GET', '/batches');
+    const b = list.find(x => x.id === id);
+    if (!b) return;
+    editingBatchId = id;
+    document.getElementById('edit-batch-label').textContent = b.batch_no;
+    document.getElementById('eb-qty').value = b.quantity;
+    document.getElementById('eb-total-amount').value = b.total_amount ?? (Number(b.purchase_price || 0) * Number(b.quantity || 0)).toFixed(2);
+    document.getElementById('eb-price').value = b.purchase_price;
+    document.getElementById('eb-dingtalk-order').value = b.dingtalk_order_no || '';
+    document.getElementById('eb-ship').value = b.shipping_cost;
+    document.getElementById('eb-ship-no').value = b.shipping_cost_no || '';
+    document.getElementById('eb-lastmile').value = b.last_mile_cost;
+    document.getElementById('eb-lastmile-no').value = b.last_mile_cost_no || '';
+    document.getElementById('eb-other').value = b.other_cost;
+    document.getElementById('eb-other-no').value = b.other_cost_no || '';
+    document.getElementById('eb-shipdate').value = b.shipping_date?.slice(0,16) || '';
+    document.getElementById('eb-date').value = b.arrived_at?.slice(0,16) || '';
+    document.getElementById('edit-batch-modal').style.display = '';
+    calcEditUnitCost();
+}
+
+function closeEditBatch() {
+    editingBatchId = null;
+    document.getElementById('edit-batch-modal').style.display = 'none';
+}
+
+['eb-qty','eb-total-amount','eb-ship','eb-lastmile','eb-other'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', calcEditUnitCost);
+});
+function calcEditUnitCost() {
+    const qty = +document.getElementById('eb-qty').value || 1;
+    const totalAmount = +document.getElementById('eb-total-amount').value || 0;
+    const price = totalAmount / qty;
+    const ship = +document.getElementById('eb-ship').value || 0;
+    const lastmile = +document.getElementById('eb-lastmile').value || 0;
+    const other = +document.getElementById('eb-other').value || 0;
+    document.getElementById('eb-price').value = price.toFixed(4);
+    const el = document.getElementById('eb-calc');
+    const unit = price + (ship + lastmile + other) / qty;
+    el.textContent = `单件成本 = ¥${unit.toFixed(2)}`;
+}
+
+async function saveEditBatch() {
+    try {
+        const arrived = document.getElementById('eb-date').value;
+        const shipdate = document.getElementById('eb-shipdate').value;
+        const b = await api('PUT', `/batches/${editingBatchId}`, {
+            product_id: 1, // 不会被修改
+            quantity: +document.getElementById('eb-qty').value,
+            dingtalk_order_no: document.getElementById('eb-dingtalk-order').value.trim() || undefined,
+            total_amount: document.getElementById('eb-total-amount').value === '' ? undefined : +document.getElementById('eb-total-amount').value,
+            shipping_cost: +document.getElementById('eb-ship').value || 0,
+            shipping_cost_no: document.getElementById('eb-ship-no').value.trim() || undefined,
+            last_mile_cost: +document.getElementById('eb-lastmile').value || 0,
+            last_mile_cost_no: document.getElementById('eb-lastmile-no').value.trim() || undefined,
+            other_cost: +document.getElementById('eb-other').value || 0,
+            other_cost_no: document.getElementById('eb-other-no').value.trim() || undefined,
+            shipping_date: shipdate ? new Date(shipdate).toISOString() : undefined,
+            arrived_at: arrived ? new Date(arrived).toISOString() : undefined,
+        });
+        showMsg(`批次 ${b.batch_no} 更新成功`);
+        closeEditBatch();
+        loadBatches();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function deleteBatch(id) {
+    if (!confirm('确认删除该批次？此操作不可恢复。')) return;
+    try {
+        await api('DELETE', `/batches/${id}`);
+        showMsg('批次已删除');
+        loadBatches();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function downloadBatchExport(ids) {
+    const selectedIds = ids.filter(Boolean);
+    if (!selectedIds.length) { showMsg('暂无可导出的批次', false); return; }
+    const query = selectedIds.map(id => `batch_ids=${encodeURIComponent(id)}`).join('&');
+    try {
+        const res = await fetch(`/batches/export?${query}`, {
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+        });
+        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (!res.ok) {
+            const raw = await res.text();
+            let detail = raw;
+            try { detail = JSON.parse(raw).detail || raw; } catch {}
+            throw new Error(formatApiError(detail, '导出失败'));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `批次导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showMsg(`已导出 ${selectedIds.length} 条批次`);
+    } catch (e) { showMsg(e.message, false); }
+}
+
+function exportBatch(id) { downloadBatchExport([id]); }
+
+function exportAllBatches() {
+    const ids = selectedBatchIds.size
+        ? currentBatchList.filter(batch => selectedBatchIds.has(Number(batch.id))).map(batch => batch.id)
+        : currentBatchList.map(batch => batch.id);
+    downloadBatchExport(ids);
+}
+
+// ========== 销售 ==========
+let allProducts = [];
+async function loadSkuOptions() {
+    if (!allProducts.length) allProducts = await api('GET', '/products');
+    const sel = document.getElementById('s-sku');
+    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.sku}">${p.sku} - ${p.name}</option>`).join('');
+}
+
+function getProductIdBySku(sku) {
+    const p = allProducts.find(x => x.sku === sku);
+    return p ? p.id : null;
+}
+
+async function createSale() {
+    try {
+        const sku = document.getElementById('s-sku').value;
+        const dateStr = document.getElementById('s-date').value;
+        const pid = getProductIdBySku(sku);
+        if (!sku || !pid) { showMsg('请选择产品', false); return; }
+        if (!dateStr) { showMsg('请选择日期', false); return; }
+        const order_no = `${dateStr}-${sku}`;
+        const s = await api('POST', '/sales', {
+            product_id: pid,
+            order_no: order_no,
+            quantity: +document.getElementById('s-qty').value,
+            selling_price: 0,
+            platform_fee: 0,
+            sold_at: `${dateStr}T23:59:59`,
+        });
+        const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}件@¥${d.unit_cost}`).join(' + ') || '';
+        showMsg(`销售成功: ${dateStr} ${sku} | 成本 ¥${s.total_cost} | ${details}`);
+        loadSales();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function importCSV(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const text = await file.text();
+    const lines = text.trim().split('\n');
+    let ok = 0, fail = 0;
+    for (const line of lines) {
+        const [sku, dateStr, qtyStr] = line.split(',').map(s => s.trim());
+        if (!sku || !dateStr || !qtyStr) continue;
+        const pid = getProductIdBySku(sku);
+        if (!pid) { fail++; continue; }
+        try {
+            await api('POST', '/sales', {
+                product_id: pid,
+                order_no: `${dateStr}-${sku}`,
+                quantity: +qtyStr,
+                selling_price: 0,
+                platform_fee: 0,
+                sold_at: `${dateStr}T23:59:59`,
+            });
+            ok++;
+        } catch { fail++; }
+    }
+    showMsg(`导入完成: 成功${ok}条, 失败${fail}条`, fail === 0);
+    loadSales();
+    input.value = '';
+}
+
+async function loadSales() {
+    // 运营和管理员才显示销售表单和导入按钮
+    document.querySelector('#sec-sales .card:first-child').style.display = isOperator() ? '' : 'none';
+    document.getElementById('import-csv').parentElement.style.display = isOperator() ? '' : 'none';
+    if (!allProducts.length) allProducts = await api('GET', '/products');
+    const productMap = {};
+    allProducts.forEach(p => productMap[p.id] = p);
+    const list = await api('GET', '/sales');
+    const tbody = document.getElementById('sales-tbody');
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无销售记录</td></tr>'; return; }
+    tbody.innerHTML = list.map(s => {
+        const p = productMap[s.product_id] || {};
+        const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${d.unit_cost}`).join('<br>') || '-';
+        const dateStr = s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || s.sold_at?.slice(0,10) || '-';
+        return `<tr>
+            <td>${dateStr}</td>
+            <td><strong>${p.sku || '-'}</strong></td>
+            <td>${p.name || '-'}</td>
+            <td>${s.quantity}</td>
+            <td>¥${s.total_cost}</td>
+            <td class="cost-detail">${details}</td>
+        </tr>`;
+    }).join('');
+}
+
+// ========== 报表 ==========
+async function loadMonthly() {
+    const start = document.getElementById('r-start').value;
+    const end = document.getElementById('r-end').value;
+    const list = await api('GET', `/reports/monthly?start_date=${start}&end_date=${end}`);
+    const tbody = document.getElementById('monthly-tbody');
+    const stats = document.getElementById('monthly-stats');
+
+    let totalSold = 0, totalInventory = 0, totalValue = 0;
+    const latestInv = {};
+    list.forEach(r => {
+        totalSold += r.sold_quantity;
+        latestInv[r.product_id] = r; // 最后一行是最新数据
+    });
+    Object.values(latestInv).forEach(r => {
+        totalInventory += r.inventory_quantity;
+        totalValue += +r.inventory_value;
+    });
+
+    stats.innerHTML = `
+        <div class="stat-card"><div class="value">${totalSold}</div><div class="label">总售卖件数</div></div>
+        <div class="stat-card"><div class="value">${totalInventory}</div><div class="label">当前总库存</div></div>
+        <div class="stat-card"><div class="value">¥${totalValue.toFixed(2)}</div><div class="label">总库存价值</div></div>
+        <div class="stat-card"><div class="value">${[...new Set(list.map(r => r.month))].length}</div><div class="label">月份数</div></div>
+    `;
+
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">该时间段无数据</td></tr>'; return; }
+    tbody.innerHTML = list.map(r => `<tr>
+        <td>${r.month}</td>
+        <td><strong>${r.sku}</strong></td>
+        <td>${r.product_name}</td>
+        <td><span class="tag tag-blue">${r.sold_quantity}件</span></td>
+        <td><span class="tag ${r.inventory_quantity > 0 ? 'tag-green' : 'tag-red'}">${r.inventory_quantity}件</span></td>
+        <td>¥${Number(r.inventory_value).toFixed(2)}</td>
+    </tr>`).join('');
+}
+
+// 初始加载
+loadProducts();
+</script>
+</body>
+</html>
+

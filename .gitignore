@@ -1,0 +1,19 @@
+# Local configuration and credentials
+.env
+
+# Python-generated files
+.venv/
+.venv.broken-*/
+__pycache__/
+*.py[cod]
+
+# Runtime data
+uploads/
+output/
+deploy.tar.gz
+*.tar.gz
+.deploy/
+.playwright-cli/
+
+# IDE settings
+.idea/

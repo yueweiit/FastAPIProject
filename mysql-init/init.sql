@@ -1,0 +1,3 @@
+-- This file intentionally contains no credentials.
+-- Configure the production MySQL user and password outside GitHub, then grant
+-- that user access to the database named by MYSQL_DATABASE in .env.

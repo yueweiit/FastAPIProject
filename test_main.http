@@ -1,0 +1,105 @@
+### ========== 1. 创建商品 ==========
+POST http://127.0.0.1:8000/products
+Content-Type: application/json
+
+{
+    "sku": "BT-EARPHONE-001",
+    "name": "蓝牙耳机Pro"
+}
+
+### ========== 2. 入库批次A - 海运便宜货 ==========
+POST http://127.0.0.1:8000/batches
+Content-Type: application/json
+
+{
+    "product_id": 1,
+    "quantity": 100,
+    "purchase_price": 80.00,
+    "shipping_cost": 1500.00,
+    "duty_cost": 500.00,
+    "other_cost": 0,
+    "arrived_at": "2024-01-01T10:00:00"
+}
+
+### 预期: unit_cost = 80 + (1500+500)/100 = 100元/件
+
+### ========== 3. 入库批次B - 空运赶货 ==========
+POST http://127.0.0.1:8000/batches
+Content-Type: application/json
+
+{
+    "product_id": 1,
+    "quantity": 50,
+    "purchase_price": 80.00,
+    "shipping_cost": 3000.00,
+    "duty_cost": 500.00,
+    "other_cost": 0,
+    "arrived_at": "2024-01-15T10:00:00"
+}
+
+### 预期: unit_cost = 80 + (3000+500)/50 = 150元/件
+
+### ========== 4. 查看所有批次 ==========
+GET http://127.0.0.1:8000/batches?product_id=1
+
+### ========== 5. 销售 - 卖80件（FIFO自动扣库存）==========
+POST http://127.0.0.1:8000/sales
+Content-Type: application/json
+
+{
+    "product_id": 1,
+    "order_no": "ORD-20240120-001",
+    "quantity": 80,
+    "selling_price": 180.00,
+    "platform_fee": 500.00,
+    "sold_at": "2024-01-20T14:00:00"
+}
+
+### 预期:
+### - 扣批次A 80件 × 100元 = 8000元成本
+### - 总销售额 = 180 × 80 = 14400元
+### - 利润 = 14400 - 8000 - 500 = 5900元
+### - 批次A剩余: 20件
+
+### ========== 6. 再卖30件（跨批次扣减）==========
+POST http://127.0.0.1:8000/sales
+Content-Type: application/json
+
+{
+    "product_id": 1,
+    "order_no": "ORD-20240125-001",
+    "quantity": 30,
+    "selling_price": 200.00,
+    "platform_fee": 300.00,
+    "sold_at": "2024-01-25T10:00:00"
+}
+
+### 预期:
+### - 先扣批次A剩余20件 × 100元 = 2000元
+### - 再扣批次B 10件 × 150元 = 1500元
+### - 总成本 = 3500元
+### - 总销售额 = 200 × 30 = 6000元
+### - 利润 = 6000 - 3500 - 300 = 2200元
+
+### ========== 7. 查看销售记录 ==========
+GET http://127.0.0.1:8000/sales?product_id=1
+
+### ========== 8. 查看某笔销售的成本明细 ==========
+GET http://127.0.0.1:8000/sales/1
+
+### ========== 9. 月度产品件数售卖和库存报表 ==========
+GET http://127.0.0.1:8000/reports/monthly?start_date=2024-01-01&end_date=2024-12-31
+
+### ========== 11. 测试库存不足 ==========
+POST http://127.0.0.1:8000/sales
+Content-Type: application/json
+
+{
+    "product_id": 1,
+    "order_no": "ORD-20240126-001",
+    "quantity": 999,
+    "selling_price": 180.00,
+    "platform_fee": 0
+}
+
+### 预期: 400 库存不足错误
