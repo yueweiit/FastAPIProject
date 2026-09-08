@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -184,13 +184,21 @@ async def delete_batch(
 @router.get("", response_model=list[BatchResponse])
 async def list_batches(
     product_id: int | None = None,
+    keyword: str | None = Query(default=None, max_length=255),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
-    """列出批次 - 所有角色可查看，operator只能看自己的"""
+    """列出批次，可按商品名称、SKU 或批次号搜索。"""
     stmt = select(InventoryBatch)
     if product_id:
         stmt = stmt.where(InventoryBatch.product_id == product_id)
+    if keyword and keyword.strip():
+        pattern = f"%{keyword.strip()}%"
+        stmt = stmt.join(Product).where(or_(
+            Product.name.ilike(pattern),
+            Product.sku.ilike(pattern),
+            InventoryBatch.batch_no.ilike(pattern),
+        ))
     if user.role == "operator":
         stmt = stmt.where(InventoryBatch.user_id == user.id)
     stmt = stmt.order_by(InventoryBatch.arrived_at.desc())

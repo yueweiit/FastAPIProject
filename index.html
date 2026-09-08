@@ -279,6 +279,16 @@
                     <button class="btn btn-secondary" onclick="loadBatches()">刷新</button>
                 </div>
             </div>
+            <div class="form-row" style="margin:12px 0 0">
+                <div class="form-group" style="max-width:360px">
+                    <label for="batch-keyword">搜索商品</label>
+                    <input id="batch-keyword" type="search" placeholder="输入商品名称、SKU 或批次号" onkeydown="if (event.key === 'Enter') searchBatches()">
+                </div>
+                <div class="form-group" style="flex:0 0 auto;justify-content:flex-end;gap:8px">
+                    <button type="button" class="btn btn-primary" onclick="searchBatches()">搜索</button>
+                    <button type="button" class="btn btn-secondary" onclick="clearBatchSearch()">清空</button>
+                </div>
+            </div>
             <div class="table-scroll" id="batches-table-scroll">
             <table class="batch-table">
                 <thead><tr><th><input type="checkbox" id="batch-select-all" onchange="toggleAllBatchSelection(this.checked)" aria-label="全选批次"></th><th data-batch-column="image">图片</th><th data-batch-column="product_name">产品名称</th><th data-batch-column="sku">SKU</th><th data-batch-column="batch_no">批次号</th><th data-batch-column="dingtalk_order_no">钉钉单号</th><th data-batch-column="quantity">入库数</th><th data-batch-column="remaining_quantity">剩余</th><th data-batch-column="purchase_price">采购价</th><th data-batch-column="total_amount">总金额</th><th data-batch-column="shipping_cost">头程运费</th><th data-batch-column="shipping_cost_no">头程运费钉钉单号</th><th data-batch-column="last_mile_cost">尾程派送</th><th data-batch-column="last_mile_cost_no">尾程派送费钉钉单号</th><th data-batch-column="other_cost">其他成本</th><th data-batch-column="other_cost_no">其他成本钉钉单号</th><th data-batch-column="unit_cost">单件成本</th><th data-batch-column="shipping_date">头程发货</th><th data-batch-column="arrived_at">入库时间</th><th data-batch-column="actions">操作</th></tr></thead>
@@ -1011,6 +1021,11 @@ function renderBatchPage() {
 }
 function goBatchPage(page) { batchPage = page; renderBatchPage(); }
 function changeBatchPageSize(size) { batchPageSize = Number(size); batchPage = 1; renderBatchPage(); }
+function searchBatches() { batchPage = 1; loadBatches(); }
+function clearBatchSearch() {
+    document.getElementById('batch-keyword').value = '';
+    searchBatches();
+}
 
 document.addEventListener('click', event => {
     const picker = document.getElementById('batch-field-picker');
@@ -1024,7 +1039,9 @@ async function loadBatches() {
     document.querySelector('#sec-batches .card:first-child').style.display = isOperator() ? '' : 'none';
     document.getElementById('edit-batch-modal').style.display = 'none';
     await loadBatchSkuOptions();
-    const [batchList, productList] = await Promise.all([api('GET', '/batches'), api('GET', '/products')]);
+    const keyword = document.getElementById('batch-keyword')?.value.trim();
+    const batchPath = keyword ? `/batches?keyword=${encodeURIComponent(keyword)}` : '/batches';
+    const [batchList, productList] = await Promise.all([api('GET', batchPath), api('GET', '/products')]);
     const productMap = {};
     productList.forEach(p => productMap[p.id] = p);
     const tbody = document.getElementById('batches-tbody');
