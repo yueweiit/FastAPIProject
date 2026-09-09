@@ -394,6 +394,7 @@ const API = '';
 let AUTH_TOKEN = localStorage.getItem('latingo_token') || '';
 let CURRENT_ROLE = localStorage.getItem('latingo_role') || '';
 let CURRENT_USER = localStorage.getItem('latingo_user') || '';
+let CURRENT_USER_ID = Number(localStorage.getItem('latingo_user_id') || 0);
 
 // ========== 认证 ==========
 function formatApiError(detail, fallback) {
@@ -452,9 +453,11 @@ async function doLogin() {
         AUTH_TOKEN = data.token;
         CURRENT_ROLE = data.role;
         CURRENT_USER = data.username;
+        CURRENT_USER_ID = data.user_id;
         localStorage.setItem('latingo_token', AUTH_TOKEN);
         localStorage.setItem('latingo_role', CURRENT_ROLE);
         localStorage.setItem('latingo_user', CURRENT_USER);
+        localStorage.setItem('latingo_user_id', String(CURRENT_USER_ID));
         document.getElementById('login-overlay').style.display = 'none';
         updateUserBar();
         loadProducts();
@@ -466,7 +469,7 @@ async function doLogin() {
 
 function doLogout() {
     localStorage.clear();
-    AUTH_TOKEN = ''; CURRENT_ROLE = ''; CURRENT_USER = '';
+    AUTH_TOKEN = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
     document.getElementById('login-overlay').style.display = 'flex';
     document.getElementById('curr-user').textContent = '未登录';
 }
@@ -578,9 +581,11 @@ async function doRegister() {
         AUTH_TOKEN = data.token;
         CURRENT_ROLE = data.role;
         CURRENT_USER = data.username;
+        CURRENT_USER_ID = data.user_id;
         localStorage.setItem('latingo_token', AUTH_TOKEN);
         localStorage.setItem('latingo_role', CURRENT_ROLE);
         localStorage.setItem('latingo_user', CURRENT_USER);
+        localStorage.setItem('latingo_user_id', String(CURRENT_USER_ID));
         document.getElementById('login-overlay').style.display = 'none';
         updateUserBar();
         loadProducts();
@@ -594,6 +599,12 @@ async function doRegister() {
 if (AUTH_TOKEN) {
     document.getElementById('login-overlay').style.display = 'none';
     updateUserBar();
+    if (!CURRENT_USER_ID) {
+        api('GET', '/auth/me').then(data => {
+            CURRENT_USER_ID = data.id;
+            localStorage.setItem('latingo_user_id', String(CURRENT_USER_ID));
+        }).catch(doLogout);
+    }
 } else {
     document.getElementById('user-bar').style.display = 'none';
     showLogin();
@@ -987,7 +998,7 @@ function renderBatchPage() {
     const pageItems = currentBatchList.slice(start, start + batchPageSize);
     tbody.innerHTML = pageItems.map(b => {
         const p = b._product || {};
-        const canEdit = b.remaining_quantity === b.quantity;
+        const canEdit = b.remaining_quantity === b.quantity && (isAdmin() || Number(b.user_id) === CURRENT_USER_ID);
         return `<tr>
             <td><input type="checkbox" data-batch-select="${b.id}" ${selectedBatchIds.has(Number(b.id)) ? 'checked' : ''} onchange="toggleBatchSelection(${b.id}, this.checked)" aria-label="选择批次 ${b.batch_no}"></td>
             <td data-batch-column="image">${p.image ? `<img src="${p.image}" style="height:36px;border-radius:4px">` : '-'}</td>

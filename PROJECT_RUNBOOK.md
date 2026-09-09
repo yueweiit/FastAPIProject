@@ -2,6 +2,8 @@
 
 > 强制约定：以后每次运行、部署、排障或修改本项目之前，先完整阅读本文件。代码、配置或部署方式变化后，同步更新本文件。
 
+> 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本、月末关账或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
+
 ## 项目概览
 
 - FastAPI + SQLAlchemy 异步 ORM + MySQL 的 FIFO 库存成本核算系统。
@@ -99,7 +101,7 @@ FIFO 依据批次 `arrived_at` 升序，从 `remaining_quantity > 0` 的批次�
 除 `/auth/login` 和 `/auth/register` 外，请求均要求 `Authorization: Bearer <JWT>`。
 
 - `admin`：全部功能和用户管理。
-- `operator`：创建、编辑、删除商品和批次，记录销售；只能看到自己创建的批次和销售。
+- `operator`：创建、编辑、删除商品和批次，记录销售；可查看和导出全部批次，但只能编辑、删除自己创建且未被销售消耗的批次；只能看到自己创建的销售。
 - `viewer`：只读商品、批次、销售和报表。
 
 主要接口：`/auth/*` 登录和用户管理；`/products` 商品和图片；`/batches` 入库批次；`/batches/export?batch_ids=1&batch_ids=2` 导出一个或多个批次为带图片 Excel；`/sales` 销售和成本明细；`/reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` 月度报表。

@@ -199,8 +199,6 @@ async def list_batches(
             Product.sku.ilike(pattern),
             InventoryBatch.batch_no.ilike(pattern),
         ))
-    if user.role == "operator":
-        stmt = stmt.where(InventoryBatch.user_id == user.id)
     stmt = stmt.order_by(InventoryBatch.arrived_at.desc())
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -218,8 +216,6 @@ async def export_batches(
         .where(InventoryBatch.id.in_(batch_ids))
         .order_by(InventoryBatch.arrived_at.desc(), InventoryBatch.id.desc())
     )
-    if user.role == "operator":
-        stmt = stmt.where(InventoryBatch.user_id == user.id)
     result = await db.execute(stmt)
     batches = list(result.scalars().all())
     if not batches:

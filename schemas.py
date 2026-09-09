@@ -11,6 +11,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
+    user_id: int
     username: str
     role: str
 

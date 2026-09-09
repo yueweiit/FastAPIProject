@@ -29,7 +29,7 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
 
     token = create_token(user.id, user.role)
-    return LoginResponse(token=token, username=user.username, role=user.role)
+    return LoginResponse(token=token, user_id=user.id, username=user.username, role=user.role)
 
 
 @router.post("/register", response_model=LoginResponse)
@@ -56,7 +56,7 @@ async def register(
     await db.refresh(user)
 
     token = create_token(user.id, user.role)
-    return LoginResponse(token=token, username=user.username, role=user.role)
+    return LoginResponse(token=token, user_id=user.id, username=user.username, role=user.role)
 
 
 @router.get("/users", response_model=list[UserResponse])
