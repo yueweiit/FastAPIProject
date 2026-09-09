@@ -158,6 +158,14 @@ SELECT COUNT(*) FROM sales;
 python migrations/20260820_add_batch_dingtalk_fields.py
 ```
 
+将黄丽瑶名下入库批次的操作归属转给 `Navi` 前，先备份目标库；然后在已更新的 `web` 容器中执行一次：
+
+```bash
+docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_to_navi.py
+```
+
+该脚本只更新 `inventory_batches.user_id`，不会修改批次成本、库存数量、销售记录或用户账号；脚本会按用户名精确核对“黄丽瑶”和“Navi”，且 `Navi` 必须为 `operator`。已被销售消耗的批次仍受现有规则限制，不能编辑或删除。
+
 容器无法启动时，依次检查 `.env` 是否完整、MySQL 是否可达、用户是否允许该来源和具备权限、端口 `8006` 是否被占用。不要为了重置问题直接删除容器、数据卷或数据库。
 
 ## GitHub 代码发布与服务器更新
