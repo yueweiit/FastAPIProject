@@ -1,8 +1,8 @@
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, cast, Date
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -22,6 +22,8 @@ async def monthly_report(
 ):
     """月度报表 - 所有角色可查看，operator只看自己的数据"""
     month_expr = func.DATE_FORMAT(Sale.sold_at, "%Y-%m").label("month")
+    start_at = datetime.combine(start_date, time.min)
+    end_at = datetime.combine(end_date + timedelta(days=1), time.min)
     stmt = (
         select(
             month_expr,
@@ -29,8 +31,8 @@ async def monthly_report(
             func.sum(Sale.quantity).label("sold_quantity"),
         )
         .where(
-            cast(Sale.sold_at, Date) >= start_date,
-            cast(Sale.sold_at, Date) <= end_date,
+            Sale.sold_at >= start_at,
+            Sale.sold_at < end_at,
         )
         .group_by(month_expr, Sale.product_id)
         .order_by(month_expr, Sale.product_id)

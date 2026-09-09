@@ -44,6 +44,22 @@ class ProductResponse(BaseModel):
     last_batch_at: str | None = None
 
 
+class ProductOptionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    sku: str
+    name: str
+    image: str | None = None
+
+
+class ProductPageResponse(BaseModel):
+    items: list[ProductResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 # ========== 入库批次 ==========
 class BatchCreate(BaseModel):
     product_id: int
@@ -85,6 +101,13 @@ class BatchResponse(BaseModel):
     created_at: datetime
 
 
+class BatchPageResponse(BaseModel):
+    items: list[BatchResponse]
+    total: int
+    page: int
+    page_size: int
+
+
 # ========== 销售 ==========
 class SaleCreate(BaseModel):
     product_id: int
@@ -119,6 +142,13 @@ class SaleResponse(BaseModel):
     sold_at: datetime
     created_at: datetime
     cost_details: list[CostDetailResponse] = []
+
+
+class SalePageResponse(BaseModel):
+    items: list[SaleResponse]
+    total: int
+    page: int
+    page_size: int
 
 
 # ========== 报表 ==========

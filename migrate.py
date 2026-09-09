@@ -18,6 +18,17 @@ MIGRATIONS = (
     ("products", "image", "VARCHAR(500) NULL"),
 )
 
+INDEX_MIGRATIONS = (
+    ("inventory_batches", "ix_inventory_batches_arrived_at_id", "arrived_at, id"),
+    (
+        "inventory_batches",
+        "ix_inventory_batches_product_arrived_at",
+        "product_id, arrived_at",
+    ),
+    ("sales", "ix_sales_sold_at", "sold_at"),
+    ("sales", "ix_sales_user_sold_at", "user_id, sold_at"),
+)
+
 
 async def _column_exists(connection, table_name: str, column_name: str) -> bool:
     result = await connection.execute(
@@ -35,6 +46,23 @@ async def _column_exists(connection, table_name: str, column_name: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def _index_exists(connection, table_name: str, index_name: str) -> bool:
+    result = await connection.execute(
+        text(
+            """
+            SELECT 1
+            FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = :table_name
+              AND INDEX_NAME = :index_name
+            LIMIT 1
+            """
+        ),
+        {"table_name": table_name, "index_name": index_name},
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def migrate() -> None:
     """Add known backwards-compatible columns before serving requests."""
     async with engine.begin() as connection:
@@ -45,6 +73,14 @@ async def migrate() -> None:
                 text(f"ALTER TABLE `{table_name}` ADD COLUMN `{column_name}` {definition}")
             )
             print(f"Added {table_name}.{column_name}")
+
+        for table_name, index_name, columns in INDEX_MIGRATIONS:
+            if await _index_exists(connection, table_name, index_name):
+                continue
+            await connection.execute(
+                text(f"CREATE INDEX `{index_name}` ON `{table_name}` ({columns})")
+            )
+            print(f"Added index {table_name}.{index_name}")
 
         await connection.execute(
             text(

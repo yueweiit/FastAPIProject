@@ -304,6 +304,7 @@
         <div class="card">
             <div class="flex-between"><h3>产品图册</h3><button class="btn btn-secondary" onclick="loadGallery()">刷新</button></div>
             <div id="gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:12px"></div>
+            <div class="pagination" id="gallery-pagination"></div>
         </div>
     </div>
 
@@ -334,6 +335,7 @@
                 <tbody id="sales-tbody"></tbody>
             </table>
             </div>
+            <div class="pagination" id="sales-pagination"></div>
         </div>
         <div class="card">
             <h3>CSV导入格式说明</h3>
@@ -660,6 +662,7 @@ async function createProduct() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         showMsg(`商品创建成功: ${data.sku} (ID: ${data.id})`);
+        invalidateProductOptions();
         loadProducts();
         document.getElementById('p-sku').value = '';
         document.getElementById('p-name').value = '';
@@ -672,8 +675,10 @@ async function deleteProduct(id) {
     try {
         await api('DELETE', `/products/${id}`);
         showMsg('删除成功');
+        selectedProductIds.delete(Number(id));
+        invalidateProductOptions();
         loadProducts();
-        loadGallery();
+        if (document.getElementById('sec-gallery').classList.contains('active')) loadGallery();
     } catch (e) { showMsg(e.message, false); }
 }
 
@@ -682,14 +687,12 @@ let currentProductList = [];
 const selectedProductIds = new Set();
 let productPage = 1;
 let productPageSize = 20;
+let productTotal = 0;
 
 function renderProductPage() {
     const tbody = document.getElementById('products-tbody');
-    const pageCount = Math.max(1, Math.ceil(currentProductList.length / productPageSize));
-    productPage = Math.min(productPage, pageCount);
-    const start = (productPage - 1) * productPageSize;
-    const pageItems = currentProductList.slice(start, start + productPageSize);
-    tbody.innerHTML = pageItems.length ? pageItems.map(p => `<tr>
+    const pageCount = Math.max(1, Math.ceil(productTotal / productPageSize));
+    tbody.innerHTML = currentProductList.length ? currentProductList.map(p => `<tr>
         <td><input type="checkbox" data-product-select="${p.id}" ${selectedProductIds.has(Number(p.id)) ? 'checked' : ''} onchange="toggleProductSelection(${p.id}, this.checked)" aria-label="选择商品 ${p.sku}"></td>
         <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
         <td><strong>${p.sku}</strong></td>
@@ -703,25 +706,18 @@ function renderProductPage() {
             ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>` : ''}
         </td>
     </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无商品</td></tr>';
-    renderPagination('products-pagination', productPage, pageCount, currentProductList.length, productPageSize);
+    renderPagination('products-pagination', productPage, pageCount, productTotal, productPageSize);
     updateProductSelectionState();
 }
 
 async function loadProducts() {
     document.querySelector('#sec-products .card:first-child').style.display = isOperator() ? '' : 'none';
     document.getElementById('edit-product-modal').style.display = 'none';
-    const list = await api('GET', '/products');
-    const tbody = document.getElementById('products-tbody');
-    currentProductList = list;
-    const currentIds = new Set(list.map(product => Number(product.id)));
-    selectedProductIds.forEach(id => { if (!currentIds.has(id)) selectedProductIds.delete(id); });
-    if (!list.length) {
-        selectedProductIds.clear();
-        tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无商品</td></tr>';
-        renderPagination('products-pagination', 1, 1, 0, productPageSize);
-        updateProductSelectionState();
-        return;
-    }
+    const result = await api('GET', `/products?page=${productPage}&page_size=${productPageSize}`);
+    currentProductList = result.items;
+    productTotal = result.total;
+    productPage = result.page;
+    productPageSize = result.page_size;
     renderProductPage();
 }
 
@@ -732,9 +728,7 @@ function toggleProductSelection(id, checked) {
 }
 
 function toggleAllProductSelection(checked) {
-    const start = (productPage - 1) * productPageSize;
-    const pageItems = currentProductList.slice(start, start + productPageSize);
-    pageItems.forEach(product => {
+    currentProductList.forEach(product => {
         if (checked) selectedProductIds.add(Number(product.id));
         else selectedProductIds.delete(Number(product.id));
     });
@@ -745,8 +739,7 @@ function toggleAllProductSelection(checked) {
 function updateProductSelectionState() {
     const selectAll = document.getElementById('product-select-all');
     if (!selectAll) return;
-    const start = (productPage - 1) * productPageSize;
-    const visibleIds = currentProductList.slice(start, start + productPageSize).map(product => Number(product.id));
+    const visibleIds = currentProductList.map(product => Number(product.id));
     const checkedCount = visibleIds.filter(id => selectedProductIds.has(id)).length;
     selectAll.checked = visibleIds.length > 0 && checkedCount === visibleIds.length;
     selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
@@ -757,20 +750,25 @@ function renderPagination(containerId, page, pageCount, total, pageSize) {
     if (!container) return;
     const buttons = [];
     buttons.push(`<span class="pagination-summary">共 ${total} 条</span>`);
-    buttons.push(`<label>每页 <select onchange="${containerId === 'products-pagination' ? 'changeProductPageSize' : 'changeBatchPageSize'}(this.value)"><option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option><option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option><option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option></select> 条</label>`);
-    buttons.push(`<button ${page <= 1 ? 'disabled' : ''} onclick="${containerId === 'products-pagination' ? 'goProductPage' : 'goBatchPage'}(${page - 1})">上一页</button>`);
+    const config = {
+        'products-pagination': ['goProductPage', 'changeProductPageSize'],
+        'batches-pagination': ['goBatchPage', 'changeBatchPageSize'],
+        'sales-pagination': ['goSalesPage', 'changeSalesPageSize'],
+        'gallery-pagination': ['goGalleryPage', 'changeGalleryPageSize'],
+    }[containerId];
+    buttons.push(`<label>每页 <select onchange="${config[1]}(this.value)"><option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option><option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option><option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option></select> 条</label>`);
+    buttons.push(`<button ${page <= 1 ? 'disabled' : ''} onclick="${config[0]}(${page - 1})">上一页</button>`);
     const from = Math.max(1, page - 2), to = Math.min(pageCount, page + 2);
-    for (let current = from; current <= to; current++) buttons.push(`<button class="${current === page ? 'active' : ''}" onclick="${containerId === 'products-pagination' ? 'goProductPage' : 'goBatchPage'}(${current})">${current}</button>`);
-    buttons.push(`<button ${page >= pageCount ? 'disabled' : ''} onclick="${containerId === 'products-pagination' ? 'goProductPage' : 'goBatchPage'}(${page + 1})">下一页</button>`);
+    for (let current = from; current <= to; current++) buttons.push(`<button class="${current === page ? 'active' : ''}" onclick="${config[0]}(${current})">${current}</button>`);
+    buttons.push(`<button ${page >= pageCount ? 'disabled' : ''} onclick="${config[0]}(${page + 1})">下一页</button>`);
     container.innerHTML = buttons.join('');
 }
-function goProductPage(page) { productPage = page; renderProductPage(); }
-function changeProductPageSize(size) { productPageSize = Number(size); productPage = 1; renderProductPage(); }
+function goProductPage(page) { productPage = page; loadProducts(); }
+function changeProductPageSize(size) { productPageSize = Number(size); productPage = 1; loadProducts(); }
 
 // ========== 编辑商品 ==========
 async function openEditProduct(id) {
-    const list = await api('GET', '/products');
-    const p = list.find(x => x.id === id);
+    const p = currentProductList.find(x => x.id === id);
     if (!p) return;
     editingProductId = id;
     document.getElementById('ep-sku').value = p.sku;
@@ -811,6 +809,7 @@ async function saveEditProduct() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         showMsg(`商品 ${data.sku} 更新成功`);
+        invalidateProductOptions();
         closeEditProduct();
         loadProducts();
     } catch (e) { showMsg(e.message, false); }
@@ -818,7 +817,6 @@ async function saveEditProduct() {
 
 async function downloadProductExport(ids) {
     const selectedIds = ids.filter(Boolean);
-    if (!selectedIds.length) { showMsg('暂无可导出的商品', false); return; }
     const query = selectedIds.map(id => `product_ids=${encodeURIComponent(id)}`).join('&');
     try {
         const res = await fetch(`/products/export?${query}`, {
@@ -840,7 +838,7 @@ async function downloadProductExport(ids) {
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-        showMsg(`已导出 ${selectedIds.length} 个商品`);
+        showMsg(selectedIds.length ? `已导出 ${selectedIds.length} 个商品` : '已导出全部商品');
     } catch (e) { showMsg(e.message, false); }
 }
 
@@ -848,20 +846,27 @@ function exportProduct(id) { downloadProductExport([id]); }
 
 function exportAllProducts() {
     const ids = selectedProductIds.size
-        ? currentProductList.filter(product => selectedProductIds.has(Number(product.id))).map(product => product.id)
-        : currentProductList.map(product => product.id);
+        ? [...selectedProductIds]
+        : [];
     downloadProductExport(ids);
 }
 
 // ========== 产品图册 ==========
+let galleryPage = 1;
+let galleryPageSize = 20;
+let galleryTotal = 0;
 async function loadGallery() {
-    const list = await api('GET', '/products');
+    const result = await api('GET', `/products?page=${galleryPage}&page_size=${galleryPageSize}`);
+    const list = result.items;
+    galleryPage = result.page;
+    galleryPageSize = result.page_size;
+    galleryTotal = result.total;
     const el = document.getElementById('gallery-grid');
-    if (!list.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1">暂无产品</div>'; return; }
+    if (!list.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1">暂无产品</div>'; renderPagination('gallery-pagination', 1, 1, 0, galleryPageSize); return; }
     el.innerHTML = list.map(p => `
         <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
             <div style="height:160px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;position:relative">
-                ${p.image ? `<img src="${p.image}" style="width:100%;height:100%;object-fit:cover">` : `<span style="color:#aaa;font-size:40px">📦</span>`}
+                ${p.image ? `<img src="${p.image}" loading="lazy" style="width:100%;height:100%;object-fit:cover">` : `<span style="color:#aaa;font-size:40px">📦</span>`}
                 ${p.image ? `<a class="btn btn-secondary gallery-download" href="${p.image}" download title="下载图片">下载</a>` : ''}
             </div>
             <div style="padding:12px">
@@ -870,7 +875,10 @@ async function loadGallery() {
             </div>
         </div>
     `).join('');
+    renderPagination('gallery-pagination', galleryPage, Math.max(1, Math.ceil(galleryTotal / galleryPageSize)), galleryTotal, galleryPageSize);
 }
+function goGalleryPage(page) { galleryPage = page; loadGallery(); }
+function changeGalleryPageSize(size) { galleryPageSize = Number(size); galleryPage = 1; loadGallery(); }
 
 // ========== 入库 ==========
 ['b-qty','b-total-amount','b-ship','b-lastmile','b-other'].forEach(id => {
@@ -915,7 +923,7 @@ async function createBatch() {
 }
 
 async function loadBatchSkuOptions() {
-    if (!allProducts.length) allProducts = await api('GET', '/products');
+    await loadProductOptions();
     const sel = document.getElementById('b-pid');
     sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.id}">${p.sku} - ${p.name}</option>`).join('');
 }
@@ -925,6 +933,7 @@ let currentBatchList = [];
 const selectedBatchIds = new Set();
 let batchPage = 1;
 let batchPageSize = 20;
+let batchTotal = 0;
 const BATCH_COLUMNS = ['image', 'product_name', 'sku', 'batch_no', 'dingtalk_order_no', 'quantity', 'remaining_quantity', 'purchase_price', 'total_amount', 'shipping_cost', 'shipping_cost_no', 'last_mile_cost', 'last_mile_cost_no', 'other_cost', 'other_cost_no', 'unit_cost', 'shipping_date', 'arrived_at', 'actions'];
 const visibleBatchColumns = new Set(BATCH_COLUMNS);
 
@@ -970,9 +979,7 @@ function toggleBatchSelection(id, checked) {
 }
 
 function toggleAllBatchSelection(checked) {
-    const start = (batchPage - 1) * batchPageSize;
-    const pageItems = currentBatchList.slice(start, start + batchPageSize);
-    pageItems.forEach(batch => {
+    currentBatchList.forEach(batch => {
         if (checked) selectedBatchIds.add(Number(batch.id));
         else selectedBatchIds.delete(Number(batch.id));
     });
@@ -983,8 +990,7 @@ function toggleAllBatchSelection(checked) {
 function updateBatchSelectionState() {
     const selectAll = document.getElementById('batch-select-all');
     if (!selectAll) return;
-    const start = (batchPage - 1) * batchPageSize;
-    const visibleIds = currentBatchList.slice(start, start + batchPageSize).map(batch => Number(batch.id));
+    const visibleIds = currentBatchList.map(batch => Number(batch.id));
     const checkedCount = visibleIds.filter(id => selectedBatchIds.has(id)).length;
     selectAll.checked = visibleIds.length > 0 && checkedCount === visibleIds.length;
     selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
@@ -992,11 +998,8 @@ function updateBatchSelectionState() {
 
 function renderBatchPage() {
     const tbody = document.getElementById('batches-tbody');
-    const pageCount = Math.max(1, Math.ceil(currentBatchList.length / batchPageSize));
-    batchPage = Math.min(batchPage, pageCount);
-    const start = (batchPage - 1) * batchPageSize;
-    const pageItems = currentBatchList.slice(start, start + batchPageSize);
-    tbody.innerHTML = pageItems.map(b => {
+    const pageCount = Math.max(1, Math.ceil(batchTotal / batchPageSize));
+    tbody.innerHTML = currentBatchList.map(b => {
         const p = b._product || {};
         const canEdit = b.remaining_quantity === b.quantity && (isAdmin() || Number(b.user_id) === CURRENT_USER_ID);
         return `<tr>
@@ -1027,11 +1030,11 @@ function renderBatchPage() {
         </tr>`;
     }).join('') || `<tr><td colspan="${Math.max(visibleBatchColumns.size + 1, 1)}" class="empty">暂无批次</td></tr>`;
     applyBatchColumnSelection();
-    renderPagination('batches-pagination', batchPage, pageCount, currentBatchList.length, batchPageSize);
+    renderPagination('batches-pagination', batchPage, pageCount, batchTotal, batchPageSize);
     updateBatchSelectionState();
 }
-function goBatchPage(page) { batchPage = page; renderBatchPage(); }
-function changeBatchPageSize(size) { batchPageSize = Number(size); batchPage = 1; renderBatchPage(); }
+function goBatchPage(page) { batchPage = page; loadBatches(); }
+function changeBatchPageSize(size) { batchPageSize = Number(size); batchPage = 1; loadBatches(); }
 function searchBatches() { batchPage = 1; loadBatches(); }
 function clearBatchSearch() {
     document.getElementById('batch-keyword').value = '';
@@ -1051,30 +1054,31 @@ async function loadBatches() {
     document.getElementById('edit-batch-modal').style.display = 'none';
     await loadBatchSkuOptions();
     const keyword = document.getElementById('batch-keyword')?.value.trim();
-    const batchPath = keyword ? `/batches?keyword=${encodeURIComponent(keyword)}` : '/batches';
-    const [batchList, productList] = await Promise.all([api('GET', batchPath), api('GET', '/products')]);
+    const query = new URLSearchParams({page: batchPage, page_size: batchPageSize});
+    if (keyword) query.set('keyword', keyword);
+    const result = await api('GET', `/batches?${query}`);
+    const batchList = result.items;
+    batchPage = result.page;
+    batchPageSize = result.page_size;
+    batchTotal = result.total;
     const productMap = {};
-    productList.forEach(p => productMap[p.id] = p);
+    allProducts.forEach(p => productMap[p.id] = p);
     const tbody = document.getElementById('batches-tbody');
     if (!batchList.length) {
         currentBatchList = [];
-        selectedBatchIds.clear();
         tbody.innerHTML = `<tr><td colspan="${Math.max(visibleBatchColumns.size + 1, 1)}" class="empty">暂无批次</td></tr>`;
-        renderPagination('batches-pagination', 1, 1, 0, batchPageSize);
+        renderPagination('batches-pagination', batchPage, Math.max(1, Math.ceil(batchTotal / batchPageSize)), batchTotal, batchPageSize);
         updateBatchSelectionState();
         return;
     }
     currentBatchList = batchList;
-    const currentIds = new Set(batchList.map(batch => Number(batch.id)));
-    selectedBatchIds.forEach(id => { if (!currentIds.has(id)) selectedBatchIds.delete(id); });
     currentBatchList = batchList.map(batch => ({...batch, _product: productMap[batch.product_id] || {}}));
     renderBatchPage();
 }
 
 // ========== 批次编辑/删除 ==========
 async function openEditBatch(id) {
-    const list = await api('GET', '/batches');
-    const b = list.find(x => x.id === id);
+    const b = currentBatchList.find(x => x.id === id);
     if (!b) return;
     editingBatchId = id;
     document.getElementById('edit-batch-label').textContent = b.batch_no;
@@ -1148,12 +1152,12 @@ async function deleteBatch(id) {
     } catch (e) { showMsg(e.message, false); }
 }
 
-async function downloadBatchExport(ids) {
+async function downloadBatchExport(ids, extraParams = new URLSearchParams()) {
     const selectedIds = ids.filter(Boolean);
-    if (!selectedIds.length) { showMsg('暂无可导出的批次', false); return; }
-    const query = selectedIds.map(id => `batch_ids=${encodeURIComponent(id)}`).join('&');
+    const query = new URLSearchParams(extraParams);
+    selectedIds.forEach(id => query.append('batch_ids', id));
     try {
-        const res = await fetch(`/batches/export?${query}`, {
+        const res = await fetch(`/batches/export?${query.toString()}`, {
             headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
         });
         if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
@@ -1172,23 +1176,40 @@ async function downloadBatchExport(ids) {
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-        showMsg(`已导出 ${selectedIds.length} 条批次`);
+        showMsg(selectedIds.length ? `已导出 ${selectedIds.length} 条批次` : '已导出全部匹配批次');
     } catch (e) { showMsg(e.message, false); }
 }
 
 function exportBatch(id) { downloadBatchExport([id]); }
 
 function exportAllBatches() {
-    const ids = selectedBatchIds.size
-        ? currentBatchList.filter(batch => selectedBatchIds.has(Number(batch.id))).map(batch => batch.id)
-        : currentBatchList.map(batch => batch.id);
-    downloadBatchExport(ids);
+    if (selectedBatchIds.size) {
+        downloadBatchExport([...selectedBatchIds]);
+        return;
+    }
+    const keyword = document.getElementById('batch-keyword')?.value.trim();
+    const params = new URLSearchParams();
+    if (keyword) params.set('keyword', keyword);
+    downloadBatchExport([], params);
 }
 
 // ========== 销售 ==========
 let allProducts = [];
+let allProductsPromise = null;
+async function loadProductOptions() {
+    if (allProducts.length) return allProducts;
+    if (!allProductsPromise) {
+        allProductsPromise = api('GET', '/products/options')
+            .then(list => { allProducts = list; return list; })
+            .finally(() => { allProductsPromise = null; });
+    }
+    return allProductsPromise;
+}
+function invalidateProductOptions() {
+    allProducts = [];
+}
 async function loadSkuOptions() {
-    if (!allProducts.length) allProducts = await api('GET', '/products');
+    await loadProductOptions();
     const sel = document.getElementById('s-sku');
     sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.sku}">${p.sku} - ${p.name}</option>`).join('');
 }
@@ -1252,12 +1273,20 @@ async function loadSales() {
     // 运营和管理员才显示销售表单和导入按钮
     document.querySelector('#sec-sales .card:first-child').style.display = isOperator() ? '' : 'none';
     document.getElementById('import-csv').parentElement.style.display = isOperator() ? '' : 'none';
-    if (!allProducts.length) allProducts = await api('GET', '/products');
+    await loadProductOptions();
     const productMap = {};
     allProducts.forEach(p => productMap[p.id] = p);
-    const list = await api('GET', '/sales');
+    const result = await api('GET', `/sales?page=${salesPage}&page_size=${salesPageSize}`);
+    const list = result.items;
+    salesPage = result.page;
+    salesPageSize = result.page_size;
+    salesTotal = result.total;
     const tbody = document.getElementById('sales-tbody');
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无销售记录</td></tr>'; return; }
+    if (!list.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无销售记录</td></tr>';
+        renderPagination('sales-pagination', 1, 1, 0, salesPageSize);
+        return;
+    }
     tbody.innerHTML = list.map(s => {
         const p = productMap[s.product_id] || {};
         const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${d.unit_cost}`).join('<br>') || '-';
@@ -1271,7 +1300,13 @@ async function loadSales() {
             <td class="cost-detail">${details}</td>
         </tr>`;
     }).join('');
+    renderPagination('sales-pagination', salesPage, Math.max(1, Math.ceil(salesTotal / salesPageSize)), salesTotal, salesPageSize);
 }
+let salesPage = 1;
+let salesPageSize = 20;
+let salesTotal = 0;
+function goSalesPage(page) { salesPage = page; loadSales(); }
+function changeSalesPageSize(size) { salesPageSize = Number(size); salesPage = 1; loadSales(); }
 
 // ========== 报表 ==========
 async function loadMonthly() {

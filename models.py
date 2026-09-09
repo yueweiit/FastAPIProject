@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import String, Integer, DECIMAL, DateTime, ForeignKey, func
+from sqlalchemy import String, Integer, DECIMAL, DateTime, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -36,6 +36,10 @@ class Product(Base):
 class InventoryBatch(Base):
     """入库批次 - 每批到货单独记录，含运费的真实成本"""
     __tablename__ = "inventory_batches"
+    __table_args__ = (
+        Index("ix_inventory_batches_arrived_at_id", "arrived_at", "id"),
+        Index("ix_inventory_batches_product_arrived_at", "product_id", "arrived_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), index=True)
@@ -65,6 +69,10 @@ class InventoryBatch(Base):
 class Sale(Base):
     """销售记录 - 每笔订单"""
     __tablename__ = "sales"
+    __table_args__ = (
+        Index("ix_sales_sold_at", "sold_at"),
+        Index("ix_sales_user_sold_at", "user_id", "sold_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), index=True)

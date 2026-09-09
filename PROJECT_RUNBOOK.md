@@ -104,7 +104,9 @@ FIFO 依据批次 `arrived_at` 升序，从 `remaining_quantity > 0` 的批次�
 - `operator`：创建、编辑、删除商品和批次，记录销售；可查看和导出全部批次，但只能编辑、删除自己创建且未被销售消耗的批次；只能看到自己创建的销售。
 - `viewer`：只读商品、批次、销售和报表。
 
-主要接口：`/auth/*` 登录和用户管理；`/products` 商品和图片；`/batches` 入库批次；`/batches/export?batch_ids=1&batch_ids=2` 导出一个或多个批次为带图片 Excel；`/sales` 销售和成本明细；`/reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` 月度报表。
+主要接口：`/auth/*` 登录和用户管理；`/products` 商品和图片；`/products/options` 商品下拉框轻量数据；`/batches` 入库批次；`/batches/export?batch_ids=1&batch_ids=2` 导出一个或多个批次为带图片 Excel；`/sales` 销售和成本明细；`/reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` 月度报表。
+
+商品、批次和销售列表在传入 `page`（从 1 开始）与 `page_size`（1-100）时返回 `{items,total,page,page_size}`，供页面服务端分页使用；超过末页会自动返回最后一页。不传 `page` 时保留原有数组响应，兼容旧调用。商品/批次未勾选时的批量导出仍导出全部匹配数据。应用启动迁移会补齐批次按到货时间和 ID、批次商品加到货时间、销售时间和销售创建人加时间的索引；首次生产部署前应先备份数据库。
 
 ## 前端行为
 

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import Product, InventoryBatch, User
-from schemas import ProductResponse
+from schemas import ProductOptionResponse, ProductPageResponse, ProductResponse
 from auth import RequireAdmin, RequireOperator, RequireAnyRole, get_current_user
 
 router = APIRouter(prefix="/products", tags=["商品管理"])
@@ -54,69 +54,92 @@ async def create_product(
     return _enrich_product(product, 0, Decimal("0"), None)
 
 
-@router.get("", response_model=list[ProductResponse])
-async def list_products(
+@router.get("/options", response_model=list[ProductOptionResponse])
+async def list_product_options(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
-    """列出商品 - 所有角色可查看"""
+    """Return lightweight product data for selectors and batch lookups."""
     result = await db.execute(select(Product).order_by(Product.id.desc()))
-    products = result.scalars().all()
+    return result.scalars().all()
 
-    enriched = []
-    for p in products:
-        # 查库存数量和价值
-        inv_stmt = select(
-            func.sum(InventoryBatch.remaining_quantity),
-            func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost),
-        ).where(InventoryBatch.product_id == p.id)
-        inv_result = await db.execute(inv_stmt)
-        inv_row = inv_result.one()
-        stock_qty = inv_row[0] or 0
-        stock_val = inv_row[1] or Decimal("0")
 
-        # 最近入库时间
-        last_stmt = select(InventoryBatch.arrived_at).where(
-            InventoryBatch.product_id == p.id
-        ).order_by(InventoryBatch.arrived_at.desc()).limit(1)
-        last_result = await db.execute(last_stmt)
-        last_batch = last_result.scalar_one_or_none()
+def _product_summary_stmt():
+    return (
+        select(
+            Product,
+            func.coalesce(func.sum(InventoryBatch.remaining_quantity), 0).label("stock_quantity"),
+            func.coalesce(
+                func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost), 0
+            ).label("stock_value"),
+            func.max(InventoryBatch.arrived_at).label("last_batch_at"),
+        )
+        .outerjoin(InventoryBatch, InventoryBatch.product_id == Product.id)
+        .group_by(Product.id, Product.sku, Product.name, Product.image, Product.created_at)
+        .order_by(Product.id.desc())
+    )
 
-        enriched.append(_enrich_product(p, stock_qty, stock_val, last_batch))
 
-    return enriched
+@router.get("", response_model=list[ProductResponse] | ProductPageResponse)
+async def list_products(
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    """列出商品；分页请求在单条聚合查询中返回库存摘要。"""
+    stmt = _product_summary_stmt()
+    if page is None:
+        result = await db.execute(stmt)
+        return [_product_summary_from_row(row) for row in result.all()]
+
+    total = (await db.execute(select(func.count()).select_from(Product))).scalar_one()
+    page = min(page, max(1, (total + page_size - 1) // page_size))
+    result = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
+    return ProductPageResponse(
+        items=[_product_summary_from_row(row) for row in result.all()],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.get("/export")
 async def export_products(
-    product_ids: list[int] = Query(..., min_length=1, description="要导出的商品 ID，可重复传入"),
+    product_ids: list[int] | None = Query(default=None, description="要导出的商品 ID，可重复传入"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
     """导出一个或多个商品为 Excel，并嵌入商品图片。"""
-    result = await db.execute(
-        select(Product).where(Product.id.in_(product_ids)).order_by(Product.id.desc())
-    )
+    stmt = select(Product).order_by(Product.id.desc())
+    if product_ids:
+        stmt = stmt.where(Product.id.in_(product_ids))
+    result = await db.execute(stmt)
     products = list(result.scalars().all())
     if not products:
         raise HTTPException(status_code=404, detail="没有可导出的商品")
 
-    rows = []
-    for product in products:
-        inv_result = await db.execute(
-            select(
-                func.sum(InventoryBatch.remaining_quantity),
-                func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost),
-            ).where(InventoryBatch.product_id == product.id)
+    product_ids = [product.id for product in products]
+    summaries = await db.execute(
+        select(
+            InventoryBatch.product_id,
+            func.coalesce(func.sum(InventoryBatch.remaining_quantity), 0).label("stock_quantity"),
+            func.coalesce(
+                func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost), 0
+            ).label("stock_value"),
+            func.max(InventoryBatch.arrived_at).label("last_batch_at"),
         )
-        stock_qty, stock_value = inv_result.one()
-        last_result = await db.execute(
-            select(InventoryBatch.arrived_at)
-            .where(InventoryBatch.product_id == product.id)
-            .order_by(InventoryBatch.arrived_at.desc())
-            .limit(1)
-        )
-        rows.append((product, stock_qty or 0, stock_value or Decimal("0"), last_result.scalar_one_or_none()))
+        .where(InventoryBatch.product_id.in_(product_ids))
+        .group_by(InventoryBatch.product_id)
+    )
+    summary_map = {
+        row.product_id: (row.stock_quantity, row.stock_value, row.last_batch_at)
+        for row in summaries.all()
+    }
+    rows = [
+        (product, *summary_map.get(product.id, (0, Decimal("0"), None)))
+        for product in products
+    ]
 
     workbook = Workbook()
     sheet = workbook.active
@@ -188,6 +211,11 @@ def _enrich_product(product, stock_qty, stock_val, last_batch):
         stock_value=stock_val,
         last_batch_at=str(last_batch)[:16] if last_batch else None,
     )
+
+
+def _product_summary_from_row(row):
+    product, stock_qty, stock_val, last_batch = row
+    return _enrich_product(product, stock_qty, stock_val, last_batch)
 
 
 @router.put("/{product_id}", response_model=ProductResponse)

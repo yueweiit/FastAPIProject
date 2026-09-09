@@ -9,13 +9,13 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import InventoryBatch, Product, User, SaleCostDetail
-from schemas import BatchCreate, BatchResponse
+from schemas import BatchCreate, BatchPageResponse, BatchResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
 
 router = APIRouter(prefix="/batches", tags=["入库管理"])
@@ -181,41 +181,72 @@ async def delete_batch(
     return {"ok": True}
 
 
-@router.get("", response_model=list[BatchResponse])
+@router.get("", response_model=list[BatchResponse] | BatchPageResponse)
 async def list_batches(
     product_id: int | None = None,
     keyword: str | None = Query(default=None, max_length=255),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
     """列出批次，可按商品名称、SKU 或批次号搜索。"""
-    stmt = select(InventoryBatch)
+    filters = []
+    joins_product = False
     if product_id:
-        stmt = stmt.where(InventoryBatch.product_id == product_id)
+        filters.append(InventoryBatch.product_id == product_id)
     if keyword and keyword.strip():
         pattern = f"%{keyword.strip()}%"
-        stmt = stmt.join(Product).where(or_(
+        joins_product = True
+        filters.append(or_(
             Product.name.ilike(pattern),
             Product.sku.ilike(pattern),
             InventoryBatch.batch_no.ilike(pattern),
         ))
-    stmt = stmt.order_by(InventoryBatch.arrived_at.desc())
+
+    stmt = select(InventoryBatch)
+    count_stmt = select(func.count()).select_from(InventoryBatch)
+    if joins_product:
+        stmt = stmt.join(Product)
+        count_stmt = count_stmt.join(Product)
+    if filters:
+        stmt = stmt.where(*filters)
+        count_stmt = count_stmt.where(*filters)
+    stmt = stmt.order_by(InventoryBatch.arrived_at.desc(), InventoryBatch.id.desc())
+    if page is not None:
+        total = (await db.execute(count_stmt)).scalar_one()
+        page = min(page, max(1, (total + page_size - 1) // page_size))
+        stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
-    return result.scalars().all()
+    batches = result.scalars().all()
+    if page is None:
+        return batches
+    return BatchPageResponse(items=batches, total=total, page=page, page_size=page_size)
 
 
 @router.get("/export")
 async def export_batches(
-    batch_ids: list[int] = Query(..., min_length=1, description="要导出的批次 ID，可重复传入"),
+    batch_ids: list[int] | None = Query(default=None, description="要导出的批次 ID，可重复传入"),
+    product_id: int | None = Query(default=None),
+    keyword: str | None = Query(default=None, max_length=255),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
     """导出一个或多个批次为 Excel，并嵌入商品图片。"""
-    stmt = (
-        select(InventoryBatch)
-        .where(InventoryBatch.id.in_(batch_ids))
-        .order_by(InventoryBatch.arrived_at.desc(), InventoryBatch.id.desc())
-    )
+    stmt = select(InventoryBatch)
+    if batch_ids:
+        stmt = stmt.where(InventoryBatch.id.in_(batch_ids))
+    else:
+        if product_id:
+            stmt = stmt.where(InventoryBatch.product_id == product_id)
+        if keyword and keyword.strip():
+            pattern = f"%{keyword.strip()}%"
+            stmt = stmt.join(Product).where(or_(
+                Product.name.ilike(pattern),
+                Product.sku.ilike(pattern),
+                InventoryBatch.batch_no.ilike(pattern),
+            ))
+    stmt = stmt.order_by(InventoryBatch.arrived_at.desc(), InventoryBatch.id.desc())
     result = await db.execute(stmt)
     batches = list(result.scalars().all())
     if not batches:
