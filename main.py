@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import decimal
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,12 +9,26 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from database import init_db
+from database import async_session, init_db
 from migrate import migrate
-from routers import products, batches, sales, reports, auth
+from routers import products, batches, sales, reports, auth, finance_masters
 from auth import seed_users
+from services.accounting_periods import auto_confirm_expired_periods
 
 BASE_DIR = Path(__file__).parent
+logger = logging.getLogger(__name__)
+
+
+async def _accounting_period_worker() -> None:
+    while True:
+        try:
+            async with async_session() as db:
+                await auto_confirm_expired_periods(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("会计期间自动确认检查失败")
+        await asyncio.sleep(60)
 
 
 class DecimalJSONResponse(JSONResponse):
@@ -32,7 +48,17 @@ async def lifespan(app: FastAPI):
     await init_db()
     await migrate()
     await seed_users()
-    yield
+    async with async_session() as db:
+        await auto_confirm_expired_periods(db)
+    worker = asyncio.create_task(_accounting_period_worker())
+    try:
+        yield
+    finally:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
@@ -48,6 +74,7 @@ app.include_router(products.router)
 app.include_router(batches.router)
 app.include_router(sales.router)
 app.include_router(reports.router)
+app.include_router(finance_masters.router)
 
 uploads_dir = BASE_DIR / "uploads"
 uploads_dir.mkdir(exist_ok=True)

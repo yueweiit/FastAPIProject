@@ -55,6 +55,7 @@
         .tag-green { background:#e4f7ef; color:#087f5b; }
         .tag-red { background:#fde8ec; color:#c9334d; }
         .tag-blue { background:#e6f0ff; color:#245db3; }
+        .tag-orange { background:#fff1dc; color:#a06108; }
         .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
         .stat-card { background:#f7f9fb; border:1px solid var(--line); border-radius:9px; padding:16px; text-align:center; }
         .stat-card .value { font-size:22px; font-weight:800; color:var(--ink); }
@@ -66,6 +67,39 @@
         .section.active { display:block; }
         .empty { text-align:center; padding:44px !important; color:#9aa5b4; }
         .cost-detail { font-size:12px; color:var(--teal); margin-top:6px; font-weight:600; }
+        .sales-ledger-table { min-width:1220px !important; }
+        .sales-ledger-table thead th { background:#0f3b5d; color:#fff; text-align:center; border-bottom-color:#0a2b45; }
+        .sales-ledger-table th:nth-child(n+5), .sales-ledger-table td:nth-child(n+5) { text-align:right; }
+        .sales-ledger-table td:nth-child(2), .sales-ledger-table td:nth-child(3) { text-align:center; }
+        .sales-ledger-table tfoot td { background:#cfe3f1; color:#152238; font-weight:800; border-top:1px solid #aac9dd; border-bottom:0; }
+        .sales-ledger-table .unlinked-store { color:#8a5b13; }
+        .sales-ledger-table .money-unavailable { color:#a06108; font-weight:700; }
+        .sales-page-header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:16px; padding:2px 2px 0; }
+        .sales-page-header h2 { font-size:22px; color:var(--ink); }
+        .sales-toolbar-actions { display:flex; align-items:center; gap:8px; }
+        .sales-toolbar-actions .btn { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:9px 15px; border:1px solid transparent; border-radius:7px; font-size:13px; font-weight:700; cursor:pointer; }
+        .sales-entry-card { padding:20px 22px; }
+        .sales-entry-card .flex-between { align-items:flex-start; }
+        .sales-entry-card h3 { margin-bottom:4px; font-size:16px; }
+        .sales-entry-grid { display:grid; grid-template-columns:minmax(220px,1.4fr) minmax(170px,.8fr) minmax(150px,.7fr) auto; gap:12px; align-items:end; width:min(820px,100%); }
+        .sales-entry-grid .form-group input, .sales-entry-grid .form-group select { width:100%; }
+        .sales-kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; margin:2px 0 16px; }
+        .sales-kpi { border-left:3px solid #d7dee8; padding:10px 14px; background:#f7f9fb; }
+        .sales-kpi:nth-child(2) { border-left-color:var(--teal); }
+        .sales-kpi:nth-child(3) { border-left-color:#3b82b4; }
+        .sales-kpi:nth-child(4) { border-left-color:var(--accent); }
+        .sales-kpi .label { color:var(--muted); font-size:12px; }
+        .sales-kpi .value { margin-top:3px; color:var(--ink); font-size:18px; font-weight:800; }
+        .sales-ledger-table { min-width:1390px !important; }
+        .sales-ledger-table .fx-missing { color:#a06108; font-weight:700; }
+        .import-history-table { min-width:1120px !important; }
+        .file-primary { max-width:320px; overflow:hidden; text-overflow:ellipsis; font-weight:700; }
+        .file-secondary { margin-top:3px; color:var(--muted); font-size:11px; }
+        .status-pill { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+        .status-completed { color:#087f5b; background:#e4f7ef; }
+        .status-rolled-back { color:#687386; background:#edf0f4; }
+        .btn-danger { color:#b4233d; background:#fff; border-color:#edb8c2 !important; }
+        .btn-danger:hover { color:#fff; background:#b4233d; border-color:#b4233d !important; }
         .flex-between { display:flex; justify-content:space-between; align-items:center; gap:18px; }
         .import-zone { border:2px dashed #d4dce7; border-radius:8px; padding:20px; text-align:center; margin-top:12px; cursor:pointer; }
         .import-zone:hover { border-color:var(--accent); background:#fff8f9; }
@@ -310,11 +344,24 @@
 
     <!-- ========== 销售记录 ========== -->
     <div id="sec-sales" class="section">
-        <div class="card">
-            <h3>按天记录销售（FIFO自动扣库存）</h3>
-            <div class="form-row">
+        <div class="sales-page-header">
+            <div>
+                <h2>销售管理</h2>
+            </div>
+            <div class="sales-toolbar-actions">
+                <button class="btn btn-secondary" onclick="refreshSalesWorkspace()">刷新数据</button>
+                <label class="btn btn-primary">导入订单详情<input type="file" id="import-csv" accept=".csv,.xlsx,.xlsm" style="display:none" onchange="importSalesFile(this)"></label>
+            </div>
+        </div>
+        <div class="card sales-entry-card" id="sales-manual-entry-card">
+            <div class="flex-between" style="margin-bottom:14px">
+                <div>
+                    <h3>手工录入销售</h3>
+                </div>
+            </div>
+            <div class="sales-entry-grid">
                 <div class="form-group"><label>产品SKU</label>
-                    <select id="s-sku" style="padding:8px 12px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:180px"><option value="">选择产品</option></select>
+                    <select id="s-sku"><option value="">选择产品</option></select>
                 </div>
                 <div class="form-group"><label>日期</label><input id="s-date" type="date"></div>
                 <div class="form-group"><label>数量</label><input id="s-qty" type="number" placeholder="10"></div>
@@ -323,28 +370,81 @@
         </div>
         <div class="card">
             <div class="flex-between">
-                <h3>销售记录</h3>
-                <div>
-                    <button class="btn btn-secondary" onclick="loadSales()">刷新</button>
-                    <label class="btn btn-primary" style="margin-left:8px;cursor:pointer">导入CSV<input type="file" id="import-csv" accept=".csv" style="display:none" onchange="importCSV(this)"></label>
-                </div>
+                <h3>人民币销售台账</h3>
+                <span style="font-size:12px;color:var(--muted)">本页汇总</span>
             </div>
+            <div class="sales-kpi-grid" id="sales-kpis"></div>
             <div class="table-scroll">
-            <table>
-                <thead><tr><th>日期</th><th>SKU</th><th>产品名称</th><th>数量</th><th>总成本</th><th>成本明细</th></tr></thead>
+            <table class="sales-ledger-table">
+                <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>销售收入（元）</th><th>销售成本（元）</th><th>平台费（元）</th><th>毛利（元）</th></tr></thead>
                 <tbody id="sales-tbody"></tbody>
+                <tfoot id="sales-tfoot"></tfoot>
             </table>
             </div>
             <div class="pagination" id="sales-pagination"></div>
         </div>
-        <div class="card">
-            <h3>CSV导入格式说明</h3>
-            <p style="font-size:13px;color:#666">CSV文件列：SKU, 日期(YYYY-MM-DD), 数量<br>示例：<code>BT-001,2024-01-15,50</code></p>
+        <div class="card" id="sales-import-history-card">
+            <div class="flex-between">
+                <h3>导入历史</h3>
+                <button class="btn btn-secondary" onclick="loadSalesImports()">刷新</button>
+            </div>
+            <div class="table-scroll">
+            <table class="import-history-table">
+                <thead><tr><th>文件</th><th>店铺</th><th>导入人</th><th>导入时间</th><th>结算行</th><th>销售记录</th><th>待确认</th><th>状态</th><th>操作</th></tr></thead>
+                <tbody id="sales-imports-tbody"></tbody>
+            </table>
+            </div>
+        </div>
+        <div class="card" id="pending-confirmations-card">
+            <div class="flex-between">
+                <h3>待确认区</h3>
+                <button class="btn btn-secondary" onclick="loadPendingConfirmations()">刷新</button>
+            </div>
+            <p id="pending-confirmations-summary" style="font-size:13px;color:#687386;margin:10px 0">正在加载待确认记录...</p>
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>店铺</th><th>导入文件</th><th>行号</th><th>订单 ID</th><th>SKU ID</th><th>商品名称</th><th>SKU 名称</th><th>数量</th><th>待确认原因</th></tr></thead>
+                <tbody id="pending-confirmations-tbody"></tbody>
+            </table>
+            </div>
+            <div class="pagination" id="pending-confirmations-pagination"></div>
         </div>
     </div>
 
     <!-- ========== 报表 ========== -->
     <div id="sec-reports" class="section">
+        <div class="card" id="accounting-period-card">
+            <div class="flex-between">
+                <div>
+                    <h3>月末结账</h3>
+                    <p style="font-size:13px;color:#687386;margin:6px 0 0">月末快照确认后作为后续报表的上月末账面价值；超过次日仍未操作将自动确认。</p>
+                </div>
+                <button class="btn btn-secondary" onclick="loadAccountingPeriods()">刷新</button>
+            </div>
+            <div id="accounting-period-create-controls" class="form-row" style="margin:14px 0 0;display:none;align-items:flex-end">
+                <div class="form-group"><label>期间开始</label><input id="accounting-period-start" type="date"></div>
+                <div class="form-group"><label>期间结束</label><input id="accounting-period-end" type="date"></div>
+                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createAccountingPeriod()">新增期间</button></div>
+            </div>
+            <div class="table-scroll" style="margin-top:12px">
+                <table>
+                    <thead><tr><th>期间</th><th>状态</th><th>快照批次</th><th>自动确认截止</th><th>确认时间</th><th>操作</th></tr></thead>
+                    <tbody id="accounting-periods-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card">
+            <div class="flex-between">
+                <div>
+                    <h3>财务附件报表</h3>
+                    <p style="font-size:13px;color:#687386;margin:6px 0 0">第一张表：存货跌价准备明细表</p>
+                </div>
+                <div class="form-row" style="margin:0;align-items:flex-end">
+                    <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
+                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="exportInventoryImpairmentReport()">导出第一张表</button></div>
+                </div>
+            </div>
+        </div>
         <div class="card">
             <div class="flex-between">
                 <h3>月度产品件数售卖和库存报表</h3>
@@ -362,8 +462,22 @@
             </table>
             </div>
         </div>
+    </div>
     <!-- ========== 用户管理 ========== -->
     <div id="sec-users" class="section">
+        <div class="card">
+            <h3>添加店铺</h3>
+            <div class="form-row">
+                <div class="form-group"><label>店铺名称</label><input id="store-name" placeholder="Lemos Pet 1"></div>
+                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="adminCreateStore()">添加</button></div>
+            </div>
+            <div class="table-scroll">
+            <table>
+                <thead><tr><th>店铺名称</th><th>操作</th></tr></thead>
+                <tbody id="stores-tbody"></tbody>
+            </table>
+            </div>
+        </div>
         <div class="card">
             <h3>添加用户（管理员创建）</h3>
             <div class="form-row">
@@ -383,7 +497,7 @@
             <div class="flex-between"><h3>用户列表</h3><button class="btn btn-secondary" onclick="loadUsers()">刷新</button></div>
             <div class="table-scroll">
             <table>
-                <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>创建时间</th><th>操作</th></tr></thead>
+                <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>绑定店铺</th><th>创建时间</th><th>操作</th></tr></thead>
                 <tbody id="users-tbody"></tbody>
             </table>
             </div>
@@ -489,6 +603,29 @@ function isOperator() { return CURRENT_ROLE === 'admin' || CURRENT_ROLE === 'ope
 function isViewer() { return CURRENT_ROLE === 'viewer'; }
 
 // ========== 用户管理 ==========
+async function adminCreateStore() {
+    const name = document.getElementById('store-name').value.trim();
+    if (!name) {
+        showMsg('请填写店铺名称', false);
+        return;
+    }
+    try {
+        await api('POST', '/finance-masters/stores', {
+            platform: 'tiktok_shop',
+            platform_store_id: `manual-${Date.now()}`,
+            name,
+            country_or_region: 'MX',
+            settlement_currency: 'MXN',
+            timezone: 'Asia/Shanghai',
+            legal_entity: null,
+            is_active: true,
+        });
+        document.getElementById('store-name').value = '';
+        showMsg(`店铺 ${name} 添加成功`);
+        loadUsers();
+    } catch (e) { showMsg(e.message, false); }
+}
+
 async function adminCreateUser() {
     const username = document.getElementById('u-name').value;
     const password = document.getElementById('u-pass').value;
@@ -503,16 +640,33 @@ async function adminCreateUser() {
 }
 
 async function loadUsers() {
-    const list = await api('GET', '/auth/users');
+    const [list, stores] = await Promise.all([
+        api('GET', '/auth/users'),
+        api('GET', '/finance-masters/stores'),
+    ]);
+    const storesTbody = document.getElementById('stores-tbody');
+    storesTbody.innerHTML = stores.length
+        ? stores.map(store => `<tr>
+            <td><strong>${escapeHtml(store.name)}</strong></td>
+            <td><button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:#e94560" onclick="deleteStore(${store.id})">删除</button></td>
+        </tr>`).join('')
+        : '<tr><td colspan="2" class="empty">暂无店铺</td></tr>';
     const tbody = document.getElementById('users-tbody');
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无用户</td></tr>'; return; }
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无用户</td></tr>'; return; }
     tbody.innerHTML = list.map(u => {
         const roleLabel = u.role==='admin'?'管理员':u.role==='operator'?'运营':'查看者';
         const tagClass = u.role==='admin'?'tag-red':u.role==='operator'?'tag-blue':'tag-green';
         const isSelf = u.username === CURRENT_USER;
+        const storeOptions = stores.map(store => `<option value="${store.id}" ${u.store_id === store.id ? 'selected' : ''} ${!store.is_active && u.store_id !== store.id ? 'disabled' : ''}>${escapeHtml(store.name)}${store.is_active ? '' : '（已停用）'}</option>`).join('');
+        const storeControl = u.role === 'admin'
+            ? '<span style="font-size:12px;color:#888">不适用</span>'
+            : `<select onchange="bindUserStore(${u.id}, this.value)" style="font-size:12px;padding:5px 8px;border:1px solid #ddd;border-radius:4px;min-width:150px">
+                <option value="">未绑定</option>${storeOptions}
+            </select>`;
         return `<tr>
-            <td>${u.id}</td><td><strong>${u.username}</strong></td>
+            <td>${u.id}</td><td><strong>${escapeHtml(u.username)}</strong></td>
             <td><span class="tag ${tagClass}" id="role-${u.id}">${roleLabel}</span></td>
+            <td>${storeControl}</td>
             <td>${u.created_at?.slice(0,16)}</td>
             <td style="display:flex;gap:4px;flex-wrap:wrap">
                 ${!isSelf ? `
@@ -528,6 +682,24 @@ async function loadUsers() {
             </td>
         </tr>`;
     }).join('');
+}
+
+async function bindUserStore(userId, value) {
+    try {
+        const storeId = value ? Number(value) : null;
+        const result = await api('PUT', `/auth/users/${userId}/store`, {store_id: storeId});
+        showMsg(result.store_name ? `已绑定店铺：${result.store_name}` : '已解除店铺绑定');
+        loadUsers();
+    } catch (e) { showMsg(e.message, false); loadUsers(); }
+}
+
+async function deleteStore(storeId) {
+    if (!confirm('确认删除该店铺？')) return;
+    try {
+        await api('DELETE', `/finance-masters/stores/${storeId}`);
+        showMsg('店铺删除成功');
+        loadUsers();
+    } catch (e) { showMsg(e.message, false); }
 }
 
 async function changeRole(userId, newRole) {
@@ -621,8 +793,8 @@ function switchTab(name) {
     if (name === 'products') loadProducts();
     if (name === 'batches') loadBatches();
     if (name === 'gallery') loadGallery();
-    if (name === 'sales') { loadSkuOptions(); loadSales(); }
-    if (name === 'reports') loadMonthly();
+    if (name === 'sales') { loadSkuOptions(); refreshSalesWorkspace(); }
+    if (name === 'reports') { loadMonthly(); loadAccountingPeriods(); }
     if (name === 'users') loadUsers();
 }
 
@@ -754,6 +926,7 @@ function renderPagination(containerId, page, pageCount, total, pageSize) {
         'products-pagination': ['goProductPage', 'changeProductPageSize'],
         'batches-pagination': ['goBatchPage', 'changeBatchPageSize'],
         'sales-pagination': ['goSalesPage', 'changeSalesPageSize'],
+        'pending-confirmations-pagination': ['goPendingConfirmationsPage', 'changePendingConfirmationsPageSize'],
         'gallery-pagination': ['goGalleryPage', 'changeGalleryPageSize'],
     }[containerId];
     buttons.push(`<label>每页 <select onchange="${config[1]}(this.value)"><option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option><option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option><option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option></select> 条</label>`);
@@ -1238,40 +1411,44 @@ async function createSale() {
         const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}件@¥${d.unit_cost}`).join(' + ') || '';
         showMsg(`销售成功: ${dateStr} ${sku} | 成本 ¥${s.total_cost} | ${details}`);
         loadSales();
+        loadBatches();
     } catch (e) { showMsg(e.message, false); }
 }
 
-async function importCSV(input) {
+async function importSalesFile(input) {
     const file = input.files[0];
     if (!file) return;
-    const text = await file.text();
-    const lines = text.trim().split('\n');
-    let ok = 0, fail = 0;
-    for (const line of lines) {
-        const [sku, dateStr, qtyStr] = line.split(',').map(s => s.trim());
-        if (!sku || !dateStr || !qtyStr) continue;
-        const pid = getProductIdBySku(sku);
-        if (!pid) { fail++; continue; }
-        try {
-            await api('POST', '/sales', {
-                product_id: pid,
-                order_no: `${dateStr}-${sku}`,
-                quantity: +qtyStr,
-                selling_price: 0,
-                platform_fee: 0,
-                sold_at: `${dateStr}T23:59:59`,
-            });
-            ok++;
-        } catch { fail++; }
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch('/sales/import', {
+            method: 'POST',
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+            const details = (data.errors || []).slice(0, 5).map(e => `第${e.row}行：${e.message}`).join('；');
+            const suffix = (data.errors || []).length > 5 ? '；其余错误请修正文件后重试' : '';
+            throw new Error(details ? `${data.message || '导入失败'}：${details}${suffix}` : (data.detail || '导入失败'));
+        }
+        const warningText = data.warnings?.length ? `；提示${data.warnings.length}条` : '';
+        const pendingText = data.pending_confirmation ? `；待确认${data.pending_confirmation}条` : '';
+        showMsg(`导入完成：结算行${data.settlement_rows}条，销售扣库存${data.sales_created}条，重复跳过${data.skipped_duplicates}条${pendingText}${warningText}`);
+        salesPage = 1;
+        loadSales();
+        loadBatches();
+        loadSalesImports();
+    } catch (e) {
+        showMsg(e.message, false);
+    } finally {
+        input.value = '';
     }
-    showMsg(`导入完成: 成功${ok}条, 失败${fail}条`, fail === 0);
-    loadSales();
-    input.value = '';
 }
 
 async function loadSales() {
     // 运营和管理员才显示销售表单和导入按钮
-    document.querySelector('#sec-sales .card:first-child').style.display = isOperator() ? '' : 'none';
+    document.getElementById('sales-manual-entry-card').style.display = isOperator() ? '' : 'none';
     document.getElementById('import-csv').parentElement.style.display = isOperator() ? '' : 'none';
     await loadProductOptions();
     const productMap = {};
@@ -1282,25 +1459,124 @@ async function loadSales() {
     salesPageSize = result.page_size;
     salesTotal = result.total;
     const tbody = document.getElementById('sales-tbody');
+    const tfoot = document.getElementById('sales-tfoot');
+    const kpis = document.getElementById('sales-kpis');
     if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无销售记录</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty">暂无销售记录</td></tr>';
+        tfoot.innerHTML = '';
+        kpis.innerHTML = `
+            <div class="sales-kpi"><div class="label">销售记录</div><div class="value">0</div></div>
+            <div class="sales-kpi"><div class="label">销售数量</div><div class="value">0</div></div>
+            <div class="sales-kpi"><div class="label">销售收入</div><div class="value">¥0.00</div></div>
+            <div class="sales-kpi"><div class="label">毛利</div><div class="value">¥0.00</div></div>`;
         renderPagination('sales-pagination', 1, 1, 0, salesPageSize);
-        return;
-    }
-    tbody.innerHTML = list.map(s => {
-        const p = productMap[s.product_id] || {};
-        const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${d.unit_cost}`).join('<br>') || '-';
-        const dateStr = s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || s.sold_at?.slice(0,10) || '-';
-        return `<tr>
-            <td>${dateStr}</td>
-            <td><strong>${p.sku || '-'}</strong></td>
-            <td>${p.name || '-'}</td>
-            <td>${s.quantity}</td>
-            <td>¥${s.total_cost}</td>
-            <td class="cost-detail">${details}</td>
+    } else {
+        const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true};
+        tbody.innerHTML = list.map(s => {
+            const p = productMap[s.product_id] || {};
+            const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${Number(d.unit_cost).toFixed(2)}`).join('；') || '无批次明细';
+            const dateStr = s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || s.sold_at?.slice(0,10) || '-';
+            const quantity = Number(s.quantity) || 0;
+            const originalPrice = Number(s.selling_price) || 0;
+            const totalCost = Number(s.total_cost) || 0;
+            const fifoUnitCost = quantity ? totalCost / quantity : 0;
+            const currency = String(s.currency || 'CNY').toUpperCase();
+            const rate = s.exchange_rate_to_cny == null ? null : Number(s.exchange_rate_to_cny);
+            const sellingPriceCny = s.selling_price_cny == null ? null : Number(s.selling_price_cny);
+            const revenueCny = s.sales_revenue_cny == null ? null : Number(s.sales_revenue_cny);
+            const platformFeeCny = s.platform_fee_cny == null ? null : Number(s.platform_fee_cny);
+            const grossProfitCny = s.profit_cny == null ? null : Number(s.profit_cny);
+            const fxReady = [sellingPriceCny, revenueCny, platformFeeCny, grossProfitCny].every(value => value !== null);
+            const fxTitle = currency === 'CNY'
+                ? '人民币原始金额'
+                : `原币 ${currency} ${originalPrice.toFixed(2)}；汇率 ${rate ?? '-'}；汇率日期 ${s.exchange_rate_date || '-'}；来源 ${s.exchange_rate_source || '-'}`;
+            totals.quantity += quantity;
+            totals.cost += totalCost;
+            if (!fxReady) totals.fxReady = false;
+            else {
+                totals.revenue += revenueCny;
+                totals.platformFee += platformFeeCny;
+                totals.grossProfit += grossProfitCny;
+            }
+            const money = value => value === null ? '汇率缺失' : `¥${value.toFixed(2)}`;
+            return `<tr>
+                <td class="${s.store_name ? '' : 'unlinked-store'}">${escapeHtml(s.store_name || '未关联店铺')}</td>
+                <td>${dateStr}</td>
+                <td><strong>${escapeHtml(p.sku || '-')}</strong></td>
+                <td>${escapeHtml(p.name || '-')}</td>
+                <td>${quantity.toLocaleString('zh-CN')}</td>
+                <td class="${fxReady ? '' : 'fx-missing'}" title="${escapeHtml(fxTitle)}">${money(sellingPriceCny)}</td>
+                <td title="${escapeHtml(details)}">¥${fifoUnitCost.toFixed(2)}</td>
+                <td class="${fxReady ? '' : 'fx-missing'}">${money(revenueCny)}</td>
+                <td>¥${totalCost.toFixed(2)}</td>
+                <td class="${fxReady ? '' : 'fx-missing'}">${money(platformFeeCny)}</td>
+                <td class="${fxReady ? '' : 'fx-missing'}">${money(grossProfitCny)}</td>
+            </tr>`;
+        }).join('');
+        const totalMoney = value => totals.fxReady ? `¥${value.toFixed(2)}` : '存在汇率缺失';
+        kpis.innerHTML = `
+            <div class="sales-kpi"><div class="label">销售记录</div><div class="value">${salesTotal.toLocaleString('zh-CN')}</div></div>
+            <div class="sales-kpi"><div class="label">本页销售数量</div><div class="value">${totals.quantity.toLocaleString('zh-CN')}</div></div>
+            <div class="sales-kpi"><div class="label">本页销售收入</div><div class="value">${totalMoney(totals.revenue)}</div></div>
+            <div class="sales-kpi"><div class="label">本页毛利</div><div class="value">${totalMoney(totals.grossProfit)}</div></div>`;
+        tfoot.innerHTML = `<tr>
+            <td colspan="4">本页合计</td>
+            <td>${totals.quantity.toLocaleString('zh-CN')}</td>
+            <td></td><td></td>
+            <td>${totalMoney(totals.revenue)}</td>
+            <td>¥${totals.cost.toFixed(2)}</td>
+            <td>${totalMoney(totals.platformFee)}</td>
+            <td class="${totals.fxReady ? '' : 'fx-missing'}">${totalMoney(totals.grossProfit)}</td>
         </tr>`;
-    }).join('');
-    renderPagination('sales-pagination', salesPage, Math.max(1, Math.ceil(salesTotal / salesPageSize)), salesTotal, salesPageSize);
+        renderPagination('sales-pagination', salesPage, Math.max(1, Math.ceil(salesTotal / salesPageSize)), salesTotal, salesPageSize);
+    }
+    await loadPendingConfirmations();
+}
+
+function refreshSalesWorkspace() {
+    loadSales();
+    loadSalesImports();
+    loadBatches();
+}
+
+async function loadSalesImports() {
+    const tbody = document.getElementById('sales-imports-tbody');
+    try {
+        const list = await api('GET', '/sales/imports?limit=30');
+        if (!list.length) {
+            tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无导入记录</td></tr>';
+            return;
+        }
+        tbody.innerHTML = list.map(item => {
+            const statusClass = item.status === 'completed' ? 'status-completed' : 'status-rolled-back';
+            const statusText = item.status === 'completed' ? '已完成' : '已撤销';
+            const fileType = item.file_type === 'order_detail' ? '订单详情 Excel' : '销售 CSV';
+            return `<tr>
+                <td><div class="file-primary" title="${escapeHtml(item.file_name)}">${escapeHtml(item.file_name)}</div><div class="file-secondary">${fileType}${item.sheet_name ? ` · ${escapeHtml(item.sheet_name)}` : ''}</div></td>
+                <td>${escapeHtml(item.store_name || '未关联店铺')}</td>
+                <td>${escapeHtml(item.imported_by || '历史导入')}</td>
+                <td>${String(item.imported_at || '').replace('T', ' ').slice(0, 19)}</td>
+                <td>${Number(item.settlement_rows).toLocaleString('zh-CN')}</td>
+                <td>${Number(item.sales_created).toLocaleString('zh-CN')}</td>
+                <td>${Number(item.pending_confirmation).toLocaleString('zh-CN')}</td>
+                <td><span class="status-pill ${statusClass}">${statusText}</span></td>
+                <td>${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+async function rollbackSalesImport(importBatchId) {
+    if (!confirm('确认撤销这次导入？销售记录将删除，已扣库存会恢复。')) return;
+    try {
+        const result = await api('POST', `/sales/imports/${importBatchId}/rollback`);
+        showMsg(`撤销完成：恢复库存 ${result.restored_quantity} 件，删除销售 ${result.sales_removed} 条`);
+        salesPage = 1;
+        pendingConfirmationsPage = 1;
+        refreshSalesWorkspace();
+    } catch (e) { showMsg(e.message, false); }
 }
 let salesPage = 1;
 let salesPageSize = 20;
@@ -1308,7 +1584,175 @@ let salesTotal = 0;
 function goSalesPage(page) { salesPage = page; loadSales(); }
 function changeSalesPageSize(size) { salesPageSize = Number(size); salesPage = 1; loadSales(); }
 
-// ========== 报表 ==========
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[character]));
+}
+
+async function loadPendingConfirmations() {
+    const result = await api('GET', `/sales/pending-confirmations?page=${pendingConfirmationsPage}&page_size=${pendingConfirmationsPageSize}`);
+    pendingConfirmationsPage = result.page;
+    pendingConfirmationsPageSize = result.page_size;
+    pendingConfirmationsTotal = result.total;
+    const summary = document.getElementById('pending-confirmations-summary');
+    const tbody = document.getElementById('pending-confirmations-tbody');
+    summary.textContent = result.total ? `共 ${result.total} 条记录等待商品或库存确认` : '暂无待确认记录';
+    if (!result.items.length) {
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无待确认记录</td></tr>';
+        renderPagination('pending-confirmations-pagination', 1, 1, 0, pendingConfirmationsPageSize);
+        return;
+    }
+    tbody.innerHTML = result.items.map(item => `<tr>
+        <td>${escapeHtml(item.store_name || '未关联店铺')}</td>
+        <td>${escapeHtml(item.source_file || '-')}</td>
+        <td>${item.source_row_number}</td>
+        <td>${escapeHtml(item.order_id || '-')}</td>
+        <td>${escapeHtml(item.platform_sku_id || '-')}</td>
+        <td>${escapeHtml(item.product_name || '-')}</td>
+        <td>${escapeHtml(item.sku_name || '-')}</td>
+        <td>${item.quantity}</td>
+        <td>${escapeHtml(item.mapping_error || '待确认')}</td>
+    </tr>`).join('');
+    renderPagination(
+        'pending-confirmations-pagination',
+        pendingConfirmationsPage,
+        Math.max(1, Math.ceil(pendingConfirmationsTotal / pendingConfirmationsPageSize)),
+        pendingConfirmationsTotal,
+        pendingConfirmationsPageSize,
+    );
+}
+let pendingConfirmationsPage = 1;
+let pendingConfirmationsPageSize = 20;
+let pendingConfirmationsTotal = 0;
+function goPendingConfirmationsPage(page) { pendingConfirmationsPage = page; loadPendingConfirmations(); }
+function changePendingConfirmationsPageSize(size) { pendingConfirmationsPageSize = Number(size); pendingConfirmationsPage = 1; loadPendingConfirmations(); }
+
+// ========== 月末结账与报表 ==========
+function accountingPeriodStatus(status) {
+    return {
+        open: ['未结账', 'tag-blue'],
+        pending_confirmation: ['待确认', 'tag-orange'],
+        closed: ['已确认', 'tag-green'],
+        auto_closed: ['自动确认', 'tag-green'],
+    }[status] || [status || '未知', 'tag-blue'];
+}
+
+function accountingDateTime(value) {
+    return value ? String(value).replace('T', ' ').slice(0, 19) : '-';
+}
+
+async function loadAccountingPeriods() {
+    const tbody = document.getElementById('accounting-periods-tbody');
+    if (!tbody) return;
+    document.getElementById('accounting-period-create-controls').style.display = isAdmin() ? 'flex' : 'none';
+    if (isAdmin() && !document.getElementById('accounting-period-start').value) {
+        const today = new Date().toLocaleDateString('sv-SE');
+        const monthStart = `${today.slice(0, 8)}01`;
+        document.getElementById('accounting-period-start').value = monthStart;
+        document.getElementById('accounting-period-end').value = today;
+    }
+    try {
+        const periods = await api('GET', '/finance-masters/accounting-periods');
+        if (!periods.length) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无会计期间</td></tr>';
+            return;
+        }
+        tbody.innerHTML = periods.map(period => {
+            const [statusText, tagClass] = accountingPeriodStatus(period.status);
+            let action = '-';
+            if (isAdmin() && period.status === 'open') {
+                action = `<button class="btn btn-secondary" style="padding:5px 9px;font-size:12px" onclick="prepareAccountingPeriod(${period.id})">生成快照</button>`;
+            } else if (isAdmin() && period.status === 'pending_confirmation') {
+                action = `<button class="btn btn-primary" style="padding:5px 9px;font-size:12px" onclick="confirmAccountingPeriod(${period.id})">确认结账</button>
+                    <button class="btn btn-secondary" style="padding:5px 9px;font-size:12px;color:#e94560" onclick="rejectAccountingPeriod(${period.id})">驳回</button>`;
+            }
+            return `<tr>
+                <td>${escapeHtml(period.period_start)} 至 ${escapeHtml(period.period_end)}</td>
+                <td><span class="tag ${tagClass}">${statusText}</span></td>
+                <td>${Number(period.snapshot_count || 0).toLocaleString('zh-CN')}</td>
+                <td>${accountingDateTime(period.confirmation_deadline)}</td>
+                <td>${accountingDateTime(period.closed_at)}</td>
+                <td>${action}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+async function createAccountingPeriod() {
+    const periodStart = document.getElementById('accounting-period-start').value;
+    const periodEnd = document.getElementById('accounting-period-end').value;
+    if (!periodStart || !periodEnd) { showMsg('请选择期间日期', false); return; }
+    try {
+        await api('POST', '/finance-masters/accounting-periods', {
+            period_start: periodStart,
+            period_end: periodEnd,
+            timezone: 'Asia/Shanghai',
+        });
+        showMsg('会计期间创建成功');
+        loadAccountingPeriods();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function prepareAccountingPeriod(periodId) {
+    if (!confirm('确认生成该期间的库存快照？生成后会等待确认，快照期间的历史库存不会再随销售变化。')) return;
+    try {
+        await api('POST', `/finance-masters/accounting-periods/${periodId}/prepare`);
+        showMsg('快照已生成，请确认结账');
+        loadAccountingPeriods();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function confirmAccountingPeriod(periodId) {
+    if (!confirm('确认结账？确认后该期间快照将作为后续报表的上月末账面价值。')) return;
+    try {
+        await api('POST', `/finance-masters/accounting-periods/${periodId}/confirm`);
+        showMsg('期间已确认');
+        loadAccountingPeriods();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function rejectAccountingPeriod(periodId) {
+    if (!confirm('确认驳回快照并重新打开该期间？')) return;
+    try {
+        await api('POST', `/finance-masters/accounting-periods/${periodId}/reject`);
+        showMsg('期间已驳回，可重新生成快照');
+        loadAccountingPeriods();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function exportInventoryImpairmentReport() {
+    const reportDate = document.getElementById('inventory-impairment-date').value;
+    if (!reportDate) {
+        showMsg('请选择报告截止日', false);
+        return;
+    }
+    try {
+        const res = await fetch(`/reports/inventory-impairment/export?report_date=${encodeURIComponent(reportDate)}`, {
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+        });
+        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (!res.ok) {
+            const raw = await res.text();
+            let detail = raw;
+            try { detail = JSON.parse(raw).detail || raw; } catch {}
+            throw new Error(formatApiError(detail, '导出失败'));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `存货跌价准备明细表_${reportDate}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showMsg('第一张财务附件报表已导出');
+    } catch (e) { showMsg(e.message, false); }
+}
+
 async function loadMonthly() {
     const start = document.getElementById('r-start').value;
     const end = document.getElementById('r-end').value;
@@ -1346,6 +1790,7 @@ async function loadMonthly() {
 }
 
 // 初始加载
+document.getElementById('inventory-impairment-date').value = new Date().toLocaleDateString('sv-SE');
 loadProducts();
 </script>
 </body>

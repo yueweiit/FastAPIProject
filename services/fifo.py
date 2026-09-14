@@ -22,6 +22,8 @@ async def fifo_sell(
     platform_fee: Decimal = Decimal("0"),
     sold_at: datetime | None = None,
     user_id: int | None = None,
+    store_id: int | None = None,
+    commit: bool = True,
 ) -> tuple[Sale, list[dict]]:
     if sold_at is None:
         sold_at = datetime.now()
@@ -72,6 +74,7 @@ async def fifo_sell(
     sale = Sale(
         product_id=product_id,
         user_id=user_id,
+        store_id=store_id,
         order_no=order_no,
         quantity=quantity,
         selling_price=selling_price,
@@ -92,9 +95,10 @@ async def fifo_sell(
             unit_cost=detail["unit_cost"],
         ))
 
-    await db.commit()
+    if commit:
+        await db.commit()
 
-    # commit后属性过期，refresh重新加载标量字段（不加载关系）
-    await db.refresh(sale)
+        # commit后属性过期，refresh重新加载标量字段（不加载关系）
+        await db.refresh(sale)
 
     return sale, cost_details

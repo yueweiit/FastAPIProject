@@ -2,9 +2,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models import User
+from models import Store, User
 from schemas import LoginRequest, LoginResponse, UserResponse
 from auth import hash_password, verify_password, create_token, get_current_user, RequireAdmin
 
@@ -18,6 +19,10 @@ class UpdateRoleRequest(BaseModel):
 class PasswordRequest(BaseModel):
     old_password: str | None = None
     new_password: str
+
+
+class UpdateUserStoreRequest(BaseModel):
+    store_id: int | None = None
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -65,8 +70,51 @@ async def list_users(
     user: User = Depends(RequireAdmin),
 ):
     """用户列表 - 仅管理员"""
-    result = await db.execute(select(User).order_by(User.id.desc()))
-    return result.scalars().all()
+    result = await db.execute(
+        select(User).options(selectinload(User.store)).order_by(User.id.desc())
+    )
+    return [
+        UserResponse(
+            id=item.id,
+            username=item.username,
+            role=item.role,
+            store_id=item.store_id,
+            store_name=item.store.name if item.store else None,
+            created_at=item.created_at,
+        )
+        for item in result.scalars().all()
+    ]
+
+
+@router.put("/users/{user_id}/store")
+async def update_user_store(
+    user_id: int,
+    data: UpdateUserStoreRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAdmin),
+):
+    """Bind a non-admin account to one active store."""
+    target_user = await db.get(User, user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if target_user.role == "admin":
+        raise HTTPException(status_code=400, detail="管理员账号不能绑定店铺")
+
+    store = None
+    if data.store_id is not None:
+        store = await db.get(Store, data.store_id)
+        if not store:
+            raise HTTPException(status_code=404, detail="店铺不存在")
+        if not store.is_active:
+            raise HTTPException(status_code=400, detail="不能绑定已停用的店铺")
+
+    target_user.store_id = store.id if store else None
+    await db.commit()
+    return {
+        "ok": True,
+        "store_id": target_user.store_id,
+        "store_name": store.name if store else None,
+    }
 
 
 @router.put("/users/{user_id}/role")
@@ -87,6 +135,8 @@ async def update_user_role(
         raise HTTPException(status_code=404, detail="用户不存在")
 
     user.role = data.role
+    if data.role == "admin":
+        user.store_id = None
     await db.commit()
     return {"ok": True}
 
