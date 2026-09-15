@@ -1,13 +1,20 @@
+import io
 import unittest
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
+
+from openpyxl import Workbook
 
 from models import Sale, SaleCostDetail
 from routers.sales import (
     _allocate_available_stock,
     _build_sale_response,
     _component_allocation_shares,
+    _monthly_sales_summary,
+    _other_expense_from_row,
+    _read_import_file,
+    _resolve_platform_sku_components,
     _select_standalone_price,
     _standalone_price_from_row,
 )
@@ -104,7 +111,44 @@ class StockAllocationTests(unittest.TestCase):
         self.assertIn("商品 B 本行需要 1 件，当前可用 0 件", candidates[0]["mapping_error"])
 
 
+class PlatformSkuMappingTests(unittest.TestCase):
+    def test_platform_sku_mapping_returns_configured_bundle_components(self):
+        duck = SimpleNamespace(id=1, sku="DUCK", name="小黄鸭")
+        elephant = SimpleNamespace(id=2, sku="ELEPHANT", name="小蓝象")
+        mapping = SimpleNamespace(
+            components=[
+                SimpleNamespace(product=duck, quantity_per_sale=1),
+                SimpleNamespace(product=elephant, quantity_per_sale=2),
+            ]
+        )
+
+        components, error = _resolve_platform_sku_components(
+            {"SKU ID": "1736993559553869688"},
+            {"1736993559553869688": mapping},
+        )
+
+        self.assertIsNone(error)
+        self.assertEqual(
+            [(component["product"].sku, component["multiplier"]) for component in components],
+            [("DUCK", 1), ("ELEPHANT", 2)],
+        )
+
+    def test_unmapped_platform_sku_does_not_fall_back_to_product_name(self):
+        components, error = _resolve_platform_sku_components(
+            {"SKU ID": "UNCONFIGURED", "产品名": "小黄鸭"}, {}
+        )
+
+        self.assertIsNone(components)
+        self.assertEqual(error, "未配置平台 SKU ID 映射: UNCONFIGURED")
+
+
 class ExchangeRateTests(unittest.TestCase):
+    def test_other_expense_is_net_sales_minus_settlement_total(self):
+        self.assertEqual(
+            _other_expense_from_row(Decimal("144"), Decimal("98.82")),
+            Decimal("45.18"),
+        )
+
     def test_weekend_uses_latest_available_business_day(self):
         payload = {
             "rates": {
@@ -150,6 +194,134 @@ class ExchangeRateTests(unittest.TestCase):
         self.assertEqual(response.sales_revenue_cny, Decimal("24.0"))
         self.assertEqual(response.platform_fee_cny, Decimal("0.8"))
         self.assertEqual(response.profit_cny, Decimal("13.2"))
+
+    def test_sale_response_uses_source_net_sales_and_other_expense(self):
+        sale = Sale(
+            id=1,
+            product_id=1,
+            order_no="ORDER-1",
+            quantity=2,
+            selling_price=Decimal("10"),
+            total_cost=Decimal("10"),
+            platform_fee=Decimal("1"),
+            profit=Decimal("9"),
+            sold_at=datetime(2026, 8, 31),
+            created_at=datetime(2026, 9, 1),
+        )
+
+        response = _build_sale_response(
+            sale,
+            [],
+            currency="MXN",
+            exchange_rate_to_cny=Decimal("0.4"),
+            source_net_product_sales=Decimal("144"),
+            source_other_expense=Decimal("45.18"),
+        )
+
+        self.assertEqual(response.selling_price_cny, Decimal("28.8"))
+        self.assertEqual(response.sales_revenue_cny, Decimal("57.6"))
+        self.assertEqual(response.platform_fee_cny, Decimal("18.072"))
+        self.assertEqual(response.profit_cny, Decimal("29.528"))
+
+
+class MonthlySalesSummaryTests(unittest.TestCase):
+    def test_summary_aggregates_all_sales_in_each_month(self):
+        sales = [
+            SimpleNamespace(
+                id=1,
+                sold_at=datetime(2026, 8, 10),
+                quantity=2,
+                selling_price=Decimal("10"),
+                total_cost=Decimal("3"),
+                platform_fee=Decimal("1"),
+            ),
+            SimpleNamespace(
+                id=2,
+                sold_at=datetime(2026, 8, 20),
+                quantity=1,
+                selling_price=Decimal("20"),
+                total_cost=Decimal("5"),
+                platform_fee=Decimal("2"),
+            ),
+            SimpleNamespace(
+                id=3,
+                sold_at=datetime(2026, 7, 31),
+                quantity=4,
+                selling_price=Decimal("8"),
+                total_cost=Decimal("12"),
+                platform_fee=Decimal("0"),
+            ),
+        ]
+
+        result = _monthly_sales_summary(
+            sales,
+            {
+                1: {"currency": "CNY", "exchange_rate_to_cny": Decimal("1")},
+                2: {"currency": "USD", "exchange_rate_to_cny": Decimal("0.5")},
+                3: {"currency": "CNY", "exchange_rate_to_cny": Decimal("1")},
+            },
+        )
+
+        self.assertEqual([item.month for item in result], ["2026-08", "2026-07"])
+        august = result[0]
+        self.assertEqual(august.sales_count, 2)
+        self.assertEqual(august.sold_quantity, 3)
+        self.assertEqual(august.sales_revenue_cny, Decimal("30.0"))
+        self.assertEqual(august.sales_cost_cny, Decimal("8"))
+        self.assertEqual(august.platform_fee_cny, Decimal("2.0"))
+        self.assertEqual(august.gross_profit_cny, Decimal("20.0"))
+
+    def test_summary_uses_source_amounts_when_available(self):
+        sale = SimpleNamespace(
+            id=1,
+            sold_at=datetime(2026, 8, 10),
+            quantity=2,
+            selling_price=Decimal("10"),
+            total_cost=Decimal("10"),
+            platform_fee=Decimal("1"),
+        )
+
+        result = _monthly_sales_summary(
+            [sale],
+            {
+                1: {
+                    "currency": "MXN",
+                    "exchange_rate_to_cny": Decimal("0.4"),
+                    "source_net_product_sales": Decimal("144"),
+                    "source_other_expense": Decimal("45.18"),
+                },
+            },
+        )
+
+        self.assertEqual(result[0].sales_revenue_cny, Decimal("57.6"))
+        self.assertEqual(result[0].platform_fee_cny, Decimal("18.072"))
+        self.assertEqual(result[0].gross_profit_cny, Decimal("29.528"))
+
+
+class ImportFormatTests(unittest.TestCase):
+    def test_order_detail_sheet_is_selected_and_required_header_spacing_is_tolerated(self):
+        workbook = Workbook()
+        workbook.active.title = "说明"
+        sheet = workbook.create_sheet("订单详情")
+        sheet.append([
+            "结算日期", "结算单ID", "付款ID", "状态", "货币", "交易类型",
+            "订单 ID/调整单 ID", "SKU ID", "数量", "额外字段",
+        ])
+        sheet.append([
+            "2026/08/31", "SETTLEMENT", "PAYMENT", "已付款", "MXN", "订单",
+            "ORDER-1", "1735284450932852600", "2", "ignored",
+        ])
+        output = io.BytesIO()
+        workbook.save(output)
+
+        source_kind, sheet_name, rows = _read_import_file("future-export.xlsx", output.getvalue())
+
+        self.assertEqual(source_kind, "order_detail")
+        self.assertEqual(sheet_name, "订单详情")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["结算单 ID"], "SETTLEMENT")
+        self.assertEqual(rows[0]["订单ID/调整单ID"], "ORDER-1")
+        self.assertEqual(rows[0]["SKU ID"], "1735284450932852600")
 
 
 class _FakeScalars:

@@ -17,6 +17,8 @@ from sqlalchemy.orm import selectinload
 from database import get_db
 from models import (
     InventoryBatch,
+    PlatformSkuComponent,
+    PlatformSkuMapping,
     Product,
     Sale,
     SaleCostDetail,
@@ -29,6 +31,7 @@ from models import (
 )
 from schemas import (
     CostDetailResponse,
+    MonthlySalesSummaryResponse,
     SaleCreate,
     SalePageResponse,
     SaleResponse,
@@ -57,22 +60,26 @@ ORDER_DETAIL_HEADERS = {
     "SKU ID",
     "数量",
 }
-PLATFORM_FEE_FIELDS = (
-    "平台佣金费",
-    "服务费",
-    "SFP 服务费",
-    "每件成交商品的费用",
-    "联盟佣金",
-    "支付给达人的佣金",
-    "支付给联盟服务商的佣金",
-    "支付给达人的店铺广告佣金",
-    "支付给联盟服务商的店铺广告佣金",
-    "GMV Max 广告费",
-)
-
-
+ORDER_DETAIL_HEADER_ALIASES = {
+    "结算日期": "结算日期",
+    "结算单ID": "结算单 ID",
+    "付款ID": "付款 ID",
+    "状态": "状态",
+    "货币": "货币",
+    "交易类型": "交易类型",
+    "订单ID/调整单ID": "订单ID/调整单ID",
+    "SKUID": "SKU ID",
+    "数量": "数量",
+}
 def _clean_header(value) -> str:
     return str(value or "").strip().lstrip("\ufeff")
+
+
+def _order_detail_header(value) -> str:
+    """Normalize the required TikTok headers while preserving other columns."""
+    header = _clean_header(value)
+    compact = re.sub(r"\s+", "", header)
+    return ORDER_DETAIL_HEADER_ALIASES.get(compact, header)
 
 
 def _text_value(value) -> str:
@@ -181,7 +188,7 @@ def _read_import_file(filename: str, content: bytes) -> tuple[str, str | None, l
         sheet = workbook[ORDER_DETAIL_SHEET]
         values = sheet.iter_rows(values_only=True)
         try:
-            headers = [_clean_header(value) for value in next(values)]
+            headers = [_order_detail_header(value) for value in next(values)]
         except StopIteration:
             raise HTTPException(status_code=400, detail="订单详情工作表为空")
         missing = sorted(ORDER_DETAIL_HEADERS - set(headers))
@@ -218,7 +225,7 @@ def _read_import_file(filename: str, content: bytes) -> tuple[str, str | None, l
         first_row = next(reader)
     except StopIteration:
         raise HTTPException(status_code=400, detail="CSV 文件为空")
-    first_headers = [_clean_header(value) for value in first_row]
+    first_headers = [_order_detail_header(value) for value in first_row]
     is_order_detail = bool(ORDER_DETAIL_HEADERS & set(first_headers))
     rows = []
     if is_order_detail:
@@ -346,6 +353,28 @@ def _resolve_product_name(name: str, products: list[Product]) -> tuple[Product |
     if len(matches) > 1:
         return None, f"产品名称匹配到多个本地商品: {name}"
     return None, f"未找到本地商品映射: 产品名={name}"
+
+
+def _resolve_platform_sku_components(
+    row: dict,
+    mappings_by_sku: dict[str, PlatformSkuMapping],
+) -> tuple[list[dict] | None, str | None]:
+    """Resolve an order-detail row strictly through its configured platform SKU ID."""
+    sku_id = _text_value(row.get("SKU ID"))
+    mapping = mappings_by_sku.get(sku_id)
+    if not mapping:
+        return None, f"未配置平台 SKU ID 映射: {sku_id or '-'}"
+    if not mapping.components:
+        return None, f"平台 SKU ID 未配置商品组件: {sku_id}"
+
+    return [
+        {
+            "product": component.product,
+            "component_name": component.product.name,
+            "multiplier": component.quantity_per_sale,
+        }
+        for component in mapping.components
+    ], None
 
 
 def _resolve_product_components(
@@ -504,9 +533,9 @@ def _source_key(row: dict, source_kind: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _platform_fee_from_row(row: dict) -> Decimal:
-    total = sum((_decimal_value(row.get(name)) for name in PLATFORM_FEE_FIELDS), Decimal("0"))
-    return -total if total < 0 else Decimal("0")
+def _other_expense_from_row(net_product_sales: Decimal, settlement_total: Decimal) -> Decimal:
+    """Return the settlement difference shown as other expense."""
+    return net_product_sales - settlement_total
 
 
 def _settlement_entry(
@@ -622,13 +651,34 @@ async def import_sales_file(
         raise HTTPException(status_code=400, detail="文件中没有可导入的数据行")
 
     products = list((await db.execute(select(Product).order_by(Product.id))).scalars().all())
-    store_products = list(
-        (
+    store_products: list[StoreProduct] = []
+    platform_sku_mappings_by_sku: dict[str, PlatformSkuMapping] = {}
+    if source_kind == "order_detail":
+        platform_sku_mappings = (
             await db.execute(
-                select(StoreProduct).where(StoreProduct.is_active.is_(True))
+                select(PlatformSkuMapping)
+                .options(
+                    selectinload(PlatformSkuMapping.components).selectinload(
+                        PlatformSkuComponent.product
+                    )
+                )
+                .where(
+                    PlatformSkuMapping.platform == "tiktok_shop",
+                    PlatformSkuMapping.is_active.is_(True),
+                )
             )
         ).scalars().all()
-    )
+        platform_sku_mappings_by_sku = {
+            mapping.platform_sku_id: mapping for mapping in platform_sku_mappings
+        }
+    else:
+        store_products = list(
+            (
+                await db.execute(
+                    select(StoreProduct).where(StoreProduct.is_active.is_(True))
+                )
+            ).scalars().all()
+        )
     source_keys = [_source_key(row, source_kind) for row in rows]
     existing_entries = {
         key
@@ -675,12 +725,14 @@ async def import_sales_file(
             order_created_at = None
             settlement_date = None
             net_product_sales = Decimal("0")
-            platform_fee = Decimal("0")
+            settlement_total = Decimal("0")
+            other_expense = Decimal("0")
         else:
             try:
                 order_created_at = _datetime_value(row.get("订单创建日期"))
                 settlement_date = _datetime_value(row.get("结算日期"))
                 net_product_sales = _decimal_value(row.get("净商品销售额"))
+                settlement_total = _decimal_value(row.get("结算总金额"))
             except ValueError as exc:
                 errors.append(SalesImportError(row=row_number, message=str(exc), identifier=identifier))
                 continue
@@ -688,7 +740,6 @@ async def import_sales_file(
                 errors.append(SalesImportError(row=row_number, message="订单创建日期和结算日期不能同时为空", identifier=identifier))
                 continue
             sold_at = order_created_at or settlement_date
-            platform_fee = _platform_fee_from_row(row)
 
         lookup_date = sold_at.date() if sold_at else None
         if is_inventory_sale and source_kind == "order_detail":
@@ -708,14 +759,20 @@ async def import_sales_file(
             order_id = _text_value(row.get("订单ID/调整单ID"))
             sku_id = _text_value(row.get("SKU ID"))
             order_no = _order_no(order_id, sku_id)
+            other_expense = _other_expense_from_row(net_product_sales, settlement_total)
 
         if is_inventory_sale and quantity <= 0:
             errors.append(SalesImportError(row=row_number, message="销售数量必须大于 0", identifier=identifier))
             continue
 
-        components, mapping_error = _resolve_product_components(
-            row, products, store_products, lookup_date
-        )
+        if source_kind == "order_detail":
+            components, mapping_error = _resolve_platform_sku_components(
+                row, platform_sku_mappings_by_sku
+            )
+        else:
+            components, mapping_error = _resolve_product_components(
+                row, products, store_products, lookup_date
+            )
         pending_mapping_error = None
         if not components:
             pending_mapping_error = mapping_error or "商品映射失败"
@@ -729,7 +786,7 @@ async def import_sales_file(
             "sold_at": sold_at,
             "order_no": order_no,
             "net_product_sales": net_product_sales,
-            "platform_fee": platform_fee,
+            "other_expense": other_expense,
             "is_inventory_sale": is_inventory_sale,
             "mapping_error": pending_mapping_error,
         })
@@ -855,7 +912,7 @@ async def import_sales_file(
                 for component, component_share in zip(item["components"], component_shares):
                     component_quantity = item["quantity"] * component["multiplier"]
                     component_sales = item["net_product_sales"] * component_share
-                    component_fee = item["platform_fee"] * component_share
+                    component_other_expense = item["other_expense"] * component_share
                     try:
                         sale, _ = await fifo_sell(
                             db=db,
@@ -863,7 +920,7 @@ async def import_sales_file(
                             order_no=item["order_no"],
                             quantity=component_quantity,
                             selling_price=component_sales / component_quantity,
-                            platform_fee=component_fee,
+                            platform_fee=component_other_expense,
                             sold_at=item["sold_at"],
                             user_id=user.id,
                             store_id=import_store.id if import_store else None,
@@ -1082,6 +1139,8 @@ def _build_sale_response(
     exchange_rate_to_cny: Decimal | None = Decimal("1"),
     exchange_rate_date: date | None = None,
     exchange_rate_source: str | None = "CNY",
+    source_net_product_sales: Decimal | None = None,
+    source_other_expense: Decimal | None = None,
 ) -> SaleResponse:
     currency = currency.upper()
     if currency == "CNY":
@@ -1093,9 +1152,19 @@ def _build_sale_response(
     platform_fee_cny = None
     profit_cny = None
     if exchange_rate_to_cny is not None:
-        selling_price_cny = sale.selling_price * exchange_rate_to_cny
-        sales_revenue_cny = selling_price_cny * sale.quantity
-        platform_fee_cny = sale.platform_fee * exchange_rate_to_cny
+        source_net_product_sales = (
+            sale.selling_price * sale.quantity
+            if source_net_product_sales is None
+            else source_net_product_sales
+        )
+        source_other_expense = (
+            sale.platform_fee if source_other_expense is None else source_other_expense
+        )
+        sales_revenue_cny = source_net_product_sales * exchange_rate_to_cny
+        selling_price_cny = (
+            sales_revenue_cny / sale.quantity if sale.quantity else Decimal("0")
+        )
+        platform_fee_cny = source_other_expense * exchange_rate_to_cny
         profit_cny = sales_revenue_cny - sale.total_cost - platform_fee_cny
     return SaleResponse(
         id=sale.id,
@@ -1156,13 +1225,17 @@ async def _sale_import_context(
     context_rows = (
         await db.execute(
             select(
+                SettlementEntryAllocation.settlement_entry_id,
                 SettlementEntryAllocation.sale_id,
                 SettlementEntryAllocation.product_id,
+                SettlementEntryAllocation.quantity,
                 SettlementEntry.platform_sku_id,
                 SettlementEntry.currency,
                 SettlementEntry.exchange_rate_to_cny,
                 SettlementEntry.exchange_rate_date,
                 SettlementEntry.exchange_rate_source,
+                SettlementEntry.settlement_total,
+                SettlementEntry.net_product_sales,
             )
             .join(
                 SettlementEntry,
@@ -1171,6 +1244,61 @@ async def _sale_import_context(
             .where(SettlementEntryAllocation.sale_id.in_(sale_by_id))
         )
     ).all()
+
+    # A bundle creates one Sale per component. Reconstruct each component's
+    # share from the stored Sale values so old imports use the same source
+    # amounts as new imports without changing their persisted cost history.
+    rows_by_entry: dict[int, list] = {}
+    for row in context_rows:
+        if row.sale_id is not None:
+            rows_by_entry.setdefault(row.settlement_entry_id, []).append(row)
+
+    source_amounts_by_sale: dict[int, dict[str, Decimal]] = {}
+    for entry_rows in rows_by_entry.values():
+        first = entry_rows[0]
+        sale_rows: dict[int, list] = {}
+        for row in entry_rows:
+            sale_rows.setdefault(row.sale_id, []).append(row)
+        sale_weights = {
+            sale_id: sale_by_id[sale_id].selling_price * sale_by_id[sale_id].quantity
+            for sale_id in sale_rows
+        }
+        total_weight = sum(sale_weights.values(), Decimal("0"))
+        if total_weight > 0:
+            shares = {
+                sale_id: weight / total_weight
+                for sale_id, weight in sale_weights.items()
+            }
+        else:
+            allocation_quantities = {
+                sale_id: sum(max(row.quantity, 0) for row in rows)
+                for sale_id, rows in sale_rows.items()
+            }
+            total_quantity = sum(allocation_quantities.values())
+            if total_quantity > 0:
+                shares = {
+                    sale_id: Decimal(quantity) / Decimal(total_quantity)
+                    for sale_id, quantity in allocation_quantities.items()
+                }
+            else:
+                equal_share = Decimal("1") / Decimal(len(sale_rows))
+                shares = {sale_id: equal_share for sale_id in sale_rows}
+
+        net_product_sales = first.net_product_sales or Decimal("0")
+        settlement_total = first.settlement_total or Decimal("0")
+        other_expense = _other_expense_from_row(net_product_sales, settlement_total)
+        for sale_id, share in shares.items():
+            amount = net_product_sales * share
+            expense = other_expense * share
+            context = source_amounts_by_sale.setdefault(
+                sale_id,
+                {
+                    "source_net_product_sales": Decimal("0"),
+                    "source_other_expense": Decimal("0"),
+                },
+            )
+            context["source_net_product_sales"] += amount
+            context["source_other_expense"] += expense
 
     import_context_by_sale = {}
     for row in context_rows:
@@ -1181,6 +1309,7 @@ async def _sale_import_context(
             "exchange_rate_to_cny": row.exchange_rate_to_cny,
             "exchange_rate_date": row.exchange_rate_date,
             "exchange_rate_source": row.exchange_rate_source,
+            **source_amounts_by_sale.get(row.sale_id, {}),
         }
 
     platform_sku_ids = {row.platform_sku_id for row in context_rows if row.platform_sku_id}
@@ -1292,24 +1421,137 @@ async def list_pending_confirmations(
     )
 
 
+def _sale_filter_values(
+    product_id: int | None,
+    keyword: str | None,
+    month: str | None,
+    user: User,
+):
+    conditions = []
+    normalized_keyword = keyword.strip() if keyword and keyword.strip() else None
+    if product_id:
+        conditions.append(Sale.product_id == product_id)
+    if normalized_keyword:
+        conditions.append(
+            (Product.name.ilike(f"%{normalized_keyword}%"))
+            | (Product.sku.ilike(f"%{normalized_keyword}%"))
+        )
+    if month:
+        try:
+            month_start = datetime.strptime(month, "%Y-%m")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="月份格式必须为 YYYY-MM") from exc
+        next_month = datetime(
+            month_start.year + (1 if month_start.month == 12 else 0),
+            1 if month_start.month == 12 else month_start.month + 1,
+            1,
+        )
+        conditions.extend((Sale.sold_at >= month_start, Sale.sold_at < next_month))
+    if user.role == "operator":
+        conditions.append(Sale.user_id == user.id)
+    return conditions, normalized_keyword
+
+
+async def _filtered_sales(
+    db: AsyncSession,
+    product_id: int | None,
+    keyword: str | None,
+    month: str | None,
+    user: User,
+) -> list[Sale]:
+    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
+    stmt = select(Sale)
+    if normalized_keyword:
+        stmt = stmt.join(Product)
+    stmt = stmt.where(*conditions).order_by(Sale.sold_at.desc(), Sale.id.desc())
+    return list((await db.execute(stmt)).scalars().all())
+
+
+def _monthly_sales_summary(
+    sales: list[Sale],
+    import_context_by_sale: dict[int, dict],
+) -> list[MonthlySalesSummaryResponse]:
+    grouped: dict[str, dict] = {}
+    for sale in sales:
+        month = sale.sold_at.strftime("%Y-%m")
+        group = grouped.setdefault(
+            month,
+            {
+                "sales_count": 0,
+                "sold_quantity": 0,
+                "sales_revenue_cny": Decimal("0"),
+                "sales_cost_cny": Decimal("0"),
+                "platform_fee_cny": Decimal("0"),
+                "gross_profit_cny": Decimal("0"),
+                "fx_missing_count": 0,
+            },
+        )
+        group["sales_count"] += 1
+        group["sold_quantity"] += sale.quantity
+        group["sales_cost_cny"] += sale.total_cost
+
+        context = import_context_by_sale.get(sale.id, {})
+        currency = (context.get("currency") or "CNY").upper()
+        rate = context.get("exchange_rate_to_cny", Decimal("1"))
+        if currency == "CNY":
+            rate = rate or Decimal("1")
+        if rate is None:
+            group["fx_missing_count"] += 1
+            continue
+        source_net_product_sales = context.get(
+            "source_net_product_sales", sale.selling_price * sale.quantity
+        )
+        source_other_expense = context.get("source_other_expense", sale.platform_fee)
+        revenue_cny = source_net_product_sales * rate
+        platform_fee_cny = source_other_expense * rate
+        group["sales_revenue_cny"] += revenue_cny
+        group["platform_fee_cny"] += platform_fee_cny
+        group["gross_profit_cny"] += revenue_cny - sale.total_cost - platform_fee_cny
+
+    summary = []
+    for month in sorted(grouped, reverse=True):
+        values = grouped[month]
+        if values["fx_missing_count"]:
+            values["sales_revenue_cny"] = None
+            values["platform_fee_cny"] = None
+            values["gross_profit_cny"] = None
+        summary.append(MonthlySalesSummaryResponse(month=month, **values))
+    return summary
+
+
+@router.get("/monthly-summary", response_model=list[MonthlySalesSummaryResponse])
+async def monthly_sales_summary(
+    product_id: int | None = None,
+    keyword: str | None = Query(default=None, max_length=255),
+    month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    """按月份汇总销售记录，金额统一返回人民币。"""
+    sales = await _filtered_sales(db, product_id, keyword, month, user)
+    import_context_by_sale, _ = await _sale_import_context(db, sales)
+    return _monthly_sales_summary(sales, import_context_by_sale)
+
+
 @router.get("", response_model=list[SaleResponse] | SalePageResponse)
 async def list_sales(
     product_id: int | None = None,
+    keyword: str | None = Query(default=None, max_length=255),
+    month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     page: int | None = Query(default=None, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
-    """列出销售 - 所有角色可查看，operator只能看自己的"""
+    """列出销售，支持按月份、商品名称或 SKU 筛选。"""
+    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
     stmt = select(Sale).options(selectinload(Sale.cost_details))
     count_stmt = select(func.count()).select_from(Sale)
-    if product_id:
-        stmt = stmt.where(Sale.product_id == product_id)
-        count_stmt = count_stmt.where(Sale.product_id == product_id)
-    if user.role == "operator":
-        stmt = stmt.where(Sale.user_id == user.id)
-        count_stmt = count_stmt.where(Sale.user_id == user.id)
-    stmt = stmt.order_by(Sale.sold_at.desc())
+    if normalized_keyword:
+        stmt = stmt.join(Product)
+        count_stmt = count_stmt.join(Product)
+    stmt = stmt.where(*conditions).order_by(Sale.sold_at.desc(), Sale.id.desc())
+    count_stmt = count_stmt.where(*conditions)
     if page is not None:
         total = (await db.execute(count_stmt)).scalar_one()
         page = min(page, max(1, (total + page_size - 1) // page_size))
@@ -1345,6 +1587,8 @@ async def list_sales(
             exchange_rate_to_cny=import_context.get("exchange_rate_to_cny", Decimal("1")),
             exchange_rate_date=import_context.get("exchange_rate_date"),
             exchange_rate_source=import_context.get("exchange_rate_source", "CNY"),
+            source_net_product_sales=import_context.get("source_net_product_sales"),
+            source_other_expense=import_context.get("source_other_expense"),
         ))
     if page is None:
         return response
@@ -1384,4 +1628,6 @@ async def get_sale(
         exchange_rate_to_cny=import_context.get("exchange_rate_to_cny", Decimal("1")),
         exchange_rate_date=import_context.get("exchange_rate_date"),
         exchange_rate_source=import_context.get("exchange_rate_source", "CNY"),
+        source_net_product_sales=import_context.get("source_net_product_sales"),
+        source_other_expense=import_context.get("source_other_expense"),
     )

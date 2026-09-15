@@ -90,6 +90,18 @@
         .sales-kpi:nth-child(4) { border-left-color:var(--accent); }
         .sales-kpi .label { color:var(--muted); font-size:12px; }
         .sales-kpi .value { margin-top:3px; color:var(--ink); font-size:18px; font-weight:800; }
+        .sales-filter-toolbar { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+        .sales-filter-toolbar .form-group input { width:180px; }
+        .sales-filter-toolbar .form-group input[type="month"] { width:150px; }
+        .sales-monthly-summary { margin:2px 0 16px; }
+        .sales-monthly-summary-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; color:var(--muted); font-size:12px; font-weight:700; }
+        .sales-monthly-table { min-width:980px !important; }
+        .sales-monthly-table thead th { background:#eef4f8; color:#526074; }
+        .sales-monthly-table th:nth-child(n+2), .sales-monthly-table td:nth-child(n+2) { text-align:right; }
+        .sales-total-summary { margin-bottom:16px; overflow-x:auto; border:1px solid #aac9dd; border-radius:8px; }
+        .sales-total-summary table { min-width:1390px; background:#cfe3f1; }
+        .sales-total-summary td { font-weight:800; color:#152238; border-bottom:0; }
+        .sales-total-summary td:first-child { text-align:left; }
         .sales-ledger-table { min-width:1390px !important; }
         .sales-ledger-table .fx-missing { color:#a06108; font-weight:700; }
         .import-history-table { min-width:1120px !important; }
@@ -113,6 +125,11 @@
         .user-bar .tag { font-size:12px; }
         .hidden { display:none !important; }
         .batch-list-actions { display:flex; align-items:center; gap:8px; position:relative; }
+        .product-list-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+        .product-search { display:flex; align-items:center; gap:8px; margin-left:auto; }
+        .product-search input { width:min(300px, 42vw); min-width:190px; padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; color:var(--ink); background:#fff; }
+        .product-search input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
+        .product-search .btn { white-space:nowrap; }
         .field-picker { position:relative; }
         .field-picker-menu { display:none; position:absolute; right:0; top:calc(100% + 8px); width:288px; max-height:320px; overflow:auto; z-index:20; padding:14px; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 12px 28px rgba(21,34,56,.16); }
         .field-picker-menu.open { display:block; }
@@ -132,6 +149,37 @@
         .edit-modal { position:fixed !important; z-index:1000; top:50%; left:50%; transform:translate(-50%,-50%); width:min(1060px, calc(100vw - 72px)); max-height:calc(100vh - 72px); overflow:auto; margin:0 !important; border:1px solid #f3a0ad !important; box-shadow:0 22px 60px rgba(15,27,51,.28), 0 0 0 100vmax rgba(15,27,51,.36); }
         .edit-modal .form-row { margin-bottom:10px; }
         .edit-modal .flex-between { position:sticky; top:0; z-index:1; padding-bottom:12px; margin-bottom:4px; background:var(--surface); }
+        .mapping-form { padding:2px 0 18px; border-bottom:1px solid var(--line); }
+        .mapping-form-title { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:14px; }
+        .mapping-form-title h4 { font-size:15px; color:var(--ink); }
+        .mapping-entry-grid { display:grid; grid-template-columns:minmax(300px,1.15fr) minmax(180px,.6fr); gap:14px; align-items:end; }
+        .mapping-entry-grid .form-group input, .mapping-entry-grid .form-group textarea { width:100%; }
+        .mapping-entry-grid textarea { min-height:74px; padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; resize:vertical; font:inherit; color:var(--ink); }
+        .mapping-entry-grid textarea:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
+        .mapping-component-list { margin:16px 0 12px; border-top:1px solid #edf0f4; }
+        .mapping-component-row { display:grid; grid-template-columns:minmax(280px,1fr) 150px 34px; gap:10px; align-items:end; padding:12px 0; border-bottom:1px solid #edf0f4; }
+        .mapping-component-row .form-group input, .mapping-component-row .form-group select { width:100%; }
+        .mapping-remove { width:34px; height:34px; padding:0 !important; font-size:21px !important; color:#b4233d !important; }
+        .mapping-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .mapping-summary { white-space:normal; line-height:1.55; min-width:340px; }
+        .mapping-summary div + div { margin-top:3px; }
+        .profit-loss-controls { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
+        .profit-loss-controls .form-row { margin:0; }
+        .profit-loss-table { border-radius:8px; }
+        .profit-loss-table table { min-width:100%; }
+        .profit-loss-table th { background:#1f4e78; color:#fff; border-bottom-color:#173a5b; text-align:center; }
+        .profit-loss-table td { padding:8px 10px; white-space:normal; }
+        .profit-loss-table .profit-loss-label { min-width:250px; white-space:pre-wrap; }
+        .profit-loss-table .profit-loss-value { min-width:130px; text-align:right; font-variant-numeric:tabular-nums; }
+        .profit-loss-table .profit-loss-auto { background:#fff2cc; }
+        .profit-loss-table .profit-loss-formula { background:#edf3f8; font-weight:700; }
+        .profit-loss-table .profit-loss-formula-row .profit-loss-label { background:#f5f7fa; font-weight:800; }
+        .profit-loss-table .profit-loss-remark { min-width:180px; }
+        .profit-loss-table input { width:100%; min-width:128px; padding:8px 9px; border:1px solid #cbd5e1; border-radius:5px; color:var(--ink); font:inherit; font-variant-numeric:tabular-nums; text-align:right; }
+        .profit-loss-table input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
+        .profit-loss-table .profit-loss-remark input { min-width:160px; text-align:left; }
+        .profit-loss-table input:disabled { color:#42526a; background:transparent; border-color:transparent; }
+        .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
     </style>
 </head>
 <body>
@@ -213,9 +261,44 @@
                 <div id="ep-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
-        <div class="card">
+        <div id="platform-sku-mappings-card" class="card" style="display:none">
             <div class="flex-between">
+                <h3>平台 SKU ID 映射</h3>
+                <button class="btn btn-secondary" onclick="resetPlatformSkuMappingForm()">新增映射</button>
+            </div>
+            <div class="mapping-form">
+                <div class="mapping-form-title">
+                    <h4 id="platform-sku-mapping-form-title">新增平台 SKU ID 映射</h4>
+                    <label id="platform-sku-mapping-active-field" style="display:none;font-size:13px;color:#526074"><input id="platform-sku-mapping-active" type="checkbox" checked> 启用映射</label>
+                </div>
+                <div class="mapping-entry-grid">
+                    <div class="form-group">
+                        <label>平台 SKU ID</label>
+                        <textarea id="platform-sku-mapping-ids" maxlength="13000" placeholder="可输入多个 SKU ID，以换行、逗号或分号分隔"></textarea>
+                    </div>
+                </div>
+                <div id="platform-sku-components" class="mapping-component-list"></div>
+                <div class="mapping-actions">
+                    <button class="btn btn-secondary" onclick="addPlatformSkuComponent()">添加商品</button>
+                    <button class="btn btn-primary" onclick="savePlatformSkuMapping()">保存映射</button>
+                    <button id="platform-sku-mapping-cancel" class="btn btn-secondary" style="display:none" onclick="resetPlatformSkuMappingForm()">取消编辑</button>
+                </div>
+            </div>
+            <div class="table-scroll" style="margin-top:18px">
+                <table>
+                    <thead><tr><th>平台 SKU ID</th><th>类型</th><th>商品组成</th><th>状态</th><th>操作</th></tr></thead>
+                    <tbody id="platform-sku-mappings-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="card">
+            <div class="product-list-toolbar">
                 <h3>商品列表</h3>
+                <form class="product-search" onsubmit="searchProducts(); return false;">
+                    <input id="product-keyword" type="search" placeholder="搜索商品名称或 SKU" aria-label="搜索商品名称或 SKU">
+                    <button type="submit" class="btn btn-primary" title="搜索商品">搜索</button>
+                    <button type="button" class="btn btn-secondary" onclick="clearProductSearch()" title="清空搜索条件">清空</button>
+                </form>
                 <div class="batch-list-actions">
                     <button class="btn btn-primary" onclick="exportAllProducts()" title="导出当前商品列表">批量导出</button>
                     <button class="btn btn-secondary" onclick="loadProducts()">刷新</button>
@@ -371,14 +454,29 @@
         <div class="card">
             <div class="flex-between">
                 <h3>人民币销售台账</h3>
-                <span style="font-size:12px;color:var(--muted)">本页汇总</span>
+                <div class="sales-filter-toolbar">
+                    <div class="form-group"><label for="sales-month">月份</label><input id="sales-month" type="month"></div>
+                    <div class="form-group"><label for="sales-product-keyword">商品名称或 SKU</label><input id="sales-product-keyword" type="search" placeholder="输入名称或 SKU"></div>
+                    <button class="btn btn-primary" type="button" onclick="searchSales()">搜索</button>
+                    <button class="btn btn-secondary" type="button" onclick="clearSalesSearch()">清空</button>
+                </div>
             </div>
-            <div class="sales-kpi-grid" id="sales-kpis"></div>
+            <div class="sales-monthly-summary">
+                <div class="sales-monthly-summary-title"><span>月度统计</span><span id="sales-monthly-summary-note">金额均为人民币</span></div>
+                <div class="table-scroll">
+                    <table class="sales-monthly-table">
+                        <thead><tr><th>月份</th><th>销售记录</th><th>销售数量</th><th>净商品收入（元）</th><th>销售成本（元）</th><th>其他费用（元）</th><th>毛利（元）</th></tr></thead>
+                        <tbody id="sales-monthly-tbody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="sales-total-summary">
+                <table><tbody id="sales-total-summary-body"></tbody></table>
+            </div>
             <div class="table-scroll">
             <table class="sales-ledger-table">
-                <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>销售收入（元）</th><th>销售成本（元）</th><th>平台费（元）</th><th>毛利（元）</th></tr></thead>
+                <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>净商品收入（元）</th><th>销售成本（元）</th><th>其他费用（元）</th><th>毛利（元）</th></tr></thead>
                 <tbody id="sales-tbody"></tbody>
-                <tfoot id="sales-tfoot"></tfoot>
             </table>
             </div>
             <div class="pagination" id="sales-pagination"></div>
@@ -443,6 +541,26 @@
                     <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="exportInventoryImpairmentReport()">导出第一张表</button></div>
                 </div>
+            </div>
+        </div>
+        <div class="card">
+            <div class="flex-between">
+                <h3>店铺损益表</h3>
+                <button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button>
+            </div>
+            <div class="profit-loss-controls">
+                <div class="form-row">
+                    <div id="profit-loss-store-group" class="form-group"><label for="profit-loss-store">店铺</label><select id="profit-loss-store" onchange="loadStoreProfitLoss()"></select></div>
+                    <div class="form-group"><label for="profit-loss-month">核算月份</label><input id="profit-loss-month" type="month" onchange="loadStoreProfitLoss()"></div>
+                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-secondary" type="button" onclick="loadStoreProfitLoss()">查询</button></div>
+                </div>
+                <div id="profit-loss-updated" class="profit-loss-updated"></div>
+            </div>
+            <div class="table-scroll profit-loss-table">
+                <table>
+                    <thead><tr><th>项目</th><th>本月金额</th><th>备注</th></tr></thead>
+                    <tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody>
+                </table>
             </div>
         </div>
         <div class="card">
@@ -794,7 +912,7 @@ function switchTab(name) {
     if (name === 'batches') loadBatches();
     if (name === 'gallery') loadGallery();
     if (name === 'sales') { loadSkuOptions(); refreshSalesWorkspace(); }
-    if (name === 'reports') { loadMonthly(); loadAccountingPeriods(); }
+    if (name === 'reports') { loadMonthly(); loadAccountingPeriods(); loadStoreProfitLoss(); }
     if (name === 'users') loadUsers();
 }
 
@@ -860,6 +978,7 @@ const selectedProductIds = new Set();
 let productPage = 1;
 let productPageSize = 20;
 let productTotal = 0;
+let productKeyword = '';
 
 function renderProductPage() {
     const tbody = document.getElementById('products-tbody');
@@ -885,12 +1004,166 @@ function renderProductPage() {
 async function loadProducts() {
     document.querySelector('#sec-products .card:first-child').style.display = isOperator() ? '' : 'none';
     document.getElementById('edit-product-modal').style.display = 'none';
-    const result = await api('GET', `/products?page=${productPage}&page_size=${productPageSize}`);
+    document.getElementById('platform-sku-mappings-card').style.display = isAdmin() ? '' : 'none';
+    const params = new URLSearchParams({page: productPage, page_size: productPageSize});
+    if (productKeyword) params.set('keyword', productKeyword);
+    const result = await api('GET', `/products?${params.toString()}`);
     currentProductList = result.items;
     productTotal = result.total;
     productPage = result.page;
     productPageSize = result.page_size;
     renderProductPage();
+    if (isAdmin()) await loadPlatformSkuMappings();
+}
+
+function searchProducts() {
+    productKeyword = document.getElementById('product-keyword').value.trim();
+    productPage = 1;
+    loadProducts();
+}
+
+function clearProductSearch() {
+    document.getElementById('product-keyword').value = '';
+    searchProducts();
+}
+
+let platformSkuMappings = [];
+let editingPlatformSkuMappingId = null;
+
+function platformSkuIdList(value) {
+    return value.split(/[\n,;]+/).map(item => item.trim()).filter(Boolean);
+}
+
+function platformSkuProductOptions(selectedProductId) {
+    return '<option value="">选择本地商品</option>' + allProducts.map(product =>
+        `<option value="${product.id}" ${Number(selectedProductId) === Number(product.id) ? 'selected' : ''}>${escapeHtml(product.sku)} - ${escapeHtml(product.name)}</option>`
+    ).join('');
+}
+
+function addPlatformSkuComponent(component = {}) {
+    const list = document.getElementById('platform-sku-components');
+    const row = document.createElement('div');
+    row.className = 'mapping-component-row';
+    row.innerHTML = `
+        <div class="form-group"><label>本地商品</label><select class="platform-sku-component-product">${platformSkuProductOptions(component.product_id)}</select></div>
+        <div class="form-group"><label>每售 1 件扣库存</label><input class="platform-sku-component-quantity" type="number" min="1" step="1" value="${Number(component.quantity_per_sale) || 1}"></div>
+        <button class="btn btn-secondary mapping-remove" type="button" onclick="removePlatformSkuComponent(this)" title="移除商品" aria-label="移除商品">×</button>`;
+    list.appendChild(row);
+}
+
+function removePlatformSkuComponent(button) {
+    const list = document.getElementById('platform-sku-components');
+    if (list.children.length === 1) {
+        showMsg('映射至少需要一个本地商品', false);
+        return;
+    }
+    button.closest('.mapping-component-row').remove();
+}
+
+function resetPlatformSkuMappingForm() {
+    editingPlatformSkuMappingId = null;
+    document.getElementById('platform-sku-mapping-form-title').textContent = '新增平台 SKU ID 映射';
+    document.getElementById('platform-sku-mapping-ids').value = '';
+    document.getElementById('platform-sku-mapping-active-field').style.display = 'none';
+    document.getElementById('platform-sku-mapping-active').checked = true;
+    document.getElementById('platform-sku-mapping-cancel').style.display = 'none';
+    document.getElementById('platform-sku-components').innerHTML = '';
+    addPlatformSkuComponent();
+}
+
+function renderPlatformSkuMappings() {
+    const tbody = document.getElementById('platform-sku-mappings-tbody');
+    tbody.innerHTML = platformSkuMappings.length ? platformSkuMappings.map(mapping => {
+        const components = mapping.components.map(component =>
+            `<div><strong>${escapeHtml(component.product_sku)}</strong> ${escapeHtml(component.product_name)} × ${Number(component.quantity_per_sale)}</div>`
+        ).join('');
+        return `<tr>
+            <td><strong>${escapeHtml(mapping.platform_sku_id)}</strong></td>
+            <td><span class="tag ${mapping.is_bundle ? 'tag-orange' : 'tag-blue'}">${mapping.is_bundle ? '组合商品' : '单品'}</span></td>
+            <td class="mapping-summary">${components}</td>
+            <td><span class="tag ${mapping.is_active ? 'tag-green' : 'tag-red'}">${mapping.is_active ? '启用' : '停用'}</span></td>
+            <td style="display:flex;gap:4px"><button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="editPlatformSkuMapping(${mapping.id})">编辑</button><button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deletePlatformSkuMapping(${mapping.id})">删除</button></td>
+        </tr>`;
+    }).join('') : '<tr><td colspan="5" class="empty">暂无平台 SKU ID 映射</td></tr>';
+}
+
+async function loadPlatformSkuMappings() {
+    const [mappings] = await Promise.all([
+        api('GET', '/finance-masters/platform-sku-mappings'),
+        loadProductOptions(),
+    ]);
+    platformSkuMappings = mappings;
+    renderPlatformSkuMappings();
+    if (editingPlatformSkuMappingId === null) resetPlatformSkuMappingForm();
+}
+
+function editPlatformSkuMapping(mappingId) {
+    const mapping = platformSkuMappings.find(item => item.id === mappingId);
+    if (!mapping) return;
+    editingPlatformSkuMappingId = mappingId;
+    document.getElementById('platform-sku-mapping-form-title').textContent = '编辑平台 SKU ID 映射';
+    document.getElementById('platform-sku-mapping-ids').value = mapping.platform_sku_id;
+    document.getElementById('platform-sku-mapping-active-field').style.display = '';
+    document.getElementById('platform-sku-mapping-active').checked = mapping.is_active;
+    document.getElementById('platform-sku-mapping-cancel').style.display = '';
+    document.getElementById('platform-sku-components').innerHTML = '';
+    mapping.components.forEach(component => addPlatformSkuComponent(component));
+    document.getElementById('platform-sku-mappings-card').scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
+
+async function savePlatformSkuMapping() {
+    const skuIds = platformSkuIdList(document.getElementById('platform-sku-mapping-ids').value);
+    const components = [...document.querySelectorAll('#platform-sku-components .mapping-component-row')].map(row => ({
+        product_id: Number(row.querySelector('.platform-sku-component-product').value),
+        quantity_per_sale: Number(row.querySelector('.platform-sku-component-quantity').value),
+    }));
+    if (!skuIds.length) { showMsg('请填写平台 SKU ID', false); return; }
+    if (components.some(component => !component.product_id || !Number.isInteger(component.quantity_per_sale) || component.quantity_per_sale < 1)) {
+        showMsg('请选择本地商品，并填写大于 0 的扣库存数量', false);
+        return;
+    }
+    if (new Set(components.map(component => component.product_id)).size !== components.length) {
+        showMsg('同一个映射不能重复选择本地商品', false);
+        return;
+    }
+    try {
+        if (editingPlatformSkuMappingId !== null) {
+            if (skuIds.length !== 1) {
+                showMsg('编辑时只能保留一个平台 SKU ID；多个 ID 请分别新建', false);
+                return;
+            }
+            await api('PUT', `/finance-masters/platform-sku-mappings/${editingPlatformSkuMappingId}`, {
+                platform_sku_id: skuIds[0],
+                components,
+                is_active: document.getElementById('platform-sku-mapping-active').checked,
+            });
+            showMsg('平台 SKU ID 映射已更新');
+        } else {
+            if (new Set(skuIds).size !== skuIds.length) {
+                showMsg('提交中存在重复的平台 SKU ID', false);
+                return;
+            }
+            await api('POST', '/finance-masters/platform-sku-mappings', {
+                platform: 'tiktok_shop',
+                platform_sku_ids: skuIds,
+                components,
+            });
+            showMsg(`已创建 ${skuIds.length} 条平台 SKU ID 映射`);
+        }
+        resetPlatformSkuMappingForm();
+        await loadPlatformSkuMappings();
+    } catch (e) { showMsg(e.message, false); }
+}
+
+async function deletePlatformSkuMapping(mappingId) {
+    const mapping = platformSkuMappings.find(item => item.id === mappingId);
+    if (!mapping || !confirm(`确认删除平台 SKU ID 映射 ${mapping.platform_sku_id}？`)) return;
+    try {
+        await api('DELETE', `/finance-masters/platform-sku-mappings/${mappingId}`);
+        if (editingPlatformSkuMappingId === mappingId) resetPlatformSkuMappingForm();
+        await loadPlatformSkuMappings();
+        showMsg('平台 SKU ID 映射已删除');
+    } catch (e) { showMsg(e.message, false); }
 }
 
 function toggleProductSelection(id, checked) {
@@ -1453,22 +1726,26 @@ async function loadSales() {
     await loadProductOptions();
     const productMap = {};
     allProducts.forEach(p => productMap[p.id] = p);
-    const result = await api('GET', `/sales?page=${salesPage}&page_size=${salesPageSize}`);
+    const params = new URLSearchParams({page: salesPage, page_size: salesPageSize});
+    if (salesMonth) params.set('month', salesMonth);
+    if (salesProductKeyword) params.set('keyword', salesProductKeyword);
+    const summaryParams = new URLSearchParams();
+    if (salesMonth) summaryParams.set('month', salesMonth);
+    if (salesProductKeyword) summaryParams.set('keyword', salesProductKeyword);
+    const [result, monthlySummary] = await Promise.all([
+        api('GET', `/sales?${params.toString()}`),
+        api('GET', `/sales/monthly-summary?${summaryParams.toString()}`),
+    ]);
+    renderMonthlySalesSummary(monthlySummary);
     const list = result.items;
     salesPage = result.page;
     salesPageSize = result.page_size;
     salesTotal = result.total;
     const tbody = document.getElementById('sales-tbody');
-    const tfoot = document.getElementById('sales-tfoot');
-    const kpis = document.getElementById('sales-kpis');
+    const totalSummary = document.getElementById('sales-total-summary-body');
     if (!list.length) {
         tbody.innerHTML = '<tr><td colspan="11" class="empty">暂无销售记录</td></tr>';
-        tfoot.innerHTML = '';
-        kpis.innerHTML = `
-            <div class="sales-kpi"><div class="label">销售记录</div><div class="value">0</div></div>
-            <div class="sales-kpi"><div class="label">销售数量</div><div class="value">0</div></div>
-            <div class="sales-kpi"><div class="label">销售收入</div><div class="value">¥0.00</div></div>
-            <div class="sales-kpi"><div class="label">毛利</div><div class="value">¥0.00</div></div>`;
+        totalSummary.innerHTML = '<tr><td colspan="4">本页合计</td><td>0</td><td></td><td></td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td></tr>';
         renderPagination('sales-pagination', 1, 1, 0, salesPageSize);
     } else {
         const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true};
@@ -1514,12 +1791,7 @@ async function loadSales() {
             </tr>`;
         }).join('');
         const totalMoney = value => totals.fxReady ? `¥${value.toFixed(2)}` : '存在汇率缺失';
-        kpis.innerHTML = `
-            <div class="sales-kpi"><div class="label">销售记录</div><div class="value">${salesTotal.toLocaleString('zh-CN')}</div></div>
-            <div class="sales-kpi"><div class="label">本页销售数量</div><div class="value">${totals.quantity.toLocaleString('zh-CN')}</div></div>
-            <div class="sales-kpi"><div class="label">本页销售收入</div><div class="value">${totalMoney(totals.revenue)}</div></div>
-            <div class="sales-kpi"><div class="label">本页毛利</div><div class="value">${totalMoney(totals.grossProfit)}</div></div>`;
-        tfoot.innerHTML = `<tr>
+        totalSummary.innerHTML = `<tr>
             <td colspan="4">本页合计</td>
             <td>${totals.quantity.toLocaleString('zh-CN')}</td>
             <td></td><td></td>
@@ -1531,6 +1803,28 @@ async function loadSales() {
         renderPagination('sales-pagination', salesPage, Math.max(1, Math.ceil(salesTotal / salesPageSize)), salesTotal, salesPageSize);
     }
     await loadPendingConfirmations();
+}
+
+function renderMonthlySalesSummary(summary) {
+    const tbody = document.getElementById('sales-monthly-tbody');
+    const note = document.getElementById('sales-monthly-summary-note');
+    if (!summary.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无符合条件的月度数据</td></tr>';
+        note.textContent = salesMonth ? `${salesMonth} · 金额均为人民币` : '金额均为人民币';
+        return;
+    }
+    const money = value => value == null ? '汇率缺失' : `¥${Number(value).toFixed(2)}`;
+    const missing = summary.reduce((count, item) => count + Number(item.fx_missing_count || 0), 0);
+    tbody.innerHTML = summary.map(item => `<tr>
+        <td><strong>${escapeHtml(item.month)}</strong></td>
+        <td>${Number(item.sales_count).toLocaleString('zh-CN')}</td>
+        <td>${Number(item.sold_quantity).toLocaleString('zh-CN')}</td>
+        <td class="${item.sales_revenue_cny == null ? 'fx-missing' : ''}">${money(item.sales_revenue_cny)}</td>
+        <td>¥${Number(item.sales_cost_cny || 0).toFixed(2)}</td>
+        <td class="${item.platform_fee_cny == null ? 'fx-missing' : ''}">${money(item.platform_fee_cny)}</td>
+        <td class="${item.gross_profit_cny == null ? 'fx-missing' : ''}">${money(item.gross_profit_cny)}</td>
+    </tr>`).join('');
+    note.textContent = `${salesMonth || '全部月份'} · 金额均为人民币${missing ? ` · ${missing} 条记录汇率缺失` : ''}`;
 }
 
 function refreshSalesWorkspace() {
@@ -1581,8 +1875,21 @@ async function rollbackSalesImport(importBatchId) {
 let salesPage = 1;
 let salesPageSize = 20;
 let salesTotal = 0;
+let salesMonth = '';
+let salesProductKeyword = '';
 function goSalesPage(page) { salesPage = page; loadSales(); }
 function changeSalesPageSize(size) { salesPageSize = Number(size); salesPage = 1; loadSales(); }
+function searchSales() {
+    salesMonth = document.getElementById('sales-month').value;
+    salesProductKeyword = document.getElementById('sales-product-keyword').value.trim();
+    salesPage = 1;
+    loadSales();
+}
+function clearSalesSearch() {
+    document.getElementById('sales-month').value = '';
+    document.getElementById('sales-product-keyword').value = '';
+    searchSales();
+}
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -1750,6 +2057,111 @@ async function exportInventoryImpairmentReport() {
         link.remove();
         URL.revokeObjectURL(url);
         showMsg('第一张财务附件报表已导出');
+    } catch (e) { showMsg(e.message, false); }
+}
+
+let storeProfitLossReport = null;
+
+function defaultProfitLossMonth() {
+    const input = document.getElementById('profit-loss-month');
+    if (!input.value) input.value = new Date().toLocaleDateString('sv-SE').slice(0, 7);
+    return input.value;
+}
+
+function formatProfitLossAmount(value, row) {
+    if (value === null || value === undefined || value === '') return '-';
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return '-';
+    if (row.key === 'gross_margin') return `${(amount * 100).toFixed(2)}%`;
+    return `¥${amount.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+}
+
+async function loadStoreProfitLossStores() {
+    const group = document.getElementById('profit-loss-store-group');
+    const select = document.getElementById('profit-loss-store');
+    if (!isAdmin()) {
+        group.style.display = 'none';
+        return;
+    }
+    group.style.display = '';
+    const selected = select.value;
+    const stores = await api('GET', '/finance-masters/stores?active_only=true');
+    select.innerHTML = stores.map(store => `<option value="${store.id}">${escapeHtml(store.name)}</option>`).join('');
+    if (selected && stores.some(store => Number(store.id) === Number(selected))) {
+        select.value = selected;
+    }
+}
+
+function renderStoreProfitLoss(report) {
+    const tbody = document.getElementById('store-profit-loss-tbody');
+    const saveButton = document.getElementById('profit-loss-save');
+    const updated = document.getElementById('profit-loss-updated');
+    const editable = Boolean(report.can_edit);
+    saveButton.style.display = editable ? '' : 'none';
+    updated.textContent = report.updated_at
+        ? `${report.store_name} · ${report.period_label} · 上次保存 ${String(report.updated_at).replace('T', ' ').slice(0, 19)}`
+        : `${report.store_name} · ${report.period_label}`;
+    tbody.innerHTML = report.rows.map(row => {
+        const readOnlyClass = row.is_auto ? 'profit-loss-auto' : 'profit-loss-formula';
+        const amountCells = ['current'].map(period => {
+            const value = row.value?.[period];
+            if (row.kind === 'manual') {
+                const inputValue = value === null || value === undefined ? '' : escapeHtml(value);
+                return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" ${editable ? '' : 'disabled'}></td>`;
+            }
+            const title = row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
+            return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(title)}">${formatProfitLossAmount(value, row)}</td>`;
+        }).join('');
+        const remark = `<td class="profit-loss-remark"><input type="text" maxlength="500" data-profit-remark="${row.key}" value="${escapeHtml(row.remark || '')}" ${editable ? '' : 'disabled'}></td>`;
+        return `<tr class="${row.is_formula ? 'profit-loss-formula-row' : ''}"><td class="profit-loss-label">${escapeHtml(row.label)}</td>${amountCells}${remark}</tr>`;
+    }).join('');
+}
+
+async function loadStoreProfitLoss() {
+    const tbody = document.getElementById('store-profit-loss-tbody');
+    const month = defaultProfitLossMonth();
+    try {
+        await loadStoreProfitLossStores();
+        const params = new URLSearchParams({report_month: `${month}-01`});
+        const storeId = document.getElementById('profit-loss-store').value;
+        if (isAdmin() && storeId) params.set('store_id', storeId);
+        const report = await api('GET', `/reports/store-profit-loss?${params.toString()}`);
+        storeProfitLossReport = report;
+        renderStoreProfitLoss(report);
+    } catch (e) {
+        storeProfitLossReport = null;
+        document.getElementById('profit-loss-updated').textContent = '';
+        tbody.innerHTML = `<tr><td colspan="3" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+async function saveStoreProfitLoss() {
+    if (!storeProfitLossReport?.can_edit) {
+        showMsg('当前账号没有保存权限', false);
+        return;
+    }
+    const manualValues = {};
+    document.querySelectorAll('#store-profit-loss-tbody .profit-loss-amount').forEach(input => {
+        const key = input.dataset.profitKey;
+        const period = input.dataset.profitPeriod;
+        if (!manualValues[key]) manualValues[key] = {};
+        manualValues[key][period] = input.value.trim() === '' ? null : Number(input.value);
+    });
+    const remarks = {};
+    document.querySelectorAll('#store-profit-loss-tbody [data-profit-remark]').forEach(input => {
+        const value = input.value.trim();
+        if (value) remarks[input.dataset.profitRemark] = value;
+    });
+    try {
+        const report = await api('PUT', '/reports/store-profit-loss', {
+            store_id: storeProfitLossReport.store_id,
+            report_month: `${defaultProfitLossMonth()}-01`,
+            manual_values: manualValues,
+            remarks,
+        });
+        storeProfitLossReport = report;
+        renderStoreProfitLoss(report);
+        showMsg('店铺损益表已保存');
     } catch (e) { showMsg(e.message, false); }
 }
 

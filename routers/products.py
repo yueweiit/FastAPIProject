@@ -10,11 +10,11 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import Product, InventoryBatch, User
+from models import InventoryBatch, PlatformSkuComponent, Product, User
 from schemas import ProductOptionResponse, ProductPageResponse, ProductResponse
 from auth import RequireAdmin, RequireOperator, RequireAnyRole, get_current_user
 
@@ -82,18 +82,25 @@ def _product_summary_stmt():
 
 @router.get("", response_model=list[ProductResponse] | ProductPageResponse)
 async def list_products(
+    keyword: str | None = Query(default=None, max_length=255),
     page: int | None = Query(default=None, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
-    """列出商品；分页请求在单条聚合查询中返回库存摘要。"""
+    """列出商品；支持按商品名称或 SKU 搜索。"""
     stmt = _product_summary_stmt()
+    count_stmt = select(func.count()).select_from(Product)
+    if keyword and keyword.strip():
+        pattern = f"%{keyword.strip()}%"
+        product_filter = or_(Product.name.ilike(pattern), Product.sku.ilike(pattern))
+        stmt = stmt.where(product_filter)
+        count_stmt = count_stmt.where(product_filter)
     if page is None:
         result = await db.execute(stmt)
         return [_product_summary_from_row(row) for row in result.all()]
 
-    total = (await db.execute(select(func.count()).select_from(Product))).scalar_one()
+    total = (await db.execute(count_stmt)).scalar_one()
     page = min(page, max(1, (total + page_size - 1) // page_size))
     result = await db.execute(stmt.offset((page - 1) * page_size).limit(page_size))
     return ProductPageResponse(
@@ -268,6 +275,14 @@ async def delete_product(
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
+
+    platform_sku_mapping_count = await db.scalar(
+        select(func.count()).select_from(PlatformSkuComponent).where(
+            PlatformSkuComponent.product_id == product_id
+        )
+    )
+    if platform_sku_mapping_count:
+        raise HTTPException(status_code=400, detail="商品已被平台 SKU 映射引用，请先删除或修改映射")
 
     if product.image:
         filepath = Path(__file__).parent.parent / product.image.lstrip("/")

@@ -147,6 +147,33 @@ async def migrate() -> None:
             )
         )
 
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS store_profit_loss_reports (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    store_id INT NOT NULL,
+                    report_month DATE NOT NULL,
+                    manual_values JSON NOT NULL,
+                    remarks JSON NOT NULL,
+                    metadata JSON NOT NULL,
+                    updated_by_user_id INT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_store_profit_loss_reports_store_month
+                        UNIQUE (store_id, report_month),
+                    INDEX ix_store_profit_loss_reports_store_id (store_id),
+                    INDEX ix_store_profit_loss_reports_month (report_month),
+                    INDEX ix_store_profit_loss_reports_updated_by_user_id (updated_by_user_id),
+                    CONSTRAINT fk_store_profit_loss_reports_store
+                        FOREIGN KEY (store_id) REFERENCES stores(id),
+                    CONSTRAINT fk_store_profit_loss_reports_user
+                        FOREIGN KEY (updated_by_user_id) REFERENCES users(id)
+                )
+                """
+            )
+        )
+
         for table_name, column_name, definition in MIGRATIONS:
             if await _column_exists(connection, table_name, column_name):
                 continue
@@ -172,6 +199,45 @@ async def migrate() -> None:
                     password_hash VARCHAR(255) NOT NULL,
                     role VARCHAR(16) DEFAULT 'operator',
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        )
+
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS platform_sku_mappings (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    platform VARCHAR(32) NOT NULL DEFAULT 'tiktok_shop',
+                    platform_sku_id VARCHAR(128) NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_platform_sku_mappings_platform_sku
+                        UNIQUE (platform, platform_sku_id),
+                    INDEX ix_platform_sku_mappings_platform_active (platform, is_active)
+                )
+                """
+            )
+        )
+
+        await connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS platform_sku_components (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    platform_sku_mapping_id INT NOT NULL,
+                    product_id INT NOT NULL,
+                    quantity_per_sale INT NOT NULL DEFAULT 1,
+                    CONSTRAINT uq_platform_sku_components_mapping_product
+                        UNIQUE (platform_sku_mapping_id, product_id),
+                    INDEX ix_platform_sku_components_mapping_id (platform_sku_mapping_id),
+                    INDEX ix_platform_sku_components_product_id (product_id),
+                    CONSTRAINT fk_platform_sku_components_mapping
+                        FOREIGN KEY (platform_sku_mapping_id) REFERENCES platform_sku_mappings(id),
+                    CONSTRAINT fk_platform_sku_components_product
+                        FOREIGN KEY (product_id) REFERENCES products(id)
                 )
                 """
             )

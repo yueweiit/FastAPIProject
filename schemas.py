@@ -162,6 +162,17 @@ class SalePageResponse(BaseModel):
     page_size: int
 
 
+class MonthlySalesSummaryResponse(BaseModel):
+    month: str
+    sales_count: int
+    sold_quantity: int
+    sales_revenue_cny: Decimal | None = None
+    sales_cost_cny: Decimal = Decimal("0")
+    platform_fee_cny: Decimal | None = None
+    gross_profit_cny: Decimal | None = None
+    fx_missing_count: int = 0
+
+
 class SalesImportError(BaseModel):
     row: int
     message: str
@@ -247,6 +258,41 @@ class MonthlyReportItem(BaseModel):
     inventory_value: Decimal = Decimal("0")  # 库存价值
 
 
+class StoreProfitLossCell(BaseModel):
+    current: Decimal | None = None
+    previous: Decimal | None = None
+    ytd: Decimal | None = None
+
+
+class StoreProfitLossRowResponse(BaseModel):
+    key: str
+    label: str
+    kind: str
+    is_auto: bool = False
+    is_formula: bool = False
+    source: str | None = None
+    value: StoreProfitLossCell
+    remark: str = ""
+
+
+class StoreProfitLossUpdateRequest(BaseModel):
+    store_id: int = Field(..., ge=1)
+    report_month: date
+    manual_values: dict[str, StoreProfitLossCell] = Field(default_factory=dict)
+    remarks: dict[str, str] = Field(default_factory=dict)
+
+
+class StoreProfitLossResponse(BaseModel):
+    store_id: int
+    store_name: str
+    store_platform: str
+    report_month: str
+    period_label: str
+    can_edit: bool
+    updated_at: datetime | None = None
+    rows: list[StoreProfitLossRowResponse]
+
+
 # ========== 财务主数据 ==========
 class ProductLineRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=64)
@@ -302,6 +348,41 @@ class StoreProductResponse(StoreProductRequest):
     product_name: str
     product_line_code: str
     product_line_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlatformSkuComponentRequest(BaseModel):
+    product_id: int = Field(..., ge=1)
+    quantity_per_sale: int = Field(..., ge=1)
+
+
+class PlatformSkuMappingCreateRequest(BaseModel):
+    platform: str = Field(default="tiktok_shop", min_length=1, max_length=32)
+    platform_sku_ids: list[str] = Field(..., min_length=1, max_length=100)
+    components: list[PlatformSkuComponentRequest] = Field(..., min_length=1)
+
+
+class PlatformSkuMappingUpdateRequest(BaseModel):
+    platform_sku_id: str = Field(..., min_length=1, max_length=128)
+    components: list[PlatformSkuComponentRequest] = Field(..., min_length=1)
+    is_active: bool = True
+
+
+class PlatformSkuComponentResponse(BaseModel):
+    product_id: int
+    product_sku: str
+    product_name: str
+    quantity_per_sale: int
+
+
+class PlatformSkuMappingResponse(BaseModel):
+    id: int
+    platform: str
+    platform_sku_id: str
+    is_active: bool
+    is_bundle: bool
+    components: list[PlatformSkuComponentResponse]
     created_at: datetime
     updated_at: datetime
 

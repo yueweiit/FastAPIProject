@@ -51,6 +51,9 @@ class Product(Base):
     batches: Mapped[list["InventoryBatch"]] = relationship(back_populates="product")
     sales: Mapped[list["Sale"]] = relationship(back_populates="product")
     store_products: Mapped[list["StoreProduct"]] = relationship(back_populates="product")
+    platform_sku_components: Mapped[list["PlatformSkuComponent"]] = relationship(
+        back_populates="product"
+    )
     settlement_entries: Mapped[list["SettlementEntry"]] = relationship(back_populates="product")
 
 
@@ -349,6 +352,49 @@ class StoreProduct(Base):
     product_line: Mapped["ProductLine"] = relationship(back_populates="store_products")
 
 
+class PlatformSkuMapping(Base):
+    """Global platform SKU mapping, independent of individual stores."""
+    __tablename__ = "platform_sku_mappings"
+    __table_args__ = (
+        UniqueConstraint("platform", "platform_sku_id", name="uq_platform_sku_mappings_platform_sku"),
+        Index("ix_platform_sku_mappings_platform_active", "platform", "is_active"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(32), default="tiktok_shop")
+    platform_sku_id: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+    components: Mapped[list["PlatformSkuComponent"]] = relationship(
+        back_populates="mapping", cascade="all, delete-orphan"
+    )
+
+
+class PlatformSkuComponent(Base):
+    """A local product and its required quantity for one platform SKU sale."""
+    __tablename__ = "platform_sku_components"
+    __table_args__ = (
+        UniqueConstraint(
+            "platform_sku_mapping_id", "product_id",
+            name="uq_platform_sku_components_mapping_product",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform_sku_mapping_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("platform_sku_mappings.id"), index=True
+    )
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), index=True)
+    quantity_per_sale: Mapped[int] = mapped_column(Integer, default=1)
+
+    mapping: Mapped["PlatformSkuMapping"] = relationship(back_populates="components")
+    product: Mapped["Product"] = relationship(back_populates="platform_sku_components")
+
+
 class AccountingPeriod(Base):
     """财务期间的关闭控制及月末库存快照。"""
     __tablename__ = "accounting_periods"
@@ -418,3 +464,32 @@ class InventoryPeriodSnapshot(Base):
         back_populates="inventory_snapshots"
     )
     batch: Mapped["InventoryBatch"] = relationship(back_populates="period_snapshots")
+
+
+class StoreProfitLossReport(Base):
+    """单店单月损益表中的人工填写项及最后修改信息。"""
+
+    __tablename__ = "store_profit_loss_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id", "report_month",
+            name="uq_store_profit_loss_reports_store_month",
+        ),
+        Index("ix_store_profit_loss_reports_month", "report_month"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    report_month: Mapped[date] = mapped_column(Date)
+    manual_values: Mapped[dict] = mapped_column(JSON, default=dict)
+    remarks: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Keep the database column name for compatibility without shadowing the
+    # Declarative API's reserved ``metadata`` attribute.
+    report_metadata: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )

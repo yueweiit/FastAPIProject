@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from auth import RequireAdmin, RequireAnyRole
 from database import get_db
@@ -12,6 +13,8 @@ from models import (
     Product,
     ProductLine,
     InventoryPeriodSnapshot,
+    PlatformSkuComponent,
+    PlatformSkuMapping,
     Sale,
     SettlementEntry,
     Store,
@@ -21,6 +24,10 @@ from models import (
 from schemas import (
     AccountingPeriodRequest,
     AccountingPeriodResponse,
+    PlatformSkuComponentRequest,
+    PlatformSkuMappingCreateRequest,
+    PlatformSkuMappingResponse,
+    PlatformSkuMappingUpdateRequest,
     ProductLineRequest,
     ProductLineResponse,
     StoreProductRequest,
@@ -79,6 +86,66 @@ def _store_product_response(row) -> StoreProductResponse:
         created_at=mapping.created_at,
         updated_at=mapping.updated_at,
     )
+
+
+def _platform_sku_mapping_response(
+    mapping: PlatformSkuMapping,
+) -> PlatformSkuMappingResponse:
+    components = sorted(
+        mapping.components,
+        key=lambda component: (component.product.sku, component.product.id),
+    )
+    return PlatformSkuMappingResponse(
+        id=mapping.id,
+        platform=mapping.platform,
+        platform_sku_id=mapping.platform_sku_id,
+        is_active=mapping.is_active,
+        is_bundle=len(components) > 1,
+        components=[
+            {
+                "product_id": component.product_id,
+                "product_sku": component.product.sku,
+                "product_name": component.product.name,
+                "quantity_per_sale": component.quantity_per_sale,
+            }
+            for component in components
+        ],
+        created_at=mapping.created_at,
+        updated_at=mapping.updated_at,
+    )
+
+
+async def _validate_platform_sku_components(
+    db: AsyncSession, components: list[PlatformSkuComponentRequest]
+) -> None:
+    product_ids = [component.product_id for component in components]
+    if len(set(product_ids)) != len(product_ids):
+        raise HTTPException(status_code=400, detail="同一个平台 SKU 不能重复配置本地商品")
+
+    products = (
+        await db.execute(select(Product.id).where(Product.id.in_(product_ids)))
+    ).scalars().all()
+    missing_ids = sorted(set(product_ids) - set(products))
+    if missing_ids:
+        raise HTTPException(
+            status_code=404,
+            detail="商品不存在: " + "、".join(str(product_id) for product_id in missing_ids),
+        )
+
+
+async def _load_platform_sku_mapping(
+    db: AsyncSession, mapping_id: int
+) -> PlatformSkuMapping | None:
+    result = await db.execute(
+        select(PlatformSkuMapping)
+        .options(
+            selectinload(PlatformSkuMapping.components).selectinload(
+                PlatformSkuComponent.product
+            )
+        )
+        .where(PlatformSkuMapping.id == mapping_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def _accounting_period_response(
@@ -394,6 +461,160 @@ async def delete_store_product(
     mapping = await db.get(StoreProduct, mapping_id)
     if not mapping:
         raise HTTPException(status_code=404, detail="店铺 SKU 映射不存在")
+    await db.delete(mapping)
+    await db.commit()
+    return {"ok": True}
+
+
+# ---------- 平台 SKU 映射 ----------
+@router.get("/platform-sku-mappings", response_model=list[PlatformSkuMappingResponse])
+async def list_platform_sku_mappings(
+    active_only: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    stmt = (
+        select(PlatformSkuMapping)
+        .options(
+            selectinload(PlatformSkuMapping.components).selectinload(
+                PlatformSkuComponent.product
+            )
+        )
+        .order_by(PlatformSkuMapping.is_active.desc(), PlatformSkuMapping.platform_sku_id)
+    )
+    if active_only:
+        stmt = stmt.where(PlatformSkuMapping.is_active.is_(True))
+    mappings = (await db.execute(stmt)).scalars().all()
+    return [_platform_sku_mapping_response(mapping) for mapping in mappings]
+
+
+@router.post(
+    "/platform-sku-mappings",
+    response_model=list[PlatformSkuMappingResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_platform_sku_mappings(
+    data: PlatformSkuMappingCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAdmin),
+):
+    platform = _normalized(data.platform)
+    sku_ids = [_normalized(value) for value in data.platform_sku_ids]
+    if not platform:
+        raise HTTPException(status_code=400, detail="平台不能为空")
+    if any(not sku_id for sku_id in sku_ids):
+        raise HTTPException(status_code=400, detail="平台 SKU ID 不能为空")
+    if any(len(sku_id) > 128 for sku_id in sku_ids):
+        raise HTTPException(status_code=400, detail="平台 SKU ID 最多 128 个字符")
+    if len(set(sku_ids)) != len(sku_ids):
+        raise HTTPException(status_code=400, detail="提交中存在重复的平台 SKU ID")
+    await _validate_platform_sku_components(db, data.components)
+
+    existing_ids = (
+        await db.execute(
+            select(PlatformSkuMapping.platform_sku_id).where(
+                PlatformSkuMapping.platform == platform,
+                PlatformSkuMapping.platform_sku_id.in_(sku_ids),
+            )
+        )
+    ).scalars().all()
+    if existing_ids:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="平台 SKU ID 已有映射: " + "、".join(existing_ids),
+        )
+
+    mappings = []
+    for sku_id in sku_ids:
+        mapping = PlatformSkuMapping(
+            platform=platform,
+            platform_sku_id=sku_id,
+            is_active=True,
+            components=[
+                PlatformSkuComponent(
+                    product_id=component.product_id,
+                    quantity_per_sale=component.quantity_per_sale,
+                )
+                for component in data.components
+            ],
+        )
+        db.add(mapping)
+        mappings.append(mapping)
+    await _commit(db, "平台 SKU ID 已有映射")
+
+    loaded_mappings = []
+    for mapping in mappings:
+        loaded_mapping = await _load_platform_sku_mapping(db, mapping.id)
+        if loaded_mapping:
+            loaded_mappings.append(loaded_mapping)
+    return [_platform_sku_mapping_response(mapping) for mapping in loaded_mappings]
+
+
+@router.put(
+    "/platform-sku-mappings/{mapping_id}",
+    response_model=PlatformSkuMappingResponse,
+)
+async def update_platform_sku_mapping(
+    mapping_id: int,
+    data: PlatformSkuMappingUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAdmin),
+):
+    mapping = await _load_platform_sku_mapping(db, mapping_id)
+    if not mapping:
+        raise HTTPException(status_code=404, detail="平台 SKU 映射不存在")
+    platform_sku_id = _normalized(data.platform_sku_id)
+    if not platform_sku_id:
+        raise HTTPException(status_code=400, detail="平台 SKU ID 不能为空")
+    await _validate_platform_sku_components(db, data.components)
+
+    existing_mapping_id = (
+        await db.execute(
+            select(PlatformSkuMapping.id).where(
+                PlatformSkuMapping.platform == mapping.platform,
+                PlatformSkuMapping.platform_sku_id == platform_sku_id,
+                PlatformSkuMapping.id != mapping_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_mapping_id is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="平台 SKU ID 已有映射")
+
+    mapping.platform_sku_id = platform_sku_id
+    mapping.is_active = data.is_active
+    requested_components = {
+        component.product_id: component.quantity_per_sale
+        for component in data.components
+    }
+    existing_components = {
+        component.product_id: component for component in mapping.components
+    }
+    for product_id, component in existing_components.items():
+        if product_id not in requested_components:
+            await db.delete(component)
+        else:
+            component.quantity_per_sale = requested_components.pop(product_id)
+    mapping.components.extend(
+        PlatformSkuComponent(
+            product_id=product_id,
+            quantity_per_sale=quantity_per_sale,
+        )
+        for product_id, quantity_per_sale in requested_components.items()
+    )
+    await _commit(db, "平台 SKU ID 已有映射")
+    loaded_mapping = await _load_platform_sku_mapping(db, mapping_id)
+    return _platform_sku_mapping_response(loaded_mapping)
+
+
+@router.delete("/platform-sku-mappings/{mapping_id}")
+async def delete_platform_sku_mapping(
+    mapping_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAdmin),
+):
+    mapping = await _load_platform_sku_mapping(db, mapping_id)
+    if not mapping:
+        raise HTTPException(status_code=404, detail="平台 SKU 映射不存在")
     await db.delete(mapping)
     await db.commit()
     return {"ok": True}
