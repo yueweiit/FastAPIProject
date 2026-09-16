@@ -21,7 +21,7 @@ from services.inventory_impairment import (
     VALID_PRODUCT_TYPES,
 )
 from schemas import ProductOptionResponse, ProductPageResponse, ProductResponse
-from auth import RequireAdmin, RequireOperator, RequireAnyRole, get_current_user
+from auth import RequireAnyRole, get_current_user
 
 router = APIRouter(prefix="/products", tags=["商品管理"])
 
@@ -49,9 +49,9 @@ async def create_product(
     safe_stock_quantity: int = Form(default=0),
     image: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireOperator),
+    user: User = Depends(RequireAnyRole),
 ):
-    """添加商品 - 管理员和运营"""
+    """添加商品 - 所有角色可操作。"""
     existing = await db.execute(select(Product).where(Product.sku == sku))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"SKU已存在: {sku}")
@@ -276,9 +276,9 @@ async def update_product(
     safe_stock_quantity: int | None = Form(default=None),
     image: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireOperator),
+    user: User = Depends(RequireAnyRole),
 ):
-    """编辑商品 - 管理员和运营"""
+    """编辑商品 - 所有角色可操作。"""
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
@@ -320,9 +320,9 @@ async def update_product(
 async def delete_product(
     product_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireOperator),
+    user: User = Depends(RequireAnyRole),
 ):
-    """删除商品 - 管理员和运营"""
+    """删除商品 - 所有角色可操作。"""
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")

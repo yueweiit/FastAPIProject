@@ -1011,8 +1011,8 @@ function renderProductPage() {
         <td>${p.last_batch_at || '-'}</td>
         <td style="display:flex;gap:4px">
             <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="exportProduct(${p.id})" title="导出此商品">导出</button>
-            ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditProduct(${p.id})">✏️</button>` : ''}
-            ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>` : ''}
+            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditProduct(${p.id})">✏️</button>
+            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>
         </td>
     </tr>`).join('') : '<tr><td colspan="10" class="empty">暂无商品</td></tr>';
     renderPagination('products-pagination', productPage, pageCount, productTotal, productPageSize);
@@ -1020,9 +1020,9 @@ function renderProductPage() {
 }
 
 async function loadProducts() {
-    document.querySelector('#sec-products .card:first-child').style.display = isOperator() ? '' : 'none';
+    document.querySelector('#sec-products .card:first-child').style.display = '';
     document.getElementById('edit-product-modal').style.display = 'none';
-    document.getElementById('platform-sku-mappings-card').style.display = isAdmin() ? '' : 'none';
+    document.getElementById('platform-sku-mappings-card').style.display = '';
     const params = new URLSearchParams({page: productPage, page_size: productPageSize});
     if (productKeyword) params.set('keyword', productKeyword);
     const result = await api('GET', `/products?${params.toString()}`);
@@ -1031,7 +1031,7 @@ async function loadProducts() {
     productPage = result.page;
     productPageSize = result.page_size;
     renderProductPage();
-    if (isAdmin()) await loadPlatformSkuMappings();
+    await loadPlatformSkuMappings();
 }
 
 function searchProducts() {

@@ -496,7 +496,7 @@ async def list_platform_sku_mappings(
 async def create_platform_sku_mappings(
     data: PlatformSkuMappingCreateRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
+    user: User = Depends(RequireAnyRole),
 ):
     platform = _normalized(data.platform)
     sku_ids = [_normalized(value) for value in data.platform_sku_ids]
@@ -558,7 +558,7 @@ async def update_platform_sku_mapping(
     mapping_id: int,
     data: PlatformSkuMappingUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
+    user: User = Depends(RequireAnyRole),
 ):
     mapping = await _load_platform_sku_mapping(db, mapping_id)
     if not mapping:
@@ -610,7 +610,7 @@ async def update_platform_sku_mapping(
 async def delete_platform_sku_mapping(
     mapping_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
+    user: User = Depends(RequireAnyRole),
 ):
     mapping = await _load_platform_sku_mapping(db, mapping_id)
     if not mapping:
