@@ -15,6 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import InventoryBatch, PlatformSkuComponent, Product, User
+from services.inventory_impairment import (
+    PRODUCT_TYPE_NEW,
+    PRODUCT_TYPE_STABLE,
+    VALID_PRODUCT_TYPES,
+)
 from schemas import ProductOptionResponse, ProductPageResponse, ProductResponse
 from auth import RequireAdmin, RequireOperator, RequireAnyRole, get_current_user
 
@@ -25,10 +30,23 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 BASE_DIR = Path(__file__).parent.parent
 
 
+def _impairment_settings(product_type: str, safe_stock_quantity: int) -> tuple[str, int]:
+    if product_type not in VALID_PRODUCT_TYPES:
+        raise HTTPException(status_code=422, detail="商品类型必须是稳健商品或新品")
+    if safe_stock_quantity < 0:
+        raise HTTPException(status_code=422, detail="安全库存不能小于 0")
+    return (
+        product_type,
+        0 if product_type == PRODUCT_TYPE_NEW else safe_stock_quantity,
+    )
+
+
 @router.post("", response_model=ProductResponse)
 async def create_product(
     sku: str = Form(...),
     name: str = Form(...),
+    product_type: str = Form(default=PRODUCT_TYPE_STABLE),
+    safe_stock_quantity: int = Form(default=0),
     image: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
@@ -47,7 +65,16 @@ async def create_product(
         filepath.write_bytes(content)
         image_path = f"/uploads/{filename}"
 
-    product = Product(sku=sku, name=name, image=image_path)
+    product_type, safe_stock_quantity = _impairment_settings(
+        product_type, safe_stock_quantity
+    )
+    product = Product(
+        sku=sku,
+        name=name,
+        image=image_path,
+        product_type=product_type,
+        safe_stock_quantity=safe_stock_quantity,
+    )
     db.add(product)
     await db.commit()
     await db.refresh(product)
@@ -75,7 +102,15 @@ def _product_summary_stmt():
             func.max(InventoryBatch.arrived_at).label("last_batch_at"),
         )
         .outerjoin(InventoryBatch, InventoryBatch.product_id == Product.id)
-        .group_by(Product.id, Product.sku, Product.name, Product.image, Product.created_at)
+        .group_by(
+            Product.id,
+            Product.sku,
+            Product.name,
+            Product.image,
+            Product.product_type,
+            Product.safe_stock_quantity,
+            Product.created_at,
+        )
         .order_by(Product.id.desc())
     )
 
@@ -151,7 +186,10 @@ async def export_products(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "商品数据"
-    sheet.append(["图片", "商品ID", "SKU", "商品名称", "库存数量", "库存价值", "最近入库", "创建时间"])
+    sheet.append([
+        "图片", "商品ID", "SKU", "商品名称", "商品类型", "安全库存",
+        "库存数量", "库存价值", "最近入库", "创建时间",
+    ])
     header_fill = PatternFill("solid", fgColor="5B9BD5")
     for cell in sheet[1]:
         cell.fill = header_fill
@@ -161,8 +199,9 @@ async def export_products(
 
     for row_index, (product, stock_qty, stock_value, last_batch) in enumerate(rows, start=2):
         sheet.append([
-            "", product.id, product.sku, product.name, stock_qty, stock_value,
-            last_batch, product.created_at,
+            "", product.id, product.sku, product.name,
+            "新品" if product.product_type == PRODUCT_TYPE_NEW else "稳健商品",
+            product.safe_stock_quantity, stock_qty, stock_value, last_batch, product.created_at,
         ])
         image_path = None
         if product.image:
@@ -185,13 +224,14 @@ async def export_products(
     for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row):
         for cell in row:
             cell.alignment = Alignment(vertical="center", wrap_text=True)
-    for cell in sheet["F"][1:]:
+    for cell in sheet["H"][1:]:
         cell.number_format = '¥#,##0.00'
-    for column in ("G", "H"):
+    for column in ("I", "J"):
         for cell in sheet[column][1:]:
             cell.number_format = "yyyy-mm-dd hh:mm"
     for column, width in {
-        "A": 12, "B": 10, "C": 18, "D": 24, "E": 12, "F": 16, "G": 20, "H": 20,
+        "A": 12, "B": 10, "C": 18, "D": 24, "E": 12, "F": 12,
+        "G": 12, "H": 16, "I": 20, "J": 20,
     }.items():
         sheet.column_dimensions[column].width = width
     sheet.auto_filter.ref = sheet.dimensions
@@ -213,6 +253,8 @@ def _enrich_product(product, stock_qty, stock_val, last_batch):
         sku=product.sku,
         name=product.name,
         image=product.image,
+        product_type=product.product_type,
+        safe_stock_quantity=product.safe_stock_quantity,
         created_at=product.created_at,
         stock_quantity=stock_qty,
         stock_value=stock_val,
@@ -230,6 +272,8 @@ async def update_product(
     product_id: int,
     sku: str = Form(...),
     name: str = Form(...),
+    product_type: str | None = Form(default=None),
+    safe_stock_quantity: int | None = Form(default=None),
     image: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
@@ -246,6 +290,13 @@ async def update_product(
 
     product.sku = sku
     product.name = name
+    if product_type is not None or safe_stock_quantity is not None:
+        product.product_type, product.safe_stock_quantity = _impairment_settings(
+            product_type if product_type is not None else product.product_type,
+            safe_stock_quantity
+            if safe_stock_quantity is not None
+            else product.safe_stock_quantity,
+        )
 
     if image and image.filename:
         # 删除旧图片

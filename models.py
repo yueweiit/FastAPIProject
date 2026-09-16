@@ -46,6 +46,8 @@ class Product(Base):
     sku: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     image: Mapped[str | None] = mapped_column(String(500), nullable=True)  # 图片路径
+    product_type: Mapped[str] = mapped_column(String(16), default="stable")
+    safe_stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     batches: Mapped[list["InventoryBatch"]] = relationship(back_populates="product")

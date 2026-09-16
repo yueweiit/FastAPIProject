@@ -11,10 +11,12 @@ from models import (
     AccountingPeriod,
     InventoryBatch,
     InventoryPeriodSnapshot,
+    Product,
     Sale,
     SaleCostDetail,
     User,
 )
+from services.inventory_impairment import InventoryLayer, batch_impairments
 
 
 def previous_month_end(value: date) -> date:
@@ -46,7 +48,13 @@ async def _snapshot_rows(
     cutoff = datetime.combine(period.period_end + timedelta(days=1), time.min)
     batch_rows = (
         await db.execute(
-            select(InventoryBatch, User.store_id)
+            select(
+                InventoryBatch,
+                User.store_id,
+                Product.product_type,
+                Product.safe_stock_quantity,
+            )
+            .join(Product, Product.id == InventoryBatch.product_id)
             .outerjoin(User, User.id == InventoryBatch.user_id)
             .where(InventoryBatch.arrived_at < cutoff)
             .order_by(InventoryBatch.arrived_at, InventoryBatch.id)
@@ -55,7 +63,7 @@ async def _snapshot_rows(
     if not batch_rows:
         return []
 
-    batch_ids = [batch.id for batch, _ in batch_rows]
+    batch_ids = [batch.id for batch, *_ in batch_rows]
     deductions = (
         await db.execute(
             select(
@@ -77,14 +85,29 @@ async def _snapshot_rows(
     ).all()
     deducted_by_batch = {row.batch_id: int(row.deducted_quantity) for row in deductions}
 
+    layers = []
+    for batch, store_id, product_type, safe_stock_quantity in batch_rows:
+        quantity = max(0, int(batch.quantity) - deducted_by_batch.get(batch.id, 0))
+        layers.append(InventoryLayer(
+            batch_id=batch.id,
+            product_id=batch.product_id,
+            store_id=store_id,
+            arrived_at=batch.arrived_at.date(),
+            quantity=quantity,
+            product_type=product_type,
+            safe_stock_quantity=safe_stock_quantity,
+        ))
+
+    impairments = batch_impairments(layers, period.period_end)
     snapshots = []
-    for batch, store_id in batch_rows:
+    for batch, store_id, _product_type, _safe_stock_quantity in batch_rows:
         quantity = max(0, int(batch.quantity) - deducted_by_batch.get(batch.id, 0))
         unit_cost = Decimal(batch.unit_cost or 0)
-        age_days = max((period.period_end - batch.arrived_at.date()).days, 0)
-        impairment_rate = min(Decimal(age_days) * Decimal("0.01"), Decimal("0.9"))
+        impairment = impairments.get(batch.id)
+        impairment_rate = impairment.rate if impairment else Decimal("0")
+        provision_quantity = impairment.provision_quantity if impairment else 0
         inventory_amount = unit_cost * quantity
-        impairment_amount = inventory_amount * impairment_rate
+        impairment_amount = unit_cost * provision_quantity * impairment_rate
         snapshots.append(
             InventoryPeriodSnapshot(
                 accounting_period_id=period.id,

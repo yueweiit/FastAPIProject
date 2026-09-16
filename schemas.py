@@ -39,6 +39,8 @@ class ProductResponse(BaseModel):
     sku: str
     name: str
     image: str | None = None
+    product_type: str = "stable"
+    safe_stock_quantity: int = 0
     created_at: datetime
     # 前端计算填充
     stock_quantity: int = 0

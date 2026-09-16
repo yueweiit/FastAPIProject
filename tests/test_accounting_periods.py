@@ -74,7 +74,7 @@ class AccountingPeriodTests(unittest.IsolatedAsyncioTestCase):
             arrived_at=datetime(2026, 7, 1),
         )
         deduction = SimpleNamespace(batch_id=11, deducted_quantity=3)
-        db = _SnapshotDb([(batch, 4)], [deduction])
+        db = _SnapshotDb([(batch, 4, "stable", 0)], [deduction])
 
         self.assertTrue(await create_period_snapshot(db, period))
         snapshot = db.added[0]

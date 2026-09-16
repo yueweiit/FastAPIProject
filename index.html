@@ -242,6 +242,8 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="p-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="p-name" placeholder="蓝牙耳机"></div>
+                    <div class="form-group"><label>商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable">稳健商品</option><option value="new">新品</option></select></div>
+                    <div class="form-group"><label>安全库存</label><input id="p-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片</label><input id="p-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createProduct()">添加</button></div>
                 </div>
@@ -255,6 +257,8 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="ep-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="ep-name" placeholder="蓝牙耳机"></div>
+                    <div class="form-group"><label>商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable">稳健商品</option><option value="new">新品</option></select></div>
+                    <div class="form-group"><label>安全库存</label><input id="ep-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片(留空不换)</label><input id="ep-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditProduct()">保存</button></div>
                 </div>
@@ -306,7 +310,7 @@
             </div>
             <div class="table-scroll">
             <table class="product-table">
-                <thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)" aria-label="全选商品"></th><th>图片</th><th>SKU</th><th>名称</th><th>库存</th><th>库存价值</th><th>最近入库</th><th>操作</th></tr></thead>
+                <thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)" aria-label="全选商品"></th><th>图片</th><th>SKU</th><th>名称</th><th>类型</th><th>安全库存</th><th>库存</th><th>库存价值</th><th>最近入库</th><th>操作</th></tr></thead>
                 <tbody id="products-tbody"></tbody>
             </table>
             </div>
@@ -941,11 +945,20 @@ function clearImage() {
     document.getElementById('p-preview').innerHTML = '';
 }
 
+function toggleSafeStockField(prefix) {
+    const isNew = document.getElementById(`${prefix}-product-type`).value === 'new';
+    const input = document.getElementById(`${prefix}-safe-stock-quantity`);
+    input.disabled = isNew;
+    if (isNew) input.value = 0;
+}
+
 async function createProduct() {
     try {
         const formData = new FormData();
         formData.append('sku', document.getElementById('p-sku').value);
         formData.append('name', document.getElementById('p-name').value);
+        formData.append('product_type', document.getElementById('p-product-type').value);
+        formData.append('safe_stock_quantity', document.getElementById('p-safe-stock-quantity').value || 0);
         const imageFile = document.getElementById('p-image').files[0];
         if (imageFile) formData.append('image', imageFile);
         const res = await fetch('/products', { method: 'POST', body: formData, headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {} });
@@ -956,6 +969,9 @@ async function createProduct() {
         loadProducts();
         document.getElementById('p-sku').value = '';
         document.getElementById('p-name').value = '';
+        document.getElementById('p-product-type').value = 'stable';
+        document.getElementById('p-safe-stock-quantity').value = 0;
+        toggleSafeStockField('p');
         clearImage();
     } catch (e) { showMsg(e.message, false); }
 }
@@ -988,6 +1004,8 @@ function renderProductPage() {
         <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
         <td><strong>${p.sku}</strong></td>
         <td>${p.name}</td>
+        <td><span class="tag ${p.product_type === 'new' ? 'tag-orange' : 'tag-blue'}">${p.product_type === 'new' ? '新品' : '稳健商品'}</span></td>
+        <td>${p.product_type === 'new' ? '-' : `${p.safe_stock_quantity}件`}</td>
         <td><span class="tag ${p.stock_quantity > 0 ? 'tag-green' : 'tag-red'}">${p.stock_quantity}件</span></td>
         <td>¥${Number(p.stock_value).toFixed(2)}</td>
         <td>${p.last_batch_at || '-'}</td>
@@ -996,7 +1014,7 @@ function renderProductPage() {
             ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditProduct(${p.id})">✏️</button>` : ''}
             ${isOperator() ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>` : ''}
         </td>
-    </tr>`).join('') : '<tr><td colspan="8" class="empty">暂无商品</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">暂无商品</td></tr>';
     renderPagination('products-pagination', productPage, pageCount, productTotal, productPageSize);
     updateProductSelectionState();
 }
@@ -1219,6 +1237,9 @@ async function openEditProduct(id) {
     editingProductId = id;
     document.getElementById('ep-sku').value = p.sku;
     document.getElementById('ep-name').value = p.name;
+    document.getElementById('ep-product-type').value = p.product_type || 'stable';
+    document.getElementById('ep-safe-stock-quantity').value = p.safe_stock_quantity || 0;
+    toggleSafeStockField('ep');
     document.getElementById('ep-preview').innerHTML = p.image ? `<img src="${p.image}" style="max-height:80px;border-radius:6px">` : '';
     document.getElementById('ep-image').value = '';
     document.getElementById('edit-product-modal').style.display = '';
@@ -1244,6 +1265,8 @@ async function saveEditProduct() {
         const formData = new FormData();
         formData.append('sku', document.getElementById('ep-sku').value);
         formData.append('name', document.getElementById('ep-name').value);
+        formData.append('product_type', document.getElementById('ep-product-type').value);
+        formData.append('safe_stock_quantity', document.getElementById('ep-safe-stock-quantity').value || 0);
         const imageFile = document.getElementById('ep-image').files[0];
         if (imageFile) formData.append('image', imageFile);
 

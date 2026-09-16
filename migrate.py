@@ -18,6 +18,8 @@ MIGRATIONS = (
     ("sales", "user_id", "INT NULL"),
     ("sales", "store_id", "INT NULL"),
     ("products", "image", "VARCHAR(500) NULL"),
+    ("products", "product_type", "VARCHAR(16) NOT NULL DEFAULT 'stable'"),
+    ("products", "safe_stock_quantity", "INT NOT NULL DEFAULT 0"),
     ("settlement_entries", "store_id", "INT NULL"),
     ("settlement_entries", "mapping_status", "VARCHAR(32) NOT NULL DEFAULT 'confirmed'"),
     ("settlement_entries", "mapping_error", "VARCHAR(500) NULL"),
