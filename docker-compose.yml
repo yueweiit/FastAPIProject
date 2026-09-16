@@ -3,6 +3,8 @@ services:
     build: .
     container_name: fifo-inventory
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8006:8000"
     volumes:
@@ -13,4 +15,8 @@ services:
       MYSQL_USER: ${MYSQL_USER:?MYSQL_USER is required}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD is required}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-inventory_fifo}
-
+      OA_DB_HOST: ${OA_DB_HOST:-}
+      OA_DB_PORT: ${OA_DB_PORT:-5432}
+      OA_DB_DATABASE: ${OA_DB_DATABASE:-}
+      OA_DB_USER: ${OA_DB_USER:-}
+      OA_DB_PASSWORD: ${OA_DB_PASSWORD:-}

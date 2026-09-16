@@ -29,6 +29,9 @@ class _AutoValuesDb:
     async def execute(self, _statement):
         return self.results.pop(0)
 
+    async def scalar(self, _statement):
+        return 2
+
 
 class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
     def test_month_periods_include_previous_month_and_ytd(self):
@@ -56,12 +59,14 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             quantity=5,
             purchase_price=Decimal("15"),
             shipping_cost=Decimal("10"),
+            last_mile_cost=Decimal("5"),
             other_cost=Decimal("5"),
         )
         previous_batch = SimpleNamespace(
             quantity=3,
             purchase_price=Decimal("12"),
             shipping_cost=Decimal("6"),
+            last_mile_cost=Decimal("3"),
             other_cost=Decimal("3"),
         )
         db = _AutoValuesDb(
@@ -94,6 +99,13 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                     Decimal("40"), Decimal("30"), Decimal("25"), Decimal("10"),
                 ]),
             ),
+            patch(
+                "routers.reports.office_space_totals_by_application_date",
+                new=AsyncMock(return_value={
+                    date(2026, 8, 8): Decimal("20"),
+                    date(2026, 7, 18): Decimal("10"),
+                }),
+            ),
         ):
             values = await _store_profit_loss_auto_values(db, 7, date(2026, 8, 1))
 
@@ -108,19 +120,24 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "ytd": Decimal("42"),
         })
         self.assertEqual(values["head_logistics_cost"], {
-            "current": Decimal("4"),
-            "previous": Decimal("2"),
-            "ytd": Decimal("6"),
+            "current": Decimal("6"),
+            "previous": Decimal("3"),
+            "ytd": Decimal("9"),
         })
         self.assertEqual(values["other_direct_cost"], {
-            "current": Decimal("22"),
-            "previous": Decimal("6"),
-            "ytd": Decimal("28"),
+            "current": Decimal("20"),
+            "previous": Decimal("5"),
+            "ytd": Decimal("25"),
         })
         self.assertEqual(values["inventory_impairment"], {
             "current": Decimal("10"),
             "previous": Decimal("5"),
             "ytd": Decimal("30"),
+        })
+        self.assertEqual(values["rent_utilities"], {
+            "current": Decimal("10"),
+            "previous": Decimal("5"),
+            "ytd": Decimal("15"),
         })
 
     def test_template_formulas_use_manual_and_generated_cells(self):
@@ -154,7 +171,6 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "warehousing": {"current": "4", "previous": "1", "ytd": "6"},
             "delivery": {"current": "5", "previous": "2", "ytd": "8"},
             "platform_fines": {"current": "6", "previous": "0", "ytd": "7"},
-            "rent_utilities": {"current": "8", "previous": "2", "ytd": "10"},
             "shared_admin": {"current": "9", "previous": "3", "ytd": "15"},
             "research_development": {"current": "2", "previous": "1", "ytd": "3"},
             "finance_expenses": {"current": "3", "previous": "1", "ytd": "4"},
@@ -180,10 +196,10 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "current": Decimal("30"), "previous": Decimal("7"), "ytd": Decimal("55"),
         })
         self.assertEqual(values["operating_profit"], {
-            "current": Decimal("-8"), "previous": Decimal("3"), "ytd": Decimal("34"),
+            "current": Decimal("0"), "previous": Decimal("5"), "ytd": Decimal("44"),
         })
         self.assertEqual(values["net_profit"], {
-            "current": Decimal("-5"), "previous": Decimal("3"), "ytd": Decimal("36"),
+            "current": Decimal("3"), "previous": Decimal("5"), "ytd": Decimal("46"),
         })
 
     def test_gross_margin_is_empty_when_revenue_is_zero(self):

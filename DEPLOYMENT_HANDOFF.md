@@ -205,7 +205,35 @@ SELECT DATABASE();
 SHOW TABLES;
 ```
 
-### 8.2 数据库迁移
+### 8.2 FIFO 读取 OA PostgreSQL
+
+店铺损益表的“房租+水电+网费”由 FIFO 运行容器直接只读查询 OA 的
+`dingtalk_oa.ding_approval_instance`，不复制 OA 数据，也不写入 OA。
+
+在 FIFO 服务器项目的 `.env` 中配置：
+
+```text
+OA_DB_HOST
+OA_DB_PORT
+OA_DB_DATABASE
+OA_DB_USER
+OA_DB_PASSWORD
+```
+
+如果 OA PostgreSQL 与服务器同机、OA 项目的 `PGHOST=localhost`，将
+`OA_DB_HOST=host.docker.internal`。当前 Compose 已将该名称映射到宿主机网关；
+如果数据库在内网主机，则填写实际内网地址。`OA_DB_USER` 应使用仅有目标库和
+目标表 `SELECT` 权限的账号，不要复用应用的写入账号。
+
+验证网络和账号时只执行只读查询：
+
+```bash
+docker compose exec web python -c "import asyncpg, asyncio, os; asyncio.run(asyncpg.connect(host=os.environ['OA_DB_HOST'], port=int(os.environ['OA_DB_PORT']), database=os.environ['OA_DB_DATABASE'], user=os.environ['OA_DB_USER'], password=os.environ['OA_DB_PASSWORD']))"
+```
+
+验证成功后重建并重启 `web` 服务；不要把 OA 密码写入命令行历史、日志或 Git。
+
+### 8.3 数据库迁移
 
 如版本包含迁移，执行前必须完成：
 

@@ -16,10 +16,12 @@
 
 1. 阅读本文件和项目根目录的 `.env`，不要把密码复制到日志、截图或文档。
 2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地开发配置为 `localhost:3306`、用户 `root`、库名 `inventory_fifo`；该库仅作为本机测试库，已于 2026-08-20 初始化。服务器或 Docker 部署不能直接使用 `localhost`，必须配置容器可访问的 MySQL 地址。
-3. 确认运行服务器能连接 MySQL，且数据库账号有建表和改表权限。应用启动会创建缺失表。
-4. 确认 `uploads/` 可写、磁盘空间足够、宿主机端口 `8006` 未被占用。
-5. 生产环境必须更换数据库密码、默认账号密码和 JWT 密钥，并使用 HTTPS/反向代理。
-6. 启动后检查日志，确认数据库连接、建表和默认用户初始化没有异常。
+3. 店铺损益表的“房租+水电+网费”还需要 OA PostgreSQL 的只读配置：`OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。FIFO 不写入 OA；只从 `dingtalk_oa.ding_approval_instance` 读取已完成且同意的指定办公场地审批明细。
+   如果 OA PostgreSQL 与服务器同机且 OA 项目的 `PGHOST=localhost`，Docker 部署时将 `OA_DB_HOST` 配为 `host.docker.internal`；Compose 已加入 Linux 所需的 host-gateway 映射。若 PostgreSQL 在内网主机，则填写该内网地址。
+4. 确认运行服务器能连接 MySQL，且数据库账号有建表和改表权限。应用启动会创建缺失表。
+5. 确认 `uploads/` 可写、磁盘空间足够、宿主机端口 `8006` 未被占用。
+6. 生产环境必须更换数据库密码、默认账号密码和 JWT 密钥，并使用 HTTPS/反向代理。
+7. 启动后检查日志，确认数据库连接、建表和默认用户初始化没有异常。
 
 ## 启动与停止
 
@@ -49,6 +51,8 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 `main.py` 启动时先执行 `database.init_db()`，用 SQLAlchemy `create_all` 创建缺失表；再执行 `migrate()` 添加缺失的兼容字段；最后执行 `auth.seed_users()`，仅在 `users` 表为空时创建默认用户。这不是完整的版本化迁移。
 
 `database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `localhost` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。JWT 使用 HS256、有效期 24 小时。`JWT_SECRET` 可用环境变量覆盖，但当前 Compose 未传入该变量，生产部署必须补充强随机值。
+
+`services/oa_office_expenses.py` 使用独立的 `OA_DB_*` 配置以只读方式连接 OA PostgreSQL。它只统计流程 `PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B` 中申请日期落在报表期间、状态为已完成且同意、管理支出为“办公场地总费用”的记录；仅取 `LatínGo拉丁购`（部门 ID `1089990115`）的租金和电费明细，合计后均分给当前有效店铺。OA 配置缺失时，本地开发报表该项为 0；配置存在但读取失败时接口必须报错，不能以 0 掩盖生产连接故障。
 
 ## 文件职责
 
