@@ -91,13 +91,14 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                 },
             }, {})
 
+        impairment_total = AsyncMock(side_effect=[
+            Decimal("40"), Decimal("30"), Decimal("25"), Decimal("10"),
+        ])
         with (
             patch("routers.sales._sale_import_context", new=AsyncMock(side_effect=import_context)),
             patch(
                 "routers.reports._store_inventory_impairment_total",
-                new=AsyncMock(side_effect=[
-                    Decimal("40"), Decimal("30"), Decimal("25"), Decimal("10"),
-                ]),
+                new=impairment_total,
             ),
             patch(
                 "routers.reports.office_space_totals_by_application_date",
@@ -139,6 +140,15 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "previous": Decimal("5"),
             "ytd": Decimal("15"),
         })
+        self.assertEqual(
+            [call.args[2] for call in impairment_total.await_args_list],
+            [
+                datetime(2026, 9, 1),
+                datetime(2026, 8, 1),
+                datetime(2026, 7, 1),
+                datetime(2026, 1, 1),
+            ],
+        )
 
     def test_template_formulas_use_manual_and_generated_cells(self):
         auto_values = {

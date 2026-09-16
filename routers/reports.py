@@ -299,7 +299,7 @@ async def _store_profit_loss_auto_values(
     previous_month_end = _previous_month_end(report_month.replace(day=1))
     month_before_end = _previous_month_end(previous_month_end.replace(day=1))
     current_impairment = await _store_inventory_impairment_total(
-        db, store_id, _next_month_start(report_month.replace(day=1))
+        db, store_id, datetime.combine(_next_month_start(report_month.replace(day=1)), time.min)
     )
     previous_impairment = await _store_inventory_impairment_total(
         db, store_id, month_start_cutoff(previous_month_end)
