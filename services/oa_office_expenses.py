@@ -149,8 +149,8 @@ async def office_space_totals_by_application_date(
             rows = await connection.fetch(
                 query,
                 OA_OPERATION_PROCESS_CODE,
-                start_date.isoformat(),
-                end_date.isoformat(),
+                start_date,
+                end_date,
                 OA_OFFICE_SPACE_EXPENSE,
             )
         finally:
