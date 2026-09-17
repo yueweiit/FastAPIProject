@@ -3,7 +3,9 @@ import json
 import logging
 import decimal
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -13,22 +15,23 @@ from database import async_session, init_db
 from migrate import migrate
 from routers import products, batches, sales, reports, auth, finance_masters
 from auth import seed_users
-from services.accounting_periods import auto_confirm_expired_periods
+from services.accounting_periods import ensure_period_snapshot, previous_month_end
 
 BASE_DIR = Path(__file__).parent
 logger = logging.getLogger(__name__)
 
 
-async def _accounting_period_worker() -> None:
+async def _monthly_snapshot_worker() -> None:
     while True:
         try:
             async with async_session() as db:
-                await auto_confirm_expired_periods(db)
+                now = datetime.now(ZoneInfo("Asia/Shanghai"))
+                await ensure_period_snapshot(db, previous_month_end(now.date()), now)
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("会计期间自动确认检查失败")
-        await asyncio.sleep(60)
+            logger.exception("月末库存快照生成失败")
+        await asyncio.sleep(3600)
 
 
 class DecimalJSONResponse(JSONResponse):
@@ -49,8 +52,9 @@ async def lifespan(app: FastAPI):
     await migrate()
     await seed_users()
     async with async_session() as db:
-        await auto_confirm_expired_periods(db)
-    worker = asyncio.create_task(_accounting_period_worker())
+        now = datetime.now(ZoneInfo("Asia/Shanghai"))
+        await ensure_period_snapshot(db, previous_month_end(now.date()), now)
+    worker = asyncio.create_task(_monthly_snapshot_worker())
     try:
         yield
     finally:

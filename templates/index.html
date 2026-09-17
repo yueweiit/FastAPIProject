@@ -515,26 +515,6 @@
 
     <!-- ========== 报表 ========== -->
     <div id="sec-reports" class="section">
-        <div class="card" id="accounting-period-card">
-            <div class="flex-between">
-                <div>
-                    <h3>月末结账</h3>
-                    <p style="font-size:13px;color:#687386;margin:6px 0 0">月末快照确认后作为后续报表的上月末账面价值；超过次日仍未操作将自动确认。</p>
-                </div>
-                <button class="btn btn-secondary" onclick="loadAccountingPeriods()">刷新</button>
-            </div>
-            <div id="accounting-period-create-controls" class="form-row" style="margin:14px 0 0;display:none;align-items:flex-end">
-                <div class="form-group"><label>期间开始</label><input id="accounting-period-start" type="date"></div>
-                <div class="form-group"><label>期间结束</label><input id="accounting-period-end" type="date"></div>
-                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createAccountingPeriod()">新增期间</button></div>
-            </div>
-            <div class="table-scroll" style="margin-top:12px">
-                <table>
-                    <thead><tr><th>期间</th><th>状态</th><th>快照批次</th><th>自动确认截止</th><th>确认时间</th><th>操作</th></tr></thead>
-                    <tbody id="accounting-periods-tbody"></tbody>
-                </table>
-            </div>
-        </div>
         <div class="card">
             <div class="flex-between">
                 <div>
@@ -916,7 +896,7 @@ function switchTab(name) {
     if (name === 'batches') loadBatches();
     if (name === 'gallery') loadGallery();
     if (name === 'sales') { loadSkuOptions(); refreshSalesWorkspace(); }
-    if (name === 'reports') { loadMonthly(); loadAccountingPeriods(); loadStoreProfitLoss(); }
+    if (name === 'reports') { loadMonthly(); loadStoreProfitLoss(); }
     if (name === 'users') loadUsers();
 }
 
@@ -1957,101 +1937,6 @@ let pendingConfirmationsPageSize = 20;
 let pendingConfirmationsTotal = 0;
 function goPendingConfirmationsPage(page) { pendingConfirmationsPage = page; loadPendingConfirmations(); }
 function changePendingConfirmationsPageSize(size) { pendingConfirmationsPageSize = Number(size); pendingConfirmationsPage = 1; loadPendingConfirmations(); }
-
-// ========== 月末结账与报表 ==========
-function accountingPeriodStatus(status) {
-    return {
-        open: ['未结账', 'tag-blue'],
-        pending_confirmation: ['待确认', 'tag-orange'],
-        closed: ['已确认', 'tag-green'],
-        auto_closed: ['自动确认', 'tag-green'],
-    }[status] || [status || '未知', 'tag-blue'];
-}
-
-function accountingDateTime(value) {
-    return value ? String(value).replace('T', ' ').slice(0, 19) : '-';
-}
-
-async function loadAccountingPeriods() {
-    const tbody = document.getElementById('accounting-periods-tbody');
-    if (!tbody) return;
-    document.getElementById('accounting-period-create-controls').style.display = isAdmin() ? 'flex' : 'none';
-    if (isAdmin() && !document.getElementById('accounting-period-start').value) {
-        const today = new Date().toLocaleDateString('sv-SE');
-        const monthStart = `${today.slice(0, 8)}01`;
-        document.getElementById('accounting-period-start').value = monthStart;
-        document.getElementById('accounting-period-end').value = today;
-    }
-    try {
-        const periods = await api('GET', '/finance-masters/accounting-periods');
-        if (!periods.length) {
-            tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无会计期间</td></tr>';
-            return;
-        }
-        tbody.innerHTML = periods.map(period => {
-            const [statusText, tagClass] = accountingPeriodStatus(period.status);
-            let action = '-';
-            if (isAdmin() && period.status === 'open') {
-                action = `<button class="btn btn-secondary" style="padding:5px 9px;font-size:12px" onclick="prepareAccountingPeriod(${period.id})">生成快照</button>`;
-            } else if (isAdmin() && period.status === 'pending_confirmation') {
-                action = `<button class="btn btn-primary" style="padding:5px 9px;font-size:12px" onclick="confirmAccountingPeriod(${period.id})">确认结账</button>
-                    <button class="btn btn-secondary" style="padding:5px 9px;font-size:12px;color:#e94560" onclick="rejectAccountingPeriod(${period.id})">驳回</button>`;
-            }
-            return `<tr>
-                <td>${escapeHtml(period.period_start)} 至 ${escapeHtml(period.period_end)}</td>
-                <td><span class="tag ${tagClass}">${statusText}</span></td>
-                <td>${Number(period.snapshot_count || 0).toLocaleString('zh-CN')}</td>
-                <td>${accountingDateTime(period.confirmation_deadline)}</td>
-                <td>${accountingDateTime(period.closed_at)}</td>
-                <td>${action}</td>
-            </tr>`;
-        }).join('');
-    } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="6" class="empty">${escapeHtml(e.message)}</td></tr>`;
-    }
-}
-
-async function createAccountingPeriod() {
-    const periodStart = document.getElementById('accounting-period-start').value;
-    const periodEnd = document.getElementById('accounting-period-end').value;
-    if (!periodStart || !periodEnd) { showMsg('请选择期间日期', false); return; }
-    try {
-        await api('POST', '/finance-masters/accounting-periods', {
-            period_start: periodStart,
-            period_end: periodEnd,
-            timezone: 'Asia/Shanghai',
-        });
-        showMsg('会计期间创建成功');
-        loadAccountingPeriods();
-    } catch (e) { showMsg(e.message, false); }
-}
-
-async function prepareAccountingPeriod(periodId) {
-    if (!confirm('确认生成该期间的库存快照？生成后会等待确认，快照期间的历史库存不会再随销售变化。')) return;
-    try {
-        await api('POST', `/finance-masters/accounting-periods/${periodId}/prepare`);
-        showMsg('快照已生成，请确认结账');
-        loadAccountingPeriods();
-    } catch (e) { showMsg(e.message, false); }
-}
-
-async function confirmAccountingPeriod(periodId) {
-    if (!confirm('确认结账？确认后该期间快照将作为后续报表的上月末账面价值。')) return;
-    try {
-        await api('POST', `/finance-masters/accounting-periods/${periodId}/confirm`);
-        showMsg('期间已确认');
-        loadAccountingPeriods();
-    } catch (e) { showMsg(e.message, false); }
-}
-
-async function rejectAccountingPeriod(periodId) {
-    if (!confirm('确认驳回快照并重新打开该期间？')) return;
-    try {
-        await api('POST', `/finance-masters/accounting-periods/${periodId}/reject`);
-        showMsg('期间已驳回，可重新生成快照');
-        loadAccountingPeriods();
-    } catch (e) { showMsg(e.message, false); }
-}
 
 async function exportInventoryImpairmentReport() {
     const reportDate = document.getElementById('inventory-impairment-date').value;

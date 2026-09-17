@@ -1,7 +1,7 @@
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -9,10 +9,8 @@ from sqlalchemy.orm import selectinload
 from auth import RequireAdmin, RequireAnyRole
 from database import get_db
 from models import (
-    AccountingPeriod,
     Product,
     ProductLine,
-    InventoryPeriodSnapshot,
     PlatformSkuComponent,
     PlatformSkuMapping,
     Sale,
@@ -22,8 +20,6 @@ from models import (
     User,
 )
 from schemas import (
-    AccountingPeriodRequest,
-    AccountingPeriodResponse,
     PlatformSkuComponentRequest,
     PlatformSkuMappingCreateRequest,
     PlatformSkuMappingResponse,
@@ -34,12 +30,6 @@ from schemas import (
     StoreProductResponse,
     StoreRequest,
     StoreResponse,
-)
-from services.accounting_periods import (
-    auto_confirm_expired_periods,
-    create_period_snapshot,
-    period_confirmation_deadline,
-    snapshot_count,
 )
 
 router = APIRouter(prefix="/finance-masters", tags=["财务主数据"])
@@ -146,29 +136,6 @@ async def _load_platform_sku_mapping(
         .where(PlatformSkuMapping.id == mapping_id)
     )
     return result.scalar_one_or_none()
-
-
-async def _accounting_period_response(
-    db: AsyncSession, period: AccountingPeriod
-) -> AccountingPeriodResponse:
-    return AccountingPeriodResponse(
-        id=period.id,
-        period_start=period.period_start,
-        period_end=period.period_end,
-        timezone=period.timezone,
-        status=period.status,
-        snapshot_version=period.snapshot_version,
-        closed_at=period.closed_at,
-        closed_by_user_id=period.closed_by_user_id,
-        snapshot_count=await snapshot_count(db, period.id),
-        confirmation_deadline=(
-            period_confirmation_deadline(period)
-            if period.status == "pending_confirmation"
-            else None
-        ),
-        created_at=period.created_at,
-        updated_at=period.updated_at,
-    )
 
 
 async def _validate_store_product_references(
@@ -465,7 +432,6 @@ async def delete_store_product(
     await db.commit()
     return {"ok": True}
 
-
 # ---------- 平台 SKU 映射 ----------
 @router.get("/platform-sku-mappings", response_model=list[PlatformSkuMappingResponse])
 async def list_platform_sku_mappings(
@@ -616,165 +582,5 @@ async def delete_platform_sku_mapping(
     if not mapping:
         raise HTTPException(status_code=404, detail="平台 SKU 映射不存在")
     await db.delete(mapping)
-    await db.commit()
-    return {"ok": True}
-
-
-# ---------- 会计期间 ----------
-@router.get("/accounting-periods", response_model=list[AccountingPeriodResponse])
-async def list_accounting_periods(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAnyRole),
-):
-    await auto_confirm_expired_periods(db)
-    result = await db.execute(
-        select(AccountingPeriod).order_by(
-            AccountingPeriod.period_start.desc(), AccountingPeriod.id.desc()
-        )
-    )
-    return [
-        await _accounting_period_response(db, period)
-        for period in result.scalars().all()
-    ]
-
-
-@router.post(
-    "/accounting-periods",
-    response_model=AccountingPeriodResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_accounting_period(
-    data: AccountingPeriodRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    _validate_date_range(data.period_start, data.period_end)
-    period = AccountingPeriod(
-        period_start=data.period_start,
-        period_end=data.period_end,
-        timezone=data.timezone.strip(),
-        status="open",
-        snapshot_version=0,
-    )
-    db.add(period)
-    await _commit(db, "该会计期间已存在")
-    await db.refresh(period)
-    return await _accounting_period_response(db, period)
-
-
-@router.put("/accounting-periods/{period_id}", response_model=AccountingPeriodResponse)
-async def update_accounting_period(
-    period_id: int,
-    data: AccountingPeriodRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    period = await db.get(AccountingPeriod, period_id)
-    if not period:
-        raise HTTPException(status_code=404, detail="会计期间不存在")
-    if period.status != "open":
-        raise HTTPException(status_code=400, detail="已关闭的会计期间不能修改")
-    _validate_date_range(data.period_start, data.period_end)
-    period.period_start = data.period_start
-    period.period_end = data.period_end
-    period.timezone = data.timezone.strip()
-    await _commit(db, "该会计期间已存在")
-    await db.refresh(period)
-    return await _accounting_period_response(db, period)
-
-
-async def _confirm_accounting_period(
-    period_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    period = await db.get(AccountingPeriod, period_id)
-    if not period:
-        raise HTTPException(status_code=404, detail="会计期间不存在")
-    if period.status not in ("open", "pending_confirmation"):
-        raise HTTPException(status_code=400, detail="会计期间已经关闭")
-    await create_period_snapshot(db, period)
-    period.status = "closed"
-    period.snapshot_version = max(period.snapshot_version, 1)
-    period.closed_at = datetime.now()
-    period.closed_by_user_id = user.id
-    await db.commit()
-    await db.refresh(period)
-    return await _accounting_period_response(db, period)
-
-
-@router.post("/accounting-periods/{period_id}/close", response_model=AccountingPeriodResponse)
-async def close_accounting_period(
-    period_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    return await _confirm_accounting_period(period_id, db, user)
-
-
-@router.post("/accounting-periods/{period_id}/confirm", response_model=AccountingPeriodResponse)
-async def confirm_accounting_period(
-    period_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    return await _confirm_accounting_period(period_id, db, user)
-
-
-@router.post("/accounting-periods/{period_id}/prepare", response_model=AccountingPeriodResponse)
-async def prepare_accounting_period(
-    period_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    period = await db.get(AccountingPeriod, period_id)
-    if not period:
-        raise HTTPException(status_code=404, detail="会计期间不存在")
-    if period.status != "open":
-        raise HTTPException(status_code=400, detail="该会计期间已生成快照或已经关闭")
-    await create_period_snapshot(db, period)
-    period.status = "pending_confirmation"
-    await db.commit()
-    await db.refresh(period)
-    return await _accounting_period_response(db, period)
-
-
-@router.post("/accounting-periods/{period_id}/reject", response_model=AccountingPeriodResponse)
-async def reject_accounting_period(
-    period_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    period = await db.get(AccountingPeriod, period_id)
-    if not period:
-        raise HTTPException(status_code=404, detail="会计期间不存在")
-    if period.status != "pending_confirmation":
-        raise HTTPException(status_code=400, detail="只有待确认期间可以驳回")
-    await db.execute(
-        delete(InventoryPeriodSnapshot).where(
-            InventoryPeriodSnapshot.accounting_period_id == period.id
-        )
-    )
-    period.status = "open"
-    period.snapshot_version = 0
-    period.closed_at = None
-    period.closed_by_user_id = None
-    await db.commit()
-    await db.refresh(period)
-    return await _accounting_period_response(db, period)
-
-
-@router.delete("/accounting-periods/{period_id}")
-async def delete_accounting_period(
-    period_id: int,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAdmin),
-):
-    period = await db.get(AccountingPeriod, period_id)
-    if not period:
-        raise HTTPException(status_code=404, detail="会计期间不存在")
-    if period.status != "open":
-        raise HTTPException(status_code=400, detail="已关闭的会计期间不能删除")
-    await db.delete(period)
     await db.commit()
     return {"ok": True}

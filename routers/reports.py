@@ -32,11 +32,7 @@ from schemas import (
     StoreProfitLossUpdateRequest,
 )
 from auth import RequireAnyRole, RequireOperator
-from services.accounting_periods import (
-    auto_confirm_expired_periods,
-    ensure_monthly_period,
-    get_confirmed_period,
-)
+from services.accounting_periods import ensure_period_snapshot
 from services.oa_office_expenses import office_space_totals_by_application_date
 from services.inventory_impairment import (
     InventoryLayer,
@@ -608,6 +604,7 @@ def _build_inventory_impairment_workbook(
         daily_rate = daily_impairment_rate(report_date, product_type)
         previous_daily_rate = daily_impairment_rate(previous_month_end, product_type)
         uses_historical_amount = "impairment_amount" in item
+        uses_snapshot_previous_book_value = snapshot_previous_book_value is not None
         formula_cache.update({
             f"E{row_number}": age_days,
             f"H{row_number}": provision_quantity,
@@ -639,6 +636,7 @@ def _build_inventory_impairment_workbook(
             f'=IF(OR(I{row_number}="",K{row_number}=""),"",I{row_number}-K{row_number})',
             (
                 book_value_difference if uses_historical_amount
+                or uses_snapshot_previous_book_value
                 else (
                     f'=IF(OR(D{row_number}="",F{row_number}="",L{row_number}=""),"",'
                     f'L{row_number}-F{row_number}*({item["previous_month_quantity"]}-'
@@ -652,7 +650,8 @@ def _build_inventory_impairment_workbook(
             (
                 f"批次号：{item['batch_no']}；商品类型："
                 f"{'新品' if product_type == PRODUCT_TYPE_NEW else '稳健商品'}；"
-                f"上月末库存：{item['previous_month_quantity']}；上月计提数量：{previous_provision_quantity}；"
+                f"上月末库存：{item['previous_month_quantity']}；"
+                f"上月末账面价值：{previous_book_value:.4f}；"
                 "单件成本含采购、头程、尾程及其他成本，未单列关税"
             ),
         ])
@@ -702,7 +701,7 @@ def _build_inventory_impairment_workbook(
         f"报告截止日：{report_date.isoformat()}；上月末：{previous_month_end.isoformat()}。",
         "计提规则：2026-09起，稳健商品仅超出安全库存的数量按每日1%计提；新品全部库存按每日0.5%计提；类型变更前已计提金额保留，累计上限90%。",
         "安全库存口径：按商品全仓汇总，优先豁免最新入库批次；此前月份仍按每日1%计提全部库存。",
-        "库存口径：当前库存按截止日前已确认销售计算；上月末优先使用已确认的月末批次快照。",
+        "库存口径：当前库存按截止日前已确认销售计算；上月末使用系统自动生成的月末快照。",
         "成本口径：单件到仓成本使用系统批次单件成本，包含采购、头程、尾程及其他成本；当前未单列关税。",
         "店铺口径：按入库批次创建人的当前绑定店铺；无法确认时显示“未关联店铺”。",
     ]
@@ -782,27 +781,21 @@ async def export_inventory_impairment_report(
     user: User = Depends(RequireAnyRole),
 ):
     """按指定截止日导出存货跌价准备明细表。"""
+    if report_date > date.today():
+        raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
     report_cutoff = datetime.combine(report_date + timedelta(days=1), time.min)
     previous_month_end = _previous_month_end(report_date)
-    previous_month_cutoff = datetime.combine(previous_month_end + timedelta(days=1), time.min)
-
-    # 首次查看历史月份时补建该月期间；超过月末后的确认窗口会自动确认。
-    await ensure_monthly_period(db, previous_month_end)
-    await auto_confirm_expired_periods(db)
-    confirmed_period = await get_confirmed_period(db, previous_month_end)
-    snapshots_by_batch = {}
-    if confirmed_period:
-        snapshots_by_batch = {
-            snapshot.batch_id: snapshot
-            for snapshot in (
-                await db.execute(
-                    select(InventoryPeriodSnapshot).where(
-                        InventoryPeriodSnapshot.accounting_period_id
-                        == confirmed_period.id
-                    )
+    snapshot_period = await ensure_period_snapshot(db, previous_month_end)
+    snapshots_by_batch = {
+        snapshot.batch_id: snapshot
+        for snapshot in (
+            await db.execute(
+                select(InventoryPeriodSnapshot).where(
+                    InventoryPeriodSnapshot.accounting_period_id == snapshot_period.id
                 )
-            ).scalars().all()
-        }
+            )
+        ).scalars().all()
+    }
 
     batch_result = await db.execute(
         select(
@@ -836,7 +829,7 @@ async def export_inventory_impairment_report(
             effective_date=rule.effective_date,
         ))
 
-    deducted_by_batch: dict[int, tuple[int, int]] = {}
+    deducted_by_batch: dict[int, int] = {}
     if batch_ids:
         deduction_result = await db.execute(
             select(
@@ -845,17 +838,13 @@ async def export_inventory_impairment_report(
                     (Sale.sold_at < report_cutoff, SaleCostDetail.quantity),
                     else_=0,
                 )), 0).label("report_quantity"),
-                func.coalesce(func.sum(case(
-                    (Sale.sold_at < previous_month_cutoff, SaleCostDetail.quantity),
-                    else_=0,
-                )), 0).label("previous_month_quantity"),
             )
             .join(Sale, Sale.id == SaleCostDetail.sale_id)
             .where(SaleCostDetail.batch_id.in_(batch_ids))
             .group_by(SaleCostDetail.batch_id)
         )
         deducted_by_batch = {
-            row.batch_id: (int(row.report_quantity), int(row.previous_month_quantity))
+            row.batch_id: int(row.report_quantity)
             for row in deduction_result.all()
         }
 
@@ -869,19 +858,13 @@ async def export_inventory_impairment_report(
         safe_stock_quantity,
         store_id,
     ) in batch_rows:
-        report_deducted, previous_month_deducted = deducted_by_batch.get(batch.id, (0, 0))
+        report_deducted = deducted_by_batch.get(batch.id, 0)
         quantity = max(0, batch.quantity - report_deducted)
         previous_snapshot = snapshots_by_batch.get(batch.id)
-        if previous_snapshot is not None:
-            previous_month_quantity = int(previous_snapshot.quantity)
-            previous_book_value = Decimal(previous_snapshot.book_value)
-        else:
-            previous_month_quantity = (
-                max(0, batch.quantity - previous_month_deducted)
-                if not confirmed_period and batch.arrived_at < previous_month_cutoff
-                else 0
-            )
-            previous_book_value = None
+        previous_month_quantity = int(previous_snapshot.quantity) if previous_snapshot else 0
+        previous_book_value = (
+            Decimal(previous_snapshot.book_value) if previous_snapshot else None
+        )
         if quantity == 0 and previous_month_quantity == 0:
             continue
         report_items.append({
@@ -913,23 +896,9 @@ async def export_inventory_impairment_report(
         )
         for item in report_items
     ], report_date)
-    previous_impairments = batch_impairments([
-        InventoryLayer(
-            batch_id=item["batch"].id,
-            product_id=item["batch"].product_id,
-            store_id=item["store_id"],
-            arrived_at=item["arrived_at"],
-            quantity=item["previous_month_quantity"],
-            product_type=item["product_type"],
-            safe_stock_quantity=item["safe_stock_quantity"],
-            rules=tuple(rules_by_product[item["batch"].product_id]),
-        )
-        for item in report_items
-    ], previous_month_end)
     report_rows = []
     for item in report_items:
         current_impairment = current_impairments.get(item["batch"].id)
-        previous_impairment = previous_impairments.get(item["batch"].id)
         report_rows.append({
             key: value for key, value in item.items() if key != "batch"
         } | {
@@ -938,12 +907,6 @@ async def export_inventory_impairment_report(
             "impairment_amount": (
                 item["unit_cost"] * current_impairment.impairment_units
                 if current_impairment else Decimal("0")
-            ),
-            "previous_provision_quantity": previous_impairment.provision_quantity if previous_impairment else 0,
-            "previous_impairment_rate": previous_impairment.rate if previous_impairment else Decimal("0"),
-            "previous_impairment_amount": (
-                item["unit_cost"] * previous_impairment.impairment_units
-                if previous_impairment else Decimal("0")
             ),
         })
 

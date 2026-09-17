@@ -3,11 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 
-from services.accounting_periods import (
-    auto_confirm_expired_periods,
-    create_period_snapshot,
-    period_confirmation_deadline,
-)
+from services.accounting_periods import create_period_snapshot, ensure_period_snapshot
 
 
 class _Result:
@@ -45,27 +41,16 @@ class _SnapshotDb:
         self.flushed = True
 
 
-class _AutoConfirmDb:
-    def __init__(self, periods):
-        self.periods = periods
-        self.committed = False
+class AccountingPeriodSnapshotTests(unittest.IsolatedAsyncioTestCase):
+    async def test_snapshot_rejects_an_incomplete_month(self):
+        with self.assertRaisesRegex(ValueError, "只能在该自然月结束后"):
+            await ensure_period_snapshot(
+                None,
+                date(2026, 9, 30),
+                now=datetime(2026, 9, 17),
+            )
 
-    async def execute(self, statement):
-        return _Result(self.periods)
-
-    async def commit(self):
-        self.committed = True
-
-
-class AccountingPeriodTests(unittest.IsolatedAsyncioTestCase):
-    def test_confirmation_deadline_is_the_end_of_the_next_day(self):
-        period = SimpleNamespace(period_end=date(2026, 8, 31))
-        self.assertEqual(
-            period_confirmation_deadline(period),
-            datetime(2026, 9, 1, 23, 59, 59, 999999),
-        )
-
-    async def test_snapshot_persists_quantity_and_book_value_at_period_end(self):
+    async def test_snapshot_persists_month_end_quantity_and_book_value_once(self):
         period = SimpleNamespace(
             id=7,
             period_end=date(2026, 8, 31),
@@ -92,25 +77,9 @@ class AccountingPeriodTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(period.snapshot_version, 1)
         self.assertTrue(db.flushed)
 
-    async def test_expired_pending_period_is_automatically_confirmed(self):
-        period = SimpleNamespace(
-            id=9,
-            period_end=date(2026, 8, 31),
-            timezone="Asia/Shanghai",
-            status="pending_confirmation",
-            closed_at=None,
-            closed_by_user_id=123,
-        )
-        db = _AutoConfirmDb([period])
-
-        changed = await auto_confirm_expired_periods(
-            db, now=datetime(2026, 9, 2, 0, 0)
-        )
-        self.assertEqual(changed, [9])
-        self.assertEqual(period.status, "auto_closed")
-        self.assertIsNone(period.closed_by_user_id)
-        self.assertEqual(period.closed_at, datetime(2026, 9, 2, 0, 0))
-        self.assertTrue(db.committed)
+        self.assertFalse(await create_period_snapshot(db, period))
+        self.assertEqual(len(db.added), 1)
+        self.assertEqual(db.execute_count, 3)
 
 
 if __name__ == "__main__":

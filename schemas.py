@@ -387,23 +387,3 @@ class PlatformSkuMappingResponse(BaseModel):
     components: list[PlatformSkuComponentResponse]
     created_at: datetime
     updated_at: datetime
-
-
-class AccountingPeriodRequest(BaseModel):
-    period_start: date
-    period_end: date
-    timezone: str = Field(default="Asia/Shanghai", min_length=1, max_length=64)
-
-
-class AccountingPeriodResponse(AccountingPeriodRequest):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    status: str
-    snapshot_version: int
-    closed_at: datetime | None = None
-    closed_by_user_id: int | None = None
-    snapshot_count: int = 0
-    confirmation_deadline: datetime | None = None
-    created_at: datetime
-    updated_at: datetime

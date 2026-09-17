@@ -101,6 +101,29 @@ class InventoryImpairmentReportTests(unittest.TestCase):
         self.assertEqual(cached_sheet["L2"].value, 9.75)
         self.assertEqual(cached_sheet["M2"].value, -16.5)
 
+    def test_previous_month_book_value_prefers_saved_snapshot(self):
+        workbook, formula_cache = _build_inventory_impairment_workbook([
+            {
+                "store_name": "测试店铺",
+                "sku": "SKU-002",
+                "product_name": "历史库存商品",
+                "arrived_at": date(2026, 7, 1),
+                "unit_cost": Decimal("12.5"),
+                "quantity": 2,
+                "previous_month_quantity": 3,
+                "previous_book_value": Decimal("7.5"),
+                "impairment_amount": Decimal("0"),
+                "batch_no": "BATCH-002",
+            }
+        ], date(2026, 8, 31))
+
+        sheet = workbook[INVENTORY_IMPAIRMENT_SHEET]
+        self.assertEqual(sheet["M2"].value, Decimal("17.5"))
+
+        output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
+        cached_sheet = load_workbook(output, data_only=True)[INVENTORY_IMPAIRMENT_SHEET]
+        self.assertEqual(cached_sheet["M2"].value, 17.5)
+
     def test_fully_sold_current_batch_keeps_previous_month_reduction(self):
         workbook, formula_cache = _build_inventory_impairment_workbook([
             {

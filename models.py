@@ -424,7 +424,7 @@ class PlatformSkuComponent(Base):
 
 
 class AccountingPeriod(Base):
-    """财务期间的关闭控制及月末库存快照。"""
+    """Internal monthly snapshot marker; it has no user-facing workflow."""
     __tablename__ = "accounting_periods"
     __table_args__ = (
         UniqueConstraint("period_start", "period_end", name="uq_accounting_periods_dates"),
@@ -434,7 +434,7 @@ class AccountingPeriod(Base):
     period_start: Mapped[date] = mapped_column(Date)
     period_end: Mapped[date] = mapped_column(Date)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
-    status: Mapped[str] = mapped_column(String(16), default="open")
+    status: Mapped[str] = mapped_column(String(16), default="auto_closed")
     snapshot_version: Mapped[int] = mapped_column(Integer, default=0)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     closed_by_user_id: Mapped[int | None] = mapped_column(
@@ -454,7 +454,7 @@ class AccountingPeriod(Base):
 
 
 class InventoryPeriodSnapshot(Base):
-    """某个财务期间结账时的入库批次库存快照。"""
+    """An immutable internal inventory snapshot for a completed calendar month."""
     __tablename__ = "inventory_period_snapshots"
     __table_args__ = (
         UniqueConstraint(
