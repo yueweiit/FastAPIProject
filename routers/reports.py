@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from io import BytesIO
@@ -16,6 +17,7 @@ from models import (
     InventoryBatch,
     InventoryPeriodSnapshot,
     Product,
+    ProductImpairmentRule,
     Sale,
     SaleCostDetail,
     Store,
@@ -38,6 +40,7 @@ from services.accounting_periods import (
 from services.oa_office_expenses import office_space_totals_by_application_date
 from services.inventory_impairment import (
     InventoryLayer,
+    ImpairmentRule,
     PRODUCT_TYPE_NEW,
     batch_impairments,
     daily_impairment_rate,
@@ -360,6 +363,19 @@ async def _store_inventory_impairment_total(
     if not batch_rows:
         return Decimal("0")
     batch_ids = [batch.id for batch, *_ in batch_rows]
+    product_ids = {batch.product_id for batch, *_ in batch_rows}
+    rule_rows = (await db.execute(
+        select(ProductImpairmentRule).where(
+            ProductImpairmentRule.product_id.in_(product_ids)
+        )
+    )).scalars().all()
+    rules_by_product: defaultdict[int, list[ImpairmentRule]] = defaultdict(list)
+    for rule in rule_rows:
+        rules_by_product[rule.product_id].append(ImpairmentRule(
+            product_type=rule.product_type,
+            safe_stock_quantity=rule.safe_stock_quantity,
+            effective_date=rule.effective_date,
+        ))
     deductions = (await db.execute(
         select(
             SaleCostDetail.batch_id,
@@ -383,6 +399,7 @@ async def _store_inventory_impairment_total(
             quantity=max(0, batch.quantity - deducted_by_batch.get(batch.id, 0)),
             product_type=product_type,
             safe_stock_quantity=safe_stock_quantity,
+            rules=tuple(rules_by_product[batch.product_id]),
         )
         for batch, batch_store_id, product_type, safe_stock_quantity in batch_rows
     ]
@@ -393,7 +410,7 @@ async def _store_inventory_impairment_total(
             continue
         impairment = impairments.get(batch.id)
         if impairment:
-            total += batch.unit_cost * impairment.provision_quantity * impairment.rate
+            total += batch.unit_cost * impairment.impairment_units
     return total
 
 
@@ -556,7 +573,10 @@ def _build_inventory_impairment_workbook(
             impairment_rate(report_date, item["arrived_at"], product_type),
         )
         inventory_amount = Decimal(item["unit_cost"]) * item["quantity"]
-        impairment_amount = Decimal(item["unit_cost"]) * provision_quantity * current_rate
+        impairment_amount = Decimal(item.get(
+            "impairment_amount",
+            Decimal(item["unit_cost"]) * provision_quantity * current_rate,
+        ))
         book_value = inventory_amount - impairment_amount
         previous_provision_quantity = int(item.get(
             "previous_provision_quantity", item["previous_month_quantity"]
@@ -565,9 +585,13 @@ def _build_inventory_impairment_workbook(
             "previous_impairment_rate",
             impairment_rate(previous_month_end, item["arrived_at"], product_type),
         )
-        calculated_previous_book_value = Decimal(item["unit_cost"]) * (
-            Decimal(item["previous_month_quantity"])
-            - Decimal(previous_provision_quantity) * previous_rate
+        previous_impairment_amount = item.get("previous_impairment_amount")
+        calculated_previous_book_value = Decimal(item["unit_cost"]) * Decimal(
+            item["previous_month_quantity"]
+        ) - (
+            Decimal(previous_impairment_amount)
+            if previous_impairment_amount is not None
+            else Decimal(item["unit_cost"]) * Decimal(previous_provision_quantity) * previous_rate
         )
         snapshot_previous_book_value = item.get("previous_book_value")
         previous_book_value = (
@@ -583,6 +607,7 @@ def _build_inventory_impairment_workbook(
         )
         daily_rate = daily_impairment_rate(report_date, product_type)
         previous_daily_rate = daily_impairment_rate(previous_month_end, product_type)
+        uses_historical_amount = "impairment_amount" in item
         formula_cache.update({
             f"E{row_number}": age_days,
             f"H{row_number}": provision_quantity,
@@ -603,13 +628,22 @@ def _build_inventory_impairment_workbook(
             item["quantity"],
             provision_quantity,
             f'=IF(OR(F{row_number}="",G{row_number}=""),"",F{row_number}*G{row_number})',
-            f'=IF(E{row_number}="","",MIN(E{row_number}*{daily_rate},0.9))',
-            f'=IF(OR(F{row_number}="",H{row_number}="",J{row_number}=""),"",F{row_number}*H{row_number}*J{row_number})',
+            (
+                current_rate if uses_historical_amount
+                else f'=IF(E{row_number}="","",MIN(E{row_number}*{daily_rate},0.9))'
+            ),
+            (
+                impairment_amount if uses_historical_amount
+                else f'=IF(OR(F{row_number}="",H{row_number}="",J{row_number}=""),"",F{row_number}*H{row_number}*J{row_number})'
+            ),
             f'=IF(OR(I{row_number}="",K{row_number}=""),"",I{row_number}-K{row_number})',
             (
-                f'=IF(OR(D{row_number}="",F{row_number}="",L{row_number}=""),"",'
-                f'L{row_number}-F{row_number}*({item["previous_month_quantity"]}-'
-                f'{previous_provision_quantity}*MIN(MAX({previous_month_end_formula}-D{row_number},0)*{previous_daily_rate},0.9)))'
+                book_value_difference if uses_historical_amount
+                else (
+                    f'=IF(OR(D{row_number}="",F{row_number}="",L{row_number}=""),"",'
+                    f'L{row_number}-F{row_number}*({item["previous_month_quantity"]}-'
+                    f'{previous_provision_quantity}*MIN(MAX({previous_month_end_formula}-D{row_number},0)*{previous_daily_rate},0.9)))'
+                )
             ),
             (
                 f'=IF(H{row_number}=0,"安全库存内",IF(J{row_number}>=0.9,"达到上限",'
@@ -666,7 +700,7 @@ def _build_inventory_impairment_workbook(
     notes_row = total_row + 2
     notes = [
         f"报告截止日：{report_date.isoformat()}；上月末：{previous_month_end.isoformat()}。",
-        "计提规则：2026-09起，稳健商品仅超出安全库存的数量按每日1%计提；新品全部库存按每日0.5%计提；累计上限90%。",
+        "计提规则：2026-09起，稳健商品仅超出安全库存的数量按每日1%计提；新品全部库存按每日0.5%计提；类型变更前已计提金额保留，累计上限90%。",
         "安全库存口径：按商品全仓汇总，优先豁免最新入库批次；此前月份仍按每日1%计提全部库存。",
         "库存口径：当前库存按截止日前已确认销售计算；上月末优先使用已确认的月末批次快照。",
         "成本口径：单件到仓成本使用系统批次单件成本，包含采购、头程、尾程及其他成本；当前未单列关税。",
@@ -788,6 +822,19 @@ async def export_inventory_impairment_report(
     )
     batch_rows = batch_result.all()
     batch_ids = [row[0].id for row in batch_rows]
+    product_ids = {row[0].product_id for row in batch_rows}
+    rule_rows = (await db.execute(
+        select(ProductImpairmentRule).where(
+            ProductImpairmentRule.product_id.in_(product_ids)
+        )
+    )).scalars().all() if product_ids else []
+    rules_by_product: defaultdict[int, list[ImpairmentRule]] = defaultdict(list)
+    for rule in rule_rows:
+        rules_by_product[rule.product_id].append(ImpairmentRule(
+            product_type=rule.product_type,
+            safe_stock_quantity=rule.safe_stock_quantity,
+            effective_date=rule.effective_date,
+        ))
 
     deducted_by_batch: dict[int, tuple[int, int]] = {}
     if batch_ids:
@@ -862,6 +909,7 @@ async def export_inventory_impairment_report(
             quantity=item["quantity"],
             product_type=item["product_type"],
             safe_stock_quantity=item["safe_stock_quantity"],
+            rules=tuple(rules_by_product[item["batch"].product_id]),
         )
         for item in report_items
     ], report_date)
@@ -874,6 +922,7 @@ async def export_inventory_impairment_report(
             quantity=item["previous_month_quantity"],
             product_type=item["product_type"],
             safe_stock_quantity=item["safe_stock_quantity"],
+            rules=tuple(rules_by_product[item["batch"].product_id]),
         )
         for item in report_items
     ], previous_month_end)
@@ -886,8 +935,16 @@ async def export_inventory_impairment_report(
         } | {
             "provision_quantity": current_impairment.provision_quantity if current_impairment else 0,
             "impairment_rate": current_impairment.rate if current_impairment else Decimal("0"),
+            "impairment_amount": (
+                item["unit_cost"] * current_impairment.impairment_units
+                if current_impairment else Decimal("0")
+            ),
             "previous_provision_quantity": previous_impairment.provision_quantity if previous_impairment else 0,
             "previous_impairment_rate": previous_impairment.rate if previous_impairment else Decimal("0"),
+            "previous_impairment_amount": (
+                item["unit_cost"] * previous_impairment.impairment_units
+                if previous_impairment else Decimal("0")
+            ),
         })
 
     workbook, formula_cache = _build_inventory_impairment_workbook(report_rows, report_date)

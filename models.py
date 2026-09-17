@@ -57,6 +57,32 @@ class Product(Base):
         back_populates="product"
     )
     settlement_entries: Mapped[list["SettlementEntry"]] = relationship(back_populates="product")
+    impairment_rules: Mapped[list["ProductImpairmentRule"]] = relationship(
+        back_populates="product", cascade="all, delete-orphan"
+    )
+
+
+class ProductImpairmentRule(Base):
+    """商品类型和安全库存的生效历史，用于保留已累计的跌价准备。"""
+    __tablename__ = "product_impairment_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id", "effective_date",
+            name="uq_product_impairment_rules_product_effective_date",
+        ),
+        Index("ix_product_impairment_rules_product_effective", "product_id", "effective_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    product_type: Mapped[str] = mapped_column(String(16), default="stable")
+    safe_stock_quantity: Mapped[int] = mapped_column(Integer, default=0)
+    effective_date: Mapped[date] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    product: Mapped["Product"] = relationship(back_populates="impairment_rules")
 
 
 class InventoryBatch(Base):

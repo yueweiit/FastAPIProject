@@ -22,16 +22,21 @@ class _Result:
 
 
 class _SnapshotDb:
-    def __init__(self, batch_rows, deduction_rows):
+    def __init__(self, batch_rows, deduction_rows, rule_rows=()):
         self.batch_rows = batch_rows
         self.deduction_rows = deduction_rows
+        self.rule_rows = rule_rows
         self.execute_count = 0
         self.added = []
         self.flushed = False
 
     async def execute(self, statement):
         self.execute_count += 1
-        return _Result(self.batch_rows if self.execute_count == 1 else self.deduction_rows)
+        if self.execute_count == 1:
+            return _Result(self.batch_rows)
+        if self.execute_count == 2:
+            return _Result(self.rule_rows)
+        return _Result(self.deduction_rows)
 
     def add_all(self, values):
         self.added.extend(values)

@@ -85,6 +85,28 @@ async def migrate() -> None:
         await connection.execute(
             text(
                 """
+                CREATE TABLE IF NOT EXISTS product_impairment_rules (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    product_id INT NOT NULL,
+                    product_type VARCHAR(16) NOT NULL DEFAULT 'stable',
+                    safe_stock_quantity INT NOT NULL DEFAULT 0,
+                    effective_date DATE NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT uq_product_impairment_rules_product_effective_date
+                        UNIQUE (product_id, effective_date),
+                    INDEX ix_product_impairment_rules_product_effective
+                        (product_id, effective_date),
+                    CONSTRAINT fk_product_impairment_rules_product
+                        FOREIGN KEY (product_id) REFERENCES products(id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+        )
+
+        await connection.execute(
+            text(
+                """
                 CREATE TABLE IF NOT EXISTS sales_import_batches (
                     id INT AUTO_INCREMENT PRIMARY KEY,
                     user_id INT NULL,

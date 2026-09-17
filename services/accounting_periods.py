@@ -12,11 +12,12 @@ from models import (
     InventoryBatch,
     InventoryPeriodSnapshot,
     Product,
+    ProductImpairmentRule,
     Sale,
     SaleCostDetail,
     User,
 )
-from services.inventory_impairment import InventoryLayer, batch_impairments
+from services.inventory_impairment import ImpairmentRule, InventoryLayer, batch_impairments
 
 
 def previous_month_end(value: date) -> date:
@@ -64,6 +65,19 @@ async def _snapshot_rows(
         return []
 
     batch_ids = [batch.id for batch, *_ in batch_rows]
+    product_ids = {batch.product_id for batch, *_ in batch_rows}
+    rule_rows = (await db.execute(
+        select(ProductImpairmentRule).where(
+            ProductImpairmentRule.product_id.in_(product_ids)
+        )
+    )).scalars().all()
+    rules_by_product: dict[int, list[ImpairmentRule]] = {}
+    for rule in rule_rows:
+        rules_by_product.setdefault(rule.product_id, []).append(ImpairmentRule(
+            product_type=rule.product_type,
+            safe_stock_quantity=rule.safe_stock_quantity,
+            effective_date=rule.effective_date,
+        ))
     deductions = (
         await db.execute(
             select(
@@ -96,6 +110,7 @@ async def _snapshot_rows(
             quantity=quantity,
             product_type=product_type,
             safe_stock_quantity=safe_stock_quantity,
+            rules=tuple(rules_by_product.get(batch.product_id, [])),
         ))
 
     impairments = batch_impairments(layers, period.period_end)
@@ -107,7 +122,9 @@ async def _snapshot_rows(
         impairment_rate = impairment.rate if impairment else Decimal("0")
         provision_quantity = impairment.provision_quantity if impairment else 0
         inventory_amount = unit_cost * quantity
-        impairment_amount = unit_cost * provision_quantity * impairment_rate
+        impairment_amount = (
+            unit_cost * impairment.impairment_units if impairment else Decimal("0")
+        )
         snapshots.append(
             InventoryPeriodSnapshot(
                 accounting_period_id=period.id,

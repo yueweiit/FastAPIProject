@@ -13,6 +13,7 @@ from routers.reports import (
     _workbook_bytes_with_formula_cache,
 )
 from services.inventory_impairment import (
+    ImpairmentRule,
     InventoryLayer,
     PRODUCT_TYPE_NEW,
     PRODUCT_TYPE_STABLE,
@@ -146,6 +147,52 @@ class InventoryImpairmentReportTests(unittest.TestCase):
             impairment_rate(date(2026, 8, 31), date(2026, 8, 1), PRODUCT_TYPE_NEW),
             Decimal("0.3"),
         )
+
+    def test_new_product_history_is_preserved_when_all_stock_becomes_safe(self):
+        impairments = batch_impairments([
+            InventoryLayer(
+                1, 10, 1, date(2026, 9, 1), 200, PRODUCT_TYPE_STABLE, 200,
+                (
+                    ImpairmentRule(PRODUCT_TYPE_NEW, 0, date(2026, 9, 1)),
+                    ImpairmentRule(PRODUCT_TYPE_STABLE, 200, date(2026, 9, 11)),
+                ),
+            ),
+        ], date(2026, 9, 20))
+
+        self.assertEqual(impairments[1].provision_quantity, 200)
+        self.assertEqual(impairments[1].impairment_units, Decimal("9.000"))
+        self.assertEqual(impairments[1].rate, Decimal("0.045"))
+
+    def test_new_product_history_continues_for_stock_outside_safe_quantity(self):
+        impairments = batch_impairments([
+            InventoryLayer(
+                1, 10, 1, date(2026, 9, 1), 200, PRODUCT_TYPE_STABLE, 100,
+                (
+                    ImpairmentRule(PRODUCT_TYPE_NEW, 0, date(2026, 9, 1)),
+                    ImpairmentRule(PRODUCT_TYPE_STABLE, 100, date(2026, 9, 11)),
+                ),
+            ),
+        ], date(2026, 9, 20))
+
+        # 200 units keep the 9 days of new-product provision (4.5%), while
+        # the 100 units beyond safe stock add 10 days at 1%.
+        self.assertEqual(impairments[1].provision_quantity, 200)
+        self.assertEqual(impairments[1].impairment_units, Decimal("19.000"))
+        self.assertEqual(impairments[1].rate, Decimal("0.095"))
+
+    def test_mixed_history_caps_safe_and_excess_stock_separately(self):
+        impairments = batch_impairments([
+            InventoryLayer(
+                1, 10, 1, date(2026, 9, 1), 200, PRODUCT_TYPE_STABLE, 100,
+                (
+                    ImpairmentRule(PRODUCT_TYPE_NEW, 0, date(2026, 9, 1)),
+                    ImpairmentRule(PRODUCT_TYPE_STABLE, 100, date(2027, 2, 8)),
+                ),
+            ),
+        ], date(2027, 4, 18))
+
+        # The safe 100 units remain at 79.5%; the other 100 units reach 90%.
+        self.assertEqual(impairments[1].impairment_units, Decimal("169.500"))
 
 
 if __name__ == "__main__":

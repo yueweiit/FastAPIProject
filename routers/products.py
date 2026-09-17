@@ -1,6 +1,6 @@
 import os
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +14,13 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import InventoryBatch, PlatformSkuComponent, Product, User
+from models import (
+    InventoryBatch,
+    PlatformSkuComponent,
+    Product,
+    ProductImpairmentRule,
+    User,
+)
 from services.inventory_impairment import (
     PRODUCT_TYPE_NEW,
     PRODUCT_TYPE_STABLE,
@@ -76,6 +82,13 @@ async def create_product(
         safe_stock_quantity=safe_stock_quantity,
     )
     db.add(product)
+    await db.flush()
+    db.add(ProductImpairmentRule(
+        product_id=product.id,
+        product_type=product_type,
+        safe_stock_quantity=safe_stock_quantity,
+        effective_date=date.today(),
+    ))
     await db.commit()
     await db.refresh(product)
     return _enrich_product(product, 0, Decimal("0"), None)
@@ -291,12 +304,47 @@ async def update_product(
     product.sku = sku
     product.name = name
     if product_type is not None or safe_stock_quantity is not None:
+        previous_product_type = product.product_type
+        previous_safe_stock_quantity = product.safe_stock_quantity
         product.product_type, product.safe_stock_quantity = _impairment_settings(
             product_type if product_type is not None else product.product_type,
             safe_stock_quantity
             if safe_stock_quantity is not None
             else product.safe_stock_quantity,
         )
+        if (
+            product.product_type != previous_product_type
+            or product.safe_stock_quantity != previous_safe_stock_quantity
+        ):
+            today = date.today()
+            current_rule = await db.scalar(
+                select(ProductImpairmentRule).where(
+                    ProductImpairmentRule.product_id == product.id,
+                    ProductImpairmentRule.effective_date == today,
+                )
+            )
+            if current_rule:
+                current_rule.product_type = product.product_type
+                current_rule.safe_stock_quantity = product.safe_stock_quantity
+            else:
+                has_history = await db.scalar(
+                    select(ProductImpairmentRule.id).where(
+                        ProductImpairmentRule.product_id == product.id
+                    ).limit(1)
+                )
+                if not has_history and product.created_at.date() < today:
+                    db.add(ProductImpairmentRule(
+                        product_id=product.id,
+                        product_type=previous_product_type,
+                        safe_stock_quantity=previous_safe_stock_quantity,
+                        effective_date=product.created_at.date(),
+                    ))
+                db.add(ProductImpairmentRule(
+                    product_id=product.id,
+                    product_type=product.product_type,
+                    safe_stock_quantity=product.safe_stock_quantity,
+                    effective_date=today,
+                ))
 
     if image and image.filename:
         # 删除旧图片
