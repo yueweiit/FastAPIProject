@@ -18,10 +18,14 @@ from models import (
     InventoryPeriodSnapshot,
     Product,
     ProductImpairmentRule,
+    ProductLine,
     Sale,
     SaleCostDetail,
     Store,
+    StoreProduct,
     StoreProfitLossReport,
+    SettlementEntry,
+    SettlementEntryAllocation,
     User,
 )
 from schemas import (
@@ -33,7 +37,10 @@ from schemas import (
 )
 from auth import RequireAnyRole, RequireOperator
 from services.accounting_periods import ensure_period_snapshot
-from services.oa_office_expenses import office_space_totals_by_application_date
+from services.oa_office_expenses import (
+    china_salary_totals_by_store_and_application_date,
+    office_space_totals_by_application_date,
+)
 from services.inventory_impairment import (
     InventoryLayer,
     ImpairmentRule,
@@ -80,7 +87,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("gross_margin", "毛利率", "formula", None),
     ("tax_surcharge", "减：税金及附加", "manual", None),
     ("selling_expenses", "减：销售费用（包括样本）", "formula", None),
-    ("salary", "  人员薪资", "manual", None),
+    ("salary", "  人员薪资", "manual", "OA 工资中国明细按部门名称匹配店铺；可人工修改"),
     ("advertising", "  广告推广费", "manual", None),
     ("platform_subscription", "  平台月费/年费", "manual", None),
     ("warehousing", "  仓储费用", "manual", None),
@@ -165,7 +172,10 @@ def _build_store_profit_loss_values(
         stored = manual_values.get(key, {}) if isinstance(manual_values, dict) else {}
         for period in STORE_PROFIT_LOSS_PERIODS:
             value = stored.get(period) if isinstance(stored, dict) else None
-            values[key][period] = None if value in (None, "") else Decimal(str(value))
+            if value in (None, ""):
+                values[key][period] = auto_values.get(key, {}).get(period)
+            else:
+                values[key][period] = Decimal(str(value))
 
     for period in STORE_PROFIT_LOSS_PERIODS:
         get = lambda key: _decimal_or_zero(values[key][period])
@@ -232,7 +242,7 @@ def _add_period_value(
 
 
 async def _store_profit_loss_auto_values(
-    db: AsyncSession, store_id: int, report_month: date
+    db: AsyncSession, store_id: int, report_month: date, store_name: str | None = None
 ) -> dict[str, dict[str, Decimal]]:
     periods = _month_periods(report_month)
     ytd_start, ytd_end = periods["ytd"]
@@ -335,6 +345,17 @@ async def _store_profit_loss_auto_values(
                 total / Decimal(active_store_count),
                 periods,
             )
+    if store_name:
+        salary_totals = await china_salary_totals_by_store_and_application_date(
+            ytd_start, ytd_end
+        )
+        auto_values["salary"] = {
+            period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS
+        }
+        for application_date, total in salary_totals.get(store_name.strip(), {}).items():
+            _add_period_value(
+                auto_values["salary"], application_date, total, periods
+            )
     return auto_values
 
 
@@ -435,7 +456,9 @@ async def _store_profit_loss_response(
     db: AsyncSession, user: User, store: Store, report_month: date,
     report: StoreProfitLossReport | None,
 ) -> StoreProfitLossResponse:
-    auto_values = await _store_profit_loss_auto_values(db, store.id, report_month)
+    auto_values = await _store_profit_loss_auto_values(
+        db, store.id, report_month, store.name
+    )
     manual_values = report.manual_values if report else {}
     values = _build_store_profit_loss_values(auto_values, manual_values)
     remarks = report.remarks if report else {}
@@ -774,15 +797,419 @@ def _workbook_bytes_with_formula_cache(
     return output
 
 
-@router.get("/inventory-impairment/export")
-async def export_inventory_impairment_report(
-    report_date: date = Query(..., description="报告截止日"),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireAnyRole),
-):
-    """按指定截止日导出存货跌价准备明细表。"""
-    if report_date > date.today():
-        raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
+FINANCIAL_ATTACHMENT_SHEET = "09-店铺损益表"
+STORE_PROFIT_LOSS_SUMMARY_SHEET = "10-各店铺损益汇总表"
+PRODUCT_LINE_PROFIT_SHEET = "12-各产品线毛利分析表"
+
+
+def _excel_number(value: Decimal | int | float | None):
+    if value is None:
+        return None
+    return float(value)
+
+
+def _style_financial_sheet(sheet, headers: list[str], fill_color: str = "1F4E78") -> None:
+    header_fill = PatternFill("solid", fgColor=fill_color)
+    thin_gray = Side(style="thin", color="D9E1F2")
+    border = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
+    for cell in sheet[1]:
+        cell.fill = header_fill
+        cell.font = Font(name="等线", size=10, bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    sheet.row_dimensions[1].height = 30
+    sheet.freeze_panes = "B2"
+    sheet.sheet_view.showGridLines = False
+    for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, max_col=len(headers)):
+        for cell in row:
+            cell.alignment = Alignment(vertical="center")
+            cell.border = border
+
+
+def _format_profit_loss_sheet(sheet, first_data_row: int, last_data_row: int) -> None:
+    for row_number in range(first_data_row, last_data_row + 1):
+        key = STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][0]
+        for column in range(2, 5):
+            sheet.cell(row_number, column).number_format = "0.00%" if key == "gross_margin" else '¥#,##0.00'
+        kind = STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][2]
+        if kind == "formula":
+            for cell in sheet[row_number]:
+                cell.fill = PatternFill("solid", fgColor="EEF3F8")
+                cell.font = Font(name="等线", size=10, bold=True)
+        elif kind == "auto":
+            for cell in sheet[row_number][1:4]:
+                cell.fill = PatternFill("solid", fgColor="FFF2CC")
+
+
+def _build_store_profit_loss_sheet(
+    workbook: Workbook,
+    store: Store,
+    report_month: date,
+    values: dict[str, dict[str, Decimal | None]],
+    remarks: dict,
+) -> None:
+    sheet = workbook.create_sheet(FINANCIAL_ATTACHMENT_SHEET)
+    headers = ["项目", "本月金额", "上月金额", "本年累计", "备注"]
+    sheet.append(headers)
+    for key, label, _kind, _source in STORE_PROFIT_LOSS_ROWS:
+        sheet.append([
+            label,
+            _excel_number(values[key].get("current")),
+            _excel_number(values[key].get("previous")),
+            _excel_number(values[key].get("ytd")),
+            str(remarks.get(key, "")) if isinstance(remarks, dict) else "",
+        ])
+    first_data_row = 2
+    last_data_row = 1 + len(STORE_PROFIT_LOSS_ROWS)
+    _style_financial_sheet(sheet, headers)
+    _format_profit_loss_sheet(sheet, first_data_row, last_data_row)
+    metadata = [
+        ["店铺", store.name, None, None, None],
+        ["所属平台", store.platform, None, None, None],
+        ["核算期间", f"{report_month.year}年{report_month.month}月", None, None, None],
+        ["数据来源", "与系统中的店铺损益表查询结果一致；人工项目保留已保存值。", None, None, None],
+    ]
+    for row in metadata:
+        sheet.append(row)
+    for row_number in range(last_data_row + 1, sheet.max_row + 1):
+        sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == last_data_row + 1)
+        sheet.cell(row_number, 2).font = Font(name="等线", size=10, color="666666")
+        for column in range(1, 6):
+            sheet.cell(row_number, column).alignment = Alignment(vertical="center", wrap_text=True)
+    widths = {"A": 28, "B": 16, "C": 16, "D": 16, "E": 42}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    sheet.auto_filter.ref = f"A1:E{last_data_row}"
+    sheet.print_title_rows = "1:1"
+    sheet.print_area = f"A1:E{sheet.max_row}"
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+
+def _build_store_profit_loss_summary_sheet(
+    workbook: Workbook,
+    store_reports: list[tuple[Store, dict[str, dict[str, Decimal | None]]]],
+    report_month: date,
+) -> None:
+    sheet = workbook.create_sheet(STORE_PROFIT_LOSS_SUMMARY_SHEET)
+    headers = ["项目"] + [store.name for store, _values in store_reports] + ["合计", "占比"]
+    sheet.append(headers)
+    revenue_total = sum(
+        (_decimal_or_zero(values["operating_revenue"].get("current")) for _store, values in store_reports),
+        Decimal("0"),
+    )
+    for key, label, _kind, _source in STORE_PROFIT_LOSS_ROWS:
+        store_values = [
+            _decimal_or_zero(values[key].get("current"))
+            for _store, values in store_reports
+        ]
+        if key == "gross_margin":
+            total = (
+                sum((_decimal_or_zero(values["gross_profit"].get("current")) for _store, values in store_reports), Decimal("0"))
+                / revenue_total
+                if revenue_total else None
+            )
+            ratio = None
+        else:
+            total = sum(store_values, Decimal("0"))
+            ratio = total / revenue_total if revenue_total else None
+        sheet.append([
+            label,
+            *[_excel_number(value) for value in store_values],
+            _excel_number(total),
+            _excel_number(ratio),
+        ])
+    first_data_row = 2
+    last_data_row = 1 + len(STORE_PROFIT_LOSS_ROWS)
+    _style_financial_sheet(sheet, headers)
+    for row_number in range(first_data_row, last_data_row + 1):
+        key = STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][0]
+        for column in range(2, len(headers)):
+            sheet.cell(row_number, column).number_format = "0.00%" if key == "gross_margin" or column == len(headers) else '¥#,##0.00'
+        if key == "gross_margin":
+            sheet.cell(row_number, len(headers)).number_format = "General"
+        for cell in sheet[row_number]:
+            if STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][2] == "formula":
+                cell.fill = PatternFill("solid", fgColor="EEF3F8")
+                cell.font = Font(name="等线", size=10, bold=True)
+    sheet.append(["店铺数量", len(store_reports)] + [None] * (len(headers) - 2))
+    sheet.append(["核算期间", f"{report_month.year}年{report_month.month}月"] + [None] * (len(headers) - 2))
+    sheet.append(["占比口径", "各项目合计 ÷ 合计营业收入；毛利率按合计毛利 ÷ 合计营业收入计算。", *([None] * (len(headers) - 2))])
+    for row_number in range(last_data_row + 1, sheet.max_row + 1):
+        for column in range(1, len(headers) + 1):
+            sheet.cell(row_number, column).alignment = Alignment(vertical="center", wrap_text=True)
+    sheet.column_dimensions["A"].width = 28
+    for column in range(2, len(headers) + 1):
+        sheet.column_dimensions[sheet.cell(1, column).column_letter].width = 16
+    sheet.column_dimensions[sheet.cell(1, len(headers)).column_letter].width = 14
+    sheet.auto_filter.ref = f"A1:{sheet.cell(last_data_row, len(headers)).coordinate}"
+    sheet.print_title_rows = "1:1"
+    sheet.print_area = f"A1:{sheet.cell(sheet.max_row, len(headers)).coordinate}"
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+
+def _mapping_effective_on(mapping: StoreProduct, as_of: date) -> bool:
+    if not mapping.is_active or mapping.effective_from > as_of:
+        return False
+    return mapping.effective_to is None or as_of <= mapping.effective_to
+
+
+def _lookup_key(value) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _product_line_mapping_for_sale(
+    mappings_by_store_product: dict[tuple[int, int], list[tuple[StoreProduct, ProductLine, Product]]],
+    store_id: int | None,
+    product_id: int,
+    as_of: date,
+    source_skus: set[str] | None = None,
+) -> tuple[StoreProduct, ProductLine, Product] | None:
+    if store_id is None:
+        return None
+    candidates = [
+        item for item in mappings_by_store_product.get((store_id, product_id), [])
+        if _mapping_effective_on(item[0], as_of)
+    ]
+    if not source_skus:
+        return None
+    normalized_source_skus = {_lookup_key(value) for value in source_skus if value}
+    if not normalized_source_skus:
+        return None
+    matched = [
+        item for item in candidates
+        if _lookup_key(item[0].platform_sku_id) in normalized_source_skus
+        or _lookup_key(item[0].store_sku) in normalized_source_skus
+    ]
+    if not matched:
+        return None
+    candidates = matched
+    product_line_ids = {item[1].id for item in candidates}
+    if len(product_line_ids) != 1:
+        return None
+    return max(candidates, key=lambda item: item[0].effective_from) if candidates else None
+
+
+async def _product_line_profit_data(
+    db: AsyncSession,
+    store_ids: set[int],
+    report_month: date,
+    report_date: date,
+) -> list[dict]:
+    periods = _month_periods(report_month)
+    ytd_start, ytd_end = periods["ytd"]
+    mapping_rows = (await db.execute(
+        select(StoreProduct, ProductLine, Product)
+        .join(ProductLine, ProductLine.id == StoreProduct.product_line_id)
+        .join(Product, Product.id == StoreProduct.product_id)
+        .where(StoreProduct.store_id.in_(store_ids))
+    )).all() if store_ids else []
+    mappings_by_store_product: dict[tuple[int, int], list[tuple[StoreProduct, ProductLine, Product]]] = defaultdict(list)
+    line_data: dict[int | None, dict] = {}
+    for mapping, product_line, product in mapping_rows:
+        mappings_by_store_product[(mapping.store_id, mapping.product_id)].append((mapping, product_line, product))
+        if _mapping_effective_on(mapping, report_date):
+            item = line_data.setdefault(product_line.id, {
+                "name": product_line.name,
+                "sku_ids": set(),
+                "current": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "ytd": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "note": "",
+            })
+            item["sku_ids"].add(product.id)
+
+    sales = list((await db.execute(
+        select(Sale, User.store_id)
+        .outerjoin(User, User.id == Sale.user_id)
+        .where(
+            Sale.sold_at >= datetime.combine(ytd_start, time.min),
+            Sale.sold_at < datetime.combine(ytd_end, time.min),
+            or_(
+                Sale.store_id.in_(store_ids),
+                and_(Sale.store_id.is_(None), User.store_id.in_(store_ids)),
+            ),
+        )
+    )).all()) if store_ids else []
+    import_context_by_sale: dict[int, dict] = {}
+    if sales:
+        from routers.sales import _sale_import_context
+
+        import_context_by_sale, _ = await _sale_import_context(db, [sale for sale, _user_store_id in sales])
+
+    sale_ids = [sale.id for sale, _user_store_id in sales]
+    source_skus_by_sale: defaultdict[int, set[str]] = defaultdict(set)
+    if sale_ids:
+        source_sku_rows = await db.execute(
+            select(SettlementEntryAllocation.sale_id, SettlementEntry.platform_sku_id)
+            .join(
+                SettlementEntry,
+                SettlementEntry.id == SettlementEntryAllocation.settlement_entry_id,
+            )
+            .where(
+                SettlementEntryAllocation.sale_id.in_(sale_ids),
+                SettlementEntry.platform_sku_id.is_not(None),
+            )
+        )
+        for sale_id, platform_sku_id in source_sku_rows.all():
+            if platform_sku_id:
+                source_skus_by_sale[sale_id].add(platform_sku_id)
+
+    def line_for(sale: Sale, user_store_id: int | None):
+        store_id = sale.store_id or user_store_id
+        mapping = _product_line_mapping_for_sale(
+            mappings_by_store_product,
+            store_id,
+            sale.product_id,
+            sale.sold_at.date(),
+            source_skus_by_sale.get(sale.id),
+        )
+        if mapping is None:
+            if source_skus_by_sale.get(sale.id):
+                return None, "未分配产品线（来源 SKU 未匹配或产品线映射冲突）"
+            return None, "未分配产品线（缺少来源 SKU 或产品线映射冲突）"
+        return mapping[1].id, mapping[1].name
+
+    sale_line_by_id: dict[int, int | None] = {}
+    for sale, user_store_id in sales:
+        line_id, line_name = line_for(sale, user_store_id)
+        item = line_data.setdefault(line_id, {
+            "name": line_name,
+            "sku_ids": set(),
+            "current": {"revenue": Decimal("0"), "cost": Decimal("0")},
+            "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
+            "ytd": {"revenue": Decimal("0"), "cost": Decimal("0")},
+            "note": "销售记录未匹配到有效店铺 SKU 产品线映射" if line_id is None else "",
+        })
+        item["sku_ids"].add(sale.product_id)
+        sale_line_by_id[sale.id] = line_id
+        context = import_context_by_sale.get(sale.id, {})
+        rate = context.get("exchange_rate_to_cny", Decimal("1"))
+        if rate is None:
+            warning = "销售收入因汇率缺失未计入；FIFO成本仍按销售成本明细计入。"
+            item["note"] = f"{item['note']}；{warning}".strip("；")
+            continue
+        revenue = context.get("source_net_product_sales", sale.selling_price * sale.quantity) * rate
+        for period in STORE_PROFIT_LOSS_PERIODS:
+            start, end = periods[period]
+            if start <= sale.sold_at.date() < end:
+                item[period]["revenue"] += revenue
+        other_expense = context.get("source_other_expense", sale.platform_fee) * rate
+        for period in STORE_PROFIT_LOSS_PERIODS:
+            start, end = periods[period]
+            if start <= sale.sold_at.date() < end:
+                item[period]["cost"] += other_expense
+
+    if sales:
+        cost_rows = (await db.execute(
+            select(SaleCostDetail, InventoryBatch, Sale)
+            .join(Sale, Sale.id == SaleCostDetail.sale_id)
+            .join(InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id)
+            .where(SaleCostDetail.sale_id.in_([sale.id for sale, _user_store_id in sales]))
+        )).all()
+        for detail, batch, sale in cost_rows:
+            line_id = sale_line_by_id.get(sale.id)
+            if line_id not in line_data:
+                continue
+            quantity = Decimal(detail.quantity)
+            batch_cost = batch.purchase_price * quantity
+            divisor = Decimal(batch.quantity or 1)
+            batch_cost += (batch.shipping_cost + batch.last_mile_cost) * quantity / divisor
+            for period in STORE_PROFIT_LOSS_PERIODS:
+                start, end = periods[period]
+                if start <= sale.sold_at.date() < end:
+                    line_data[line_id][period]["cost"] += batch_cost
+
+    rows = []
+    for item in sorted(line_data.values(), key=lambda value: value["name"]):
+        rows.append({
+            "name": item["name"],
+            "sku_count": len(item["sku_ids"]),
+            "sku_ids": item["sku_ids"],
+            "current": item["current"],
+            "previous": item["previous"],
+            "ytd": item["ytd"],
+            "note": item["note"],
+        })
+    return rows
+
+
+def _build_product_line_profit_sheet(
+    workbook: Workbook,
+    rows: list[dict],
+    report_month: date,
+) -> None:
+    sheet = workbook.create_sheet(PRODUCT_LINE_PROFIT_SHEET)
+    headers = ["产品线/品类", "SKU数量", "本月营业收入", "本月营业成本", "本月毛利", "本月毛利率", "上月毛利率", "环比变化", "本年累计收入", "本年累计毛利", "累计毛利率", "备注"]
+    sheet.append(headers)
+    totals = {
+        period: {"revenue": sum((row[period]["revenue"] for row in rows), Decimal("0")), "cost": sum((row[period]["cost"] for row in rows), Decimal("0"))}
+        for period in ("current", "previous", "ytd")
+    }
+    for row in rows:
+        current_gross = row["current"]["revenue"] - row["current"]["cost"]
+        previous_gross = row["previous"]["revenue"] - row["previous"]["cost"]
+        ytd_gross = row["ytd"]["revenue"] - row["ytd"]["cost"]
+        current_margin = current_gross / row["current"]["revenue"] if row["current"]["revenue"] else None
+        previous_margin = previous_gross / row["previous"]["revenue"] if row["previous"]["revenue"] else None
+        ytd_margin = ytd_gross / row["ytd"]["revenue"] if row["ytd"]["revenue"] else None
+        sheet.append([
+            row["name"], row["sku_count"], _excel_number(row["current"]["revenue"]), _excel_number(row["current"]["cost"]),
+            _excel_number(current_gross), _excel_number(current_margin), _excel_number(previous_margin),
+            _excel_number(current_margin - previous_margin if current_margin is not None and previous_margin is not None else None),
+            _excel_number(row["ytd"]["revenue"]), _excel_number(ytd_gross), _excel_number(ytd_margin), row["note"],
+        ])
+    total_current_gross = totals["current"]["revenue"] - totals["current"]["cost"]
+    total_previous_gross = totals["previous"]["revenue"] - totals["previous"]["cost"]
+    total_ytd_gross = totals["ytd"]["revenue"] - totals["ytd"]["cost"]
+    total_current_margin = total_current_gross / totals["current"]["revenue"] if totals["current"]["revenue"] else None
+    total_previous_margin = total_previous_gross / totals["previous"]["revenue"] if totals["previous"]["revenue"] else None
+    total_ytd_margin = total_ytd_gross / totals["ytd"]["revenue"] if totals["ytd"]["revenue"] else None
+    sheet.append([
+        "合计", len(set().union(*(row["sku_ids"] for row in rows))) if rows else 0,
+        _excel_number(totals["current"]["revenue"]), _excel_number(totals["current"]["cost"]), _excel_number(total_current_gross),
+        _excel_number(total_current_margin), _excel_number(total_previous_margin),
+        _excel_number(total_current_margin - total_previous_margin if total_current_margin is not None and total_previous_margin is not None else None),
+        _excel_number(totals["ytd"]["revenue"]), _excel_number(total_ytd_gross), _excel_number(total_ytd_margin), "",
+    ])
+    _style_financial_sheet(sheet, headers)
+    for row_number in range(2, sheet.max_row + 1):
+        for column in (3, 4, 5, 9, 10):
+            sheet.cell(row_number, column).number_format = '¥#,##0.00'
+        for column in (6, 7, 8, 11):
+            sheet.cell(row_number, column).number_format = "0.00%"
+        if row_number == sheet.max_row:
+            for cell in sheet[row_number]:
+                cell.font = Font(name="等线", size=10, bold=True)
+                cell.fill = PatternFill("solid", fgColor="EEF3F8")
+    note_row = sheet.max_row + 2
+    sheet.cell(note_row, 1, "说明")
+    sheet.cell(note_row, 2, f"核算期间：{report_month.year}年{report_month.month}月；收入沿用销售记录口径，成本包含可按销售/FIFO明细归属的采购成本、头程尾程物流及销售关联费用。")
+    sheet.cell(note_row + 1, 2, "店铺损益表中人工录入的税费、本地物流、代发等未按产品线分摊；未匹配产品线的销售单独列示。")
+    for row_number in (note_row, note_row + 1):
+        sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == note_row)
+        sheet.cell(row_number, 2).font = Font(name="等线", size=9, color="666666")
+        sheet.cell(row_number, 2).alignment = Alignment(wrap_text=True, vertical="center")
+    widths = {"A": 24, "B": 12, "C": 16, "D": 16, "E": 16, "F": 14, "G": 14, "H": 14, "I": 16, "J": 16, "K": 14, "L": 48}
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    sheet.auto_filter.ref = f"A1:L{sheet.max_row - 2}"
+    sheet.print_title_rows = "1:1"
+    sheet.print_area = f"A1:L{sheet.max_row}"
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_setup.fitToHeight = 0
+    sheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+
+async def _load_inventory_impairment_report_rows(
+    db: AsyncSession, report_date: date
+) -> list[dict]:
     report_cutoff = datetime.combine(report_date + timedelta(days=1), time.min)
     previous_month_end = _previous_month_end(report_date)
     snapshot_period = await ensure_period_snapshot(db, previous_month_end)
@@ -896,23 +1323,120 @@ async def export_inventory_impairment_report(
         )
         for item in report_items
     ], report_date)
-    report_rows = []
-    for item in report_items:
-        current_impairment = current_impairments.get(item["batch"].id)
-        report_rows.append({
+    return [
+        {
             key: value for key, value in item.items() if key != "batch"
         } | {
-            "provision_quantity": current_impairment.provision_quantity if current_impairment else 0,
-            "impairment_rate": current_impairment.rate if current_impairment else Decimal("0"),
-            "impairment_amount": (
-                item["unit_cost"] * current_impairment.impairment_units
-                if current_impairment else Decimal("0")
+            "provision_quantity": (
+                current_impairments[item["batch"].id].provision_quantity
+                if item["batch"].id in current_impairments else 0
             ),
-        })
+            "impairment_rate": (
+                current_impairments[item["batch"].id].rate
+                if item["batch"].id in current_impairments else Decimal("0")
+            ),
+            "impairment_amount": (
+                item["unit_cost"] * current_impairments[item["batch"].id].impairment_units
+                if item["batch"].id in current_impairments else Decimal("0")
+            ),
+        }
+        for item in report_items
+    ]
 
+
+@router.get("/inventory-impairment/export")
+async def export_inventory_impairment_report(
+    report_date: date = Query(..., description="报告截止日"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    """按指定截止日导出存货跌价准备明细表。"""
+    if report_date > date.today():
+        raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
+    report_rows = await _load_inventory_impairment_report_rows(db, report_date)
     workbook, formula_cache = _build_inventory_impairment_workbook(report_rows, report_date)
     output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
     filename = f"inventory_impairment_{report_date.strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/financial-attachments/export")
+async def export_financial_attachments(
+    report_date: date = Query(..., description="存货报表截止日"),
+    report_month: date | None = Query(default=None, description="损益报表月份第一天"),
+    store_id: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    """导出财务附件。第三张表只对管理员开放，并汇总所有启用店铺。"""
+    if report_date > date.today():
+        raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
+    report_month = report_month or report_date.replace(day=1)
+    if report_month.day != 1:
+        raise HTTPException(status_code=400, detail="核算月份必须传入该月第一天")
+
+    selected_store = await _resolve_report_store(db, user, store_id)
+    report = await db.scalar(
+        select(StoreProfitLossReport).where(
+            StoreProfitLossReport.store_id == selected_store.id,
+            StoreProfitLossReport.report_month == report_month,
+        )
+    )
+    selected_auto_values = await _store_profit_loss_auto_values(
+        db, selected_store.id, report_month, selected_store.name
+    )
+    selected_values = _build_store_profit_loss_values(
+        selected_auto_values, report.manual_values if report else {}
+    )
+    selected_remarks = report.remarks if report else {}
+
+    inventory_rows = await _load_inventory_impairment_report_rows(db, report_date)
+    workbook, formula_cache = _build_inventory_impairment_workbook(inventory_rows, report_date)
+    _build_store_profit_loss_sheet(
+        workbook, selected_store, report_month, selected_values, selected_remarks
+    )
+
+    if user.role == "admin":
+        stores = list((await db.execute(
+            select(Store).where(Store.is_active.is_(True)).order_by(Store.name, Store.id)
+        )).scalars().all())
+        reports_by_store = {
+            item.store_id: item
+            for item in (await db.execute(
+                select(StoreProfitLossReport).where(
+                    StoreProfitLossReport.report_month == report_month,
+                    StoreProfitLossReport.store_id.in_([store.id for store in stores]),
+                )
+            )).scalars().all()
+        } if stores else {}
+        store_reports = []
+        for store in stores:
+            store_report = reports_by_store.get(store.id)
+            auto_values = await _store_profit_loss_auto_values(
+                db, store.id, report_month, store.name
+            )
+            store_reports.append((
+                store,
+                _build_store_profit_loss_values(
+                    auto_values, store_report.manual_values if store_report else {}
+                ),
+            ))
+        _build_store_profit_loss_summary_sheet(workbook, store_reports, report_month)
+        product_line_store_ids = {store.id for store in stores}
+    else:
+        product_line_store_ids = {selected_store.id}
+
+    product_line_rows = await _product_line_profit_data(
+        db, product_line_store_ids, report_month, report_date
+    )
+    _build_product_line_profit_sheet(workbook, product_line_rows, report_month)
+
+    output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
+    filename = f"financial_attachments_{report_date.strftime('%Y%m%d')}.xlsx"
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

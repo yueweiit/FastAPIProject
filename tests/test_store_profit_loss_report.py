@@ -107,8 +107,19 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                     date(2026, 7, 18): Decimal("10"),
                 }),
             ),
+            patch(
+                "routers.reports.china_salary_totals_by_store_and_application_date",
+                new=AsyncMock(return_value={
+                    "测试店铺": {
+                        date(2026, 8, 8): Decimal("80"),
+                        date(2026, 7, 18): Decimal("40"),
+                    },
+                }),
+            ),
         ):
-            values = await _store_profit_loss_auto_values(db, 7, date(2026, 8, 1))
+            values = await _store_profit_loss_auto_values(
+                db, 7, date(2026, 8, 1), "测试店铺"
+            )
 
         self.assertEqual(values["product_sales_revenue"], {
             "current": Decimal("100"),
@@ -139,6 +150,11 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "current": Decimal("10"),
             "previous": Decimal("5"),
             "ytd": Decimal("15"),
+        })
+        self.assertEqual(values["salary"], {
+            "current": Decimal("80"),
+            "previous": Decimal("40"),
+            "ytd": Decimal("120"),
         })
         self.assertEqual(
             [call.args[2] for call in impairment_total.await_args_list],
@@ -210,6 +226,26 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(values["net_profit"], {
             "current": Decimal("3"), "previous": Decimal("5"), "ytd": Decimal("46"),
+        })
+
+    def test_saved_salary_overrides_oa_default_and_blank_uses_default(self):
+        auto_values = {
+            "salary": {
+                "current": Decimal("100"),
+                "previous": Decimal("80"),
+                "ytd": Decimal("500"),
+            },
+        }
+        manual_values = {
+            "salary": {"current": "120", "previous": None, "ytd": ""},
+        }
+
+        values = _build_store_profit_loss_values(auto_values, manual_values)
+
+        self.assertEqual(values["salary"], {
+            "current": Decimal("120"),
+            "previous": Decimal("80"),
+            "ytd": Decimal("500"),
         })
 
     def test_gross_margin_is_empty_when_revenue_is_zero(self):

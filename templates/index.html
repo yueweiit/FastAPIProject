@@ -519,11 +519,11 @@
             <div class="flex-between">
                 <div>
                     <h3>财务附件报表</h3>
-                    <p style="font-size:13px;color:#687386;margin:6px 0 0">第一张表：存货跌价准备明细表</p>
+                    <p style="font-size:13px;color:#687386;margin:6px 0 0">导出存货跌价、店铺损益、店铺汇总和产品线毛利附件；第三张表仅管理员可见</p>
                 </div>
                 <div class="form-row" style="margin:0;align-items:flex-end">
                     <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
-                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="exportInventoryImpairmentReport()">导出第一张表</button></div>
+                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="exportFinancialAttachments()">导出财务附件</button></div>
                 </div>
             </div>
         </div>
@@ -1968,6 +1968,42 @@ async function exportInventoryImpairmentReport() {
     } catch (e) { showMsg(e.message, false); }
 }
 
+async function exportFinancialAttachments() {
+    const reportDate = document.getElementById('inventory-impairment-date').value;
+    if (!reportDate) {
+        showMsg('请选择报告截止日', false);
+        return;
+    }
+    const month = defaultProfitLossMonth();
+    const params = new URLSearchParams({report_date: reportDate, report_month: `${month}-01`});
+    if (isAdmin()) {
+        const storeId = document.getElementById('profit-loss-store').value;
+        if (storeId) params.set('store_id', storeId);
+    }
+    try {
+        const res = await fetch(`/reports/financial-attachments/export?${params.toString()}`, {
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+        });
+        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (!res.ok) {
+            const raw = await res.text();
+            let detail = raw;
+            try { detail = JSON.parse(raw).detail || raw; } catch {}
+            throw new Error(formatApiError(detail, '导出失败'));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `财务附件报表_${reportDate}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showMsg(isAdmin() ? '四张财务附件报表已导出' : '财务附件报表已导出（第三张表仅管理员可见）');
+    } catch (e) { showMsg(e.message, false); }
+}
+
 let storeProfitLossReport = null;
 
 function defaultProfitLossMonth() {
@@ -2015,7 +2051,8 @@ function renderStoreProfitLoss(report) {
             const value = row.value?.[period];
             if (row.kind === 'manual') {
                 const inputValue = value === null || value === undefined ? '' : escapeHtml(value);
-                return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" ${editable ? '' : 'disabled'}></td>`;
+                const title = row.source || '人工填写';
+                return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" ${editable ? '' : 'disabled'}></td>`;
             }
             const title = row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
             return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(title)}">${formatProfitLossAmount(value, row)}</td>`;

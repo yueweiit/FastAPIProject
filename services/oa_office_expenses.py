@@ -1,4 +1,4 @@
-"""Read the approved LatínGo office-space allocation from the OA database."""
+"""Read approved office-space and China-salary expenses from the OA database."""
 
 import json
 import logging
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 OA_OPERATION_PROCESS_CODE = "PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B"
 OA_OFFICE_SPACE_EXPENSE = "办公场地总费用Gastos de local de oficinas"
+OA_CHINA_SALARY_EXPENSE = "工资中国Salario en China"
 OA_OFFICE_SPACE_TABLE_ID = "TableField_9KUR3Y1BQYW0"
 LATIN_GO_DEPARTMENT_ID = "1089990115"
 OFFICE_DETAIL_VALUES = {"租金Alquiler", "电费Electricidad"}
@@ -55,6 +56,29 @@ def _department_id(cell: dict[str, Any] | None) -> str:
     identity = cell.get("extendValue")
     if isinstance(identity, list) and identity and isinstance(identity[0], dict):
         return str(identity[0].get("id") or identity[0].get("itemId") or "").strip()
+    return ""
+
+
+def _cell(cells: list[Any], *keywords: str) -> dict[str, Any] | None:
+    normalized_keywords = tuple(keyword.casefold() for keyword in keywords)
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        label = str(cell.get("label") or cell.get("name") or "").casefold()
+        if any(keyword in label for keyword in normalized_keywords):
+            return cell
+    return None
+
+
+def _department_name(cell: dict[str, Any] | None) -> str:
+    if not isinstance(cell, dict):
+        return ""
+    value = cell.get("value")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    identity = cell.get("extendValue")
+    if isinstance(identity, list) and identity and isinstance(identity[0], dict):
+        return str(identity[0].get("name") or identity[0].get("label") or "").strip()
     return ""
 
 
@@ -99,18 +123,32 @@ def _office_space_total(form_component_values: Any) -> Decimal:
     return total
 
 
-async def office_space_totals_by_application_date(
-    start_date: date, end_date: date
-) -> dict[date, Decimal]:
-    """Return completed, agreed office-space totals keyed by application date.
+def _china_salary_totals(form_component_values: Any) -> dict[str, Decimal]:
+    totals: defaultdict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    for table in _json_list(form_component_values):
+        table_label = str(table.get("label") or table.get("name") or "").casefold()
+        if "明细" not in table_label and "detalle" not in table_label:
+            continue
+        for row in _json_list(table.get("value")):
+            cells = row.get("rowValue")
+            if not isinstance(cells, list):
+                continue
+            department = _cell(cells, "部门名称", "部门", "departamento")
+            amount = _cell(cells, "金额", "monto", "importe")
+            department_name = _department_name(department)
+            value = _decimal(amount.get("value")) if amount else None
+            if department_name and value is not None:
+                totals[department_name] += value
+    return dict(totals)
 
-    An unconfigured source is expected in local development and returns no data.
-    A configured source that cannot be read raises instead of silently reporting zero.
-    """
+
+async def _approved_forms_by_expense(
+    start_date: date, end_date: date, expense_name: str
+) -> list[Any]:
     config = _oa_database_config()
     if config is None:
-        logger.warning("OA database is not configured; office-space expense is unavailable")
-        return {}
+        logger.warning("OA database is not configured; expense data is unavailable")
+        return []
 
     query = """
         SELECT
@@ -146,20 +184,31 @@ async def office_space_totals_by_application_date(
             command_timeout=10,
         )
         try:
-            rows = await connection.fetch(
+            return list(await connection.fetch(
                 query,
                 OA_OPERATION_PROCESS_CODE,
                 start_date,
                 end_date,
-                OA_OFFICE_SPACE_EXPENSE,
-            )
+                expense_name,
+            ))
         finally:
             await connection.close()
     except Exception as exc:
-        raise OaExpenseSourceError("无法读取 OA 办公场地费用数据") from exc
+        raise OaExpenseSourceError("无法读取 OA 费用数据") from exc
 
+
+async def office_space_totals_by_application_date(
+    start_date: date, end_date: date
+) -> dict[date, Decimal]:
+    """Return completed, agreed office-space totals keyed by application date.
+
+    An unconfigured source is expected in local development and returns no data.
+    A configured source that cannot be read raises instead of silently reporting zero.
+    """
     totals: defaultdict[date, Decimal] = defaultdict(lambda: Decimal("0"))
-    for row in rows:
+    for row in await _approved_forms_by_expense(
+        start_date, end_date, OA_OFFICE_SPACE_EXPENSE
+    ):
         try:
             request_date = date.fromisoformat(str(row["request_date"]))
         except (TypeError, ValueError):
@@ -168,3 +217,27 @@ async def office_space_totals_by_application_date(
         if total:
             totals[request_date] += total
     return dict(totals)
+
+
+async def china_salary_totals_by_store_and_application_date(
+    start_date: date, end_date: date
+) -> dict[str, dict[date, Decimal]]:
+    """Return China salary totals keyed by exact OA department/store name and date."""
+    totals: defaultdict[str, defaultdict[date, Decimal]] = defaultdict(
+        lambda: defaultdict(lambda: Decimal("0"))
+    )
+    for row in await _approved_forms_by_expense(
+        start_date, end_date, OA_CHINA_SALARY_EXPENSE
+    ):
+        try:
+            request_date = date.fromisoformat(str(row["request_date"]))
+        except (TypeError, ValueError):
+            continue
+        for department_name, amount in _china_salary_totals(
+            row["form_component_values"]
+        ).items():
+            totals[department_name.strip()][request_date] += amount
+    return {
+        store_name: dict(date_totals)
+        for store_name, date_totals in totals.items()
+    }
