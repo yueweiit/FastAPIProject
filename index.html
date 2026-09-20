@@ -2148,7 +2148,7 @@ async function loadMonthly() {
 
 // 初始加载
 document.getElementById('inventory-impairment-date').value = new Date().toLocaleDateString('sv-SE');
-loadProducts();
+if (AUTH_TOKEN) loadProducts();
 </script>
 </body>
 </html>

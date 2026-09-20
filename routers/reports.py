@@ -315,19 +315,22 @@ async def _store_profit_loss_auto_values(
 
     previous_month_end = _previous_month_end(report_month.replace(day=1))
     month_before_end = _previous_month_end(previous_month_end.replace(day=1))
-    current_impairment = await _store_inventory_impairment_total(
-        db, store_id, datetime.combine(_next_month_start(report_month.replace(day=1)), time.min)
+    current_cutoff = datetime.combine(
+        _next_month_start(report_month.replace(day=1)), time.min
     )
-    previous_impairment = await _store_inventory_impairment_total(
-        db, store_id, month_start_cutoff(previous_month_end)
-    )
-    month_before_impairment = await _store_inventory_impairment_total(
-        db, store_id, month_start_cutoff(month_before_end)
-    )
+    previous_cutoff = month_start_cutoff(previous_month_end)
+    month_before_cutoff = month_start_cutoff(month_before_end)
     year_end_previous = date(report_month.year - 1, 12, 31)
-    year_end_impairment = await _store_inventory_impairment_total(
-        db, store_id, month_start_cutoff(year_end_previous)
+    year_end_cutoff = month_start_cutoff(year_end_previous)
+    impairment_totals = await _store_inventory_impairment_totals(
+        db,
+        store_id,
+        [current_cutoff, previous_cutoff, month_before_cutoff, year_end_cutoff],
     )
+    current_impairment = impairment_totals[current_cutoff]
+    previous_impairment = impairment_totals[previous_cutoff]
+    month_before_impairment = impairment_totals[month_before_cutoff]
+    year_end_impairment = impairment_totals[year_end_cutoff]
     auto_values["inventory_impairment"] = {
         "current": current_impairment - previous_impairment,
         "previous": previous_impairment - month_before_impairment,
@@ -366,6 +369,16 @@ def month_start_cutoff(value: date) -> datetime:
 async def _store_inventory_impairment_total(
     db: AsyncSession, store_id: int, cutoff: datetime
 ) -> Decimal:
+    return (await _store_inventory_impairment_totals(db, store_id, [cutoff]))[cutoff]
+
+
+async def _store_inventory_impairment_totals(
+    db: AsyncSession, store_id: int, cutoffs: list[datetime]
+) -> dict[datetime, Decimal]:
+    unique_cutoffs = list(dict.fromkeys(cutoffs))
+    if not unique_cutoffs:
+        return {}
+    maximum_cutoff = max(unique_cutoffs)
     batch_rows = (await db.execute(
         select(
             InventoryBatch,
@@ -375,10 +388,10 @@ async def _store_inventory_impairment_total(
         )
         .join(Product, Product.id == InventoryBatch.product_id)
         .outerjoin(User, User.id == InventoryBatch.user_id)
-        .where(InventoryBatch.arrived_at < cutoff)
+        .where(InventoryBatch.arrived_at < maximum_cutoff)
     )).all()
     if not batch_rows:
-        return Decimal("0")
+        return {cutoff: Decimal("0") for cutoff in unique_cutoffs}
     batch_ids = [batch.id for batch, *_ in batch_rows]
     product_ids = {batch.product_id for batch, *_ in batch_rows}
     rule_rows = (await db.execute(
@@ -396,39 +409,47 @@ async def _store_inventory_impairment_total(
     deductions = (await db.execute(
         select(
             SaleCostDetail.batch_id,
-            func.coalesce(func.sum(SaleCostDetail.quantity), 0),
+            SaleCostDetail.quantity,
+            Sale.sold_at,
         )
         .join(Sale, Sale.id == SaleCostDetail.sale_id)
         .where(
             SaleCostDetail.batch_id.in_(batch_ids),
-            Sale.sold_at < cutoff,
+            Sale.sold_at < maximum_cutoff,
         )
-        .group_by(SaleCostDetail.batch_id)
     )).all()
-    deducted_by_batch = {row[0]: int(row[1] or 0) for row in deductions}
-    as_of = (cutoff - timedelta(days=1)).date()
-    layers = [
-        InventoryLayer(
-            batch_id=batch.id,
-            product_id=batch.product_id,
-            store_id=batch_store_id,
-            arrived_at=batch.arrived_at.date(),
-            quantity=max(0, batch.quantity - deducted_by_batch.get(batch.id, 0)),
-            product_type=product_type,
-            safe_stock_quantity=safe_stock_quantity,
-            rules=tuple(rules_by_product[batch.product_id]),
+    results = {}
+    for cutoff in unique_cutoffs:
+        deducted_by_batch: defaultdict[int, int] = defaultdict(int)
+        for batch_id, quantity, sold_at in deductions:
+            if sold_at < cutoff:
+                deducted_by_batch[batch_id] += int(quantity or 0)
+        eligible_rows = [
+            row for row in batch_rows if row[0].arrived_at < cutoff
+        ]
+        layers = [
+            InventoryLayer(
+                batch_id=batch.id,
+                product_id=batch.product_id,
+                store_id=batch_store_id,
+                arrived_at=batch.arrived_at.date(),
+                quantity=max(0, batch.quantity - deducted_by_batch[batch.id]),
+                product_type=product_type,
+                safe_stock_quantity=safe_stock_quantity,
+                rules=tuple(rules_by_product[batch.product_id]),
+            )
+            for batch, batch_store_id, product_type, safe_stock_quantity in eligible_rows
+        ]
+        impairments = batch_impairments(layers, (cutoff - timedelta(days=1)).date())
+        results[cutoff] = sum(
+            (
+                batch.unit_cost * impairments[batch.id].impairment_units
+                for batch, batch_store_id, *_ in eligible_rows
+                if batch_store_id == store_id and batch.id in impairments
+            ),
+            Decimal("0"),
         )
-        for batch, batch_store_id, product_type, safe_stock_quantity in batch_rows
-    ]
-    impairments = batch_impairments(layers, as_of)
-    total = Decimal("0")
-    for batch, batch_store_id, _product_type, _safe_stock_quantity in batch_rows:
-        if batch_store_id != store_id:
-            continue
-        impairment = impairments.get(batch.id)
-        if impairment:
-            total += batch.unit_cost * impairment.impairment_units
-    return total
+    return results
 
 
 async def _resolve_report_store(
