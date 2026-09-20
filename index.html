@@ -179,6 +179,21 @@
         .profit-loss-table input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
         .profit-loss-table .profit-loss-remark input { min-width:160px; text-align:left; }
         .profit-loss-table input:disabled { color:#42526a; background:transparent; border-color:transparent; }
+        .reports-layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:18px; align-items:start; }
+        .reports-sidebar { position:sticky; top:18px; padding:8px; background:#fff; border:1px solid var(--line); border-radius:9px; }
+        .reports-sidebar button { display:block; width:100%; padding:11px 12px; border:0; border-left:3px solid transparent; background:transparent; color:#526074; text-align:left; font-size:13px; font-weight:700; cursor:pointer; }
+        .reports-sidebar button:hover { background:#f7f9fb; color:var(--ink); }
+        .reports-sidebar button.active { border-left-color:var(--accent); background:#fff3f5; color:var(--accent-dark); }
+        .report-pane { display:none; min-width:0; }
+        .report-pane.active { display:block; }
+        .report-data-table th:nth-child(n+5), .report-data-table td:nth-child(n+5) { text-align:right; font-variant-numeric:tabular-nums; }
+        .report-data-table .text-left { text-align:left !important; }
+        #inventory-impairment-scroll { height:min(62vh,720px); min-height:420px; overflow:auto; scrollbar-gutter:stable; }
+        #inventory-impairment-scroll thead th { position:sticky; top:0; z-index:2; }
+        #inventory-impairment-scroll::-webkit-scrollbar { width:12px; height:12px; }
+        #inventory-impairment-scroll::-webkit-scrollbar-thumb { background:#9da8b7; border:3px solid transparent; border-radius:999px; background-clip:padding-box; }
+        #inventory-impairment-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
+        @media (max-width:900px) { .reports-layout { grid-template-columns:1fr; } .reports-sidebar { position:static; display:flex; overflow-x:auto; } .reports-sidebar button { width:auto; min-width:max-content; border-left:0; border-bottom:3px solid transparent; } .reports-sidebar button.active { border-bottom-color:var(--accent); } }
         .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
     </style>
 </head>
@@ -527,41 +542,26 @@
                 </div>
             </div>
         </div>
-        <div class="card">
-            <div class="flex-between">
-                <h3>店铺损益表</h3>
-                <button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button>
-            </div>
-            <div class="profit-loss-controls">
-                <div class="form-row">
-                    <div id="profit-loss-store-group" class="form-group"><label for="profit-loss-store">店铺</label><select id="profit-loss-store" onchange="loadStoreProfitLoss()"></select></div>
-                    <div class="form-group"><label for="profit-loss-month">核算月份</label><input id="profit-loss-month" type="month" onchange="loadStoreProfitLoss()"></div>
-                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-secondary" type="button" onclick="loadStoreProfitLoss()">查询</button></div>
+        <div class="reports-layout">
+            <aside class="reports-sidebar" aria-label="报表导航">
+                <button class="active" data-report-view="inventory" onclick="openReportView('inventory', this)">存货跌价明细</button>
+                <button data-report-view="profit-loss" onclick="openReportView('profit-loss', this)">店铺损益表</button>
+                <button data-report-view="product-line" onclick="openReportView('product-line', this)">产品线毛利</button>
+            </aside>
+            <div>
+                <div id="report-pane-inventory" class="report-pane active card">
+                    <div class="flex-between"><h3>存货跌价准备明细表</h3><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div>
+                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU</th><th>产品名称</th><th>批次</th><th>入库日期</th><th>库龄</th><th>单件成本</th><th>库存</th><th>计提数量</th><th>库存金额</th><th>计提比例</th><th>跌价准备</th><th>账面价值</th><th>较上月变化</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody></table></div>
                 </div>
-                <div id="profit-loss-updated" class="profit-loss-updated"></div>
-            </div>
-            <div class="table-scroll profit-loss-table">
-                <table>
-                    <thead><tr><th>项目</th><th>本月金额</th><th>备注</th></tr></thead>
-                    <tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody>
-                </table>
-            </div>
-        </div>
-        <div class="card">
-            <div class="flex-between">
-                <h3>月度产品件数售卖和库存报表</h3>
-                <div class="form-row" style="margin:0;align-items:flex-end">
-                    <div class="form-group"><label>开始</label><input id="r-start" type="date" value="2024-01-01"></div>
-                    <div class="form-group"><label>结束</label><input id="r-end" type="date" value="2024-12-31"></div>
-                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="loadMonthly()">查询</button></div>
+                <div id="report-pane-profit-loss" class="report-pane card">
+                    <div class="flex-between"><h3>店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
+                    <div class="profit-loss-controls"><div class="form-row"><div id="profit-loss-store-group" class="form-group"><label for="profit-loss-store">店铺</label><select id="profit-loss-store" onchange="loadStoreProfitLoss()"></select></div><div class="form-group"><label for="profit-loss-month">核算月份</label><input id="profit-loss-month" type="month" onchange="loadStoreProfitLoss()"></div><div class="form-group" style="justify-content:flex-end"><button class="btn btn-secondary" type="button" onclick="loadStoreProfitLoss()">查询</button></div></div><div id="profit-loss-updated" class="profit-loss-updated"></div></div>
+                    <div class="table-scroll profit-loss-table"><table><thead><tr><th>项目</th><th>本月金额</th><th>备注</th></tr></thead><tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody></table></div>
                 </div>
-            </div>
-            <div class="stat-grid" id="monthly-stats"></div>
-            <div class="table-scroll">
-            <table>
-                <thead><tr><th>月份</th><th>SKU</th><th>产品名称</th><th>售卖件数</th><th>当前库存</th><th>库存价值</th></tr></thead>
-                <tbody id="monthly-tbody"></tbody>
-            </table>
+                <div id="report-pane-product-line" class="report-pane card">
+                    <div class="flex-between"><h3>各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
+                    <div class="table-scroll"><table class="report-data-table"><thead><tr><th>产品线/品类</th><th>SKU数量</th><th>本月收入</th><th>本月成本</th><th>本月毛利</th><th>本月毛利率</th><th>上月毛利率</th><th>环比变化</th><th>累计收入</th><th>累计毛利</th><th>累计毛利率</th><th>备注</th></tr></thead><tbody id="product-line-profit-tbody"></tbody></table></div>
+                </div>
             </div>
         </div>
     </div>
@@ -896,7 +896,7 @@ function switchTab(name) {
     if (name === 'batches') loadBatches();
     if (name === 'gallery') loadGallery();
     if (name === 'sales') { loadSkuOptions(); refreshSalesWorkspace(); }
-    if (name === 'reports') { loadMonthly(); loadStoreProfitLoss(); }
+    if (name === 'reports') openReportView('inventory');
     if (name === 'users') loadUsers();
 }
 
@@ -2110,40 +2110,54 @@ async function saveStoreProfitLoss() {
     } catch (e) { showMsg(e.message, false); }
 }
 
-async function loadMonthly() {
-    const start = document.getElementById('r-start').value;
-    const end = document.getElementById('r-end').value;
-    const list = await api('GET', `/reports/monthly?start_date=${start}&end_date=${end}`);
-    const tbody = document.getElementById('monthly-tbody');
-    const stats = document.getElementById('monthly-stats');
+function reportMoney(value) {
+    return value === null || value === undefined ? '-' : `¥${Number(value).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+}
 
-    let totalSold = 0, totalInventory = 0, totalValue = 0;
-    const latestInv = {};
-    list.forEach(r => {
-        totalSold += r.sold_quantity;
-        latestInv[r.product_id] = r; // 最后一行是最新数据
-    });
-    Object.values(latestInv).forEach(r => {
-        totalInventory += r.inventory_quantity;
-        totalValue += +r.inventory_value;
-    });
+function reportPercent(value) {
+    return value === null || value === undefined ? '-' : `${(Number(value) * 100).toFixed(2)}%`;
+}
 
-    stats.innerHTML = `
-        <div class="stat-card"><div class="value">${totalSold}</div><div class="label">总售卖件数</div></div>
-        <div class="stat-card"><div class="value">${totalInventory}</div><div class="label">当前总库存</div></div>
-        <div class="stat-card"><div class="value">¥${totalValue.toFixed(2)}</div><div class="label">总库存价值</div></div>
-        <div class="stat-card"><div class="value">${[...new Set(list.map(r => r.month))].length}</div><div class="label">月份数</div></div>
-    `;
+function openReportView(name, button) {
+    document.querySelectorAll('.report-pane').forEach(pane => pane.classList.remove('active'));
+    document.querySelectorAll('.reports-sidebar button').forEach(item => item.classList.remove('active'));
+    document.getElementById(`report-pane-${name}`).classList.add('active');
+    (button || document.querySelector(`[data-report-view="${name}"]`))?.classList.add('active');
+    if (name === 'inventory') loadInventoryImpairment();
+    if (name === 'profit-loss') loadStoreProfitLoss();
+    if (name === 'product-line') loadProductLineProfit();
+}
 
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">该时间段无数据</td></tr>'; return; }
-    tbody.innerHTML = list.map(r => `<tr>
-        <td>${r.month}</td>
-        <td><strong>${r.sku}</strong></td>
-        <td>${r.product_name}</td>
-        <td><span class="tag tag-blue">${r.sold_quantity}件</span></td>
-        <td><span class="tag ${r.inventory_quantity > 0 ? 'tag-green' : 'tag-red'}">${r.inventory_quantity}件</span></td>
-        <td>¥${Number(r.inventory_value).toFixed(2)}</td>
-    </tr>`).join('');
+async function loadInventoryImpairment() {
+    const tbody = document.getElementById('inventory-impairment-tbody');
+    const reportDate = document.getElementById('inventory-impairment-date').value;
+    tbody.innerHTML = '<tr><td colspan="15" class="empty">正在加载...</td></tr>';
+    try {
+        const rows = await api('GET', `/reports/inventory-impairment?report_date=${encodeURIComponent(reportDate)}`);
+        tbody.innerHTML = rows.length ? rows.map(row => `<tr>
+            <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td class="text-left">${escapeHtml(row.batch_no)}</td>
+            <td>${row.arrived_at}</td><td>${row.age_days}天</td><td>${reportMoney(row.unit_cost)}</td><td>${row.quantity}</td><td>${row.provision_quantity}</td><td>${reportMoney(row.inventory_amount)}</td>
+            <td>${reportPercent(row.impairment_rate)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.book_value)}</td><td>${reportMoney(row.book_value_difference)}</td><td class="text-left">${escapeHtml(row.status)}</td>
+        </tr>`).join('') : '<tr><td colspan="15" class="empty">当前截止日无库存记录</td></tr>';
+    } catch (e) { tbody.innerHTML = `<tr><td colspan="15" class="empty">${escapeHtml(e.message)}</td></tr>`; }
+}
+
+async function loadProductLineProfit() {
+    const tbody = document.getElementById('product-line-profit-tbody');
+    const month = defaultProfitLossMonth();
+    const params = new URLSearchParams({report_month: `${month}-01`, report_date: document.getElementById('inventory-impairment-date').value});
+    if (isAdmin()) {
+        const storeId = document.getElementById('profit-loss-store').value;
+        if (storeId) params.set('store_id', storeId);
+    }
+    tbody.innerHTML = '<tr><td colspan="12" class="empty">正在加载...</td></tr>';
+    try {
+        const rows = await api('GET', `/reports/product-line-profit?${params.toString()}`);
+        tbody.innerHTML = rows.length ? rows.map(row => `<tr>
+            <td class="text-left"><strong>${escapeHtml(row.name)}</strong></td><td>${row.sku_count}</td><td>${reportMoney(row.current_revenue)}</td><td>${reportMoney(row.current_cost)}</td><td>${reportMoney(row.current_gross)}</td>
+            <td>${reportPercent(row.current_margin)}</td><td>${reportPercent(row.previous_margin)}</td><td>${reportPercent(row.margin_change)}</td><td>${reportMoney(row.ytd_revenue)}</td><td>${reportMoney(row.ytd_gross)}</td><td>${reportPercent(row.ytd_margin)}</td><td class="text-left">${escapeHtml(row.note || '')}</td>
+        </tr>`).join('') : '<tr><td colspan="12" class="empty">当前月份无产品线数据</td></tr>';
+    } catch (e) { tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(e.message)}</td></tr>`; }
 }
 
 // 初始加载

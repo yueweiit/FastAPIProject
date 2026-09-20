@@ -1365,6 +1365,105 @@ async def _load_inventory_impairment_report_rows(
     ]
 
 
+@router.get("/inventory-impairment")
+async def inventory_impairment_report(
+    report_date: date = Query(..., description="报告截止日"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    if report_date > date.today():
+        raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
+    rows = await _load_inventory_impairment_report_rows(db, report_date)
+    result = []
+    for item in rows:
+        inventory_amount = item["unit_cost"] * item["quantity"]
+        book_value = inventory_amount - item["impairment_amount"]
+        previous_book_value = item["previous_book_value"]
+        rate = item["impairment_rate"]
+        status = (
+            "安全库存内" if item["provision_quantity"] == 0
+            else "达到上限" if rate >= Decimal("0.9")
+            else "接近上限" if rate >= Decimal("0.6")
+            else "正常计提"
+        )
+        result.append({
+            "store_name": item["store_name"],
+            "sku": item["sku"],
+            "product_name": item["product_name"],
+            "batch_no": item["batch_no"],
+            "arrived_at": item["arrived_at"],
+            "age_days": max(0, (report_date - item["arrived_at"]).days),
+            "unit_cost": item["unit_cost"],
+            "quantity": item["quantity"],
+            "provision_quantity": item["provision_quantity"],
+            "inventory_amount": inventory_amount,
+            "impairment_rate": rate,
+            "impairment_amount": item["impairment_amount"],
+            "book_value": book_value,
+            "book_value_difference": (
+                book_value - previous_book_value
+                if previous_book_value is not None else None
+            ),
+            "status": status,
+        })
+    return result
+
+
+@router.get("/product-line-profit")
+async def product_line_profit_report(
+    report_month: date = Query(..., description="核算月份第一天"),
+    report_date: date | None = Query(default=None, description="映射截止日"),
+    store_id: int | None = Query(default=None, ge=1),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    if report_month.day != 1:
+        raise HTTPException(status_code=400, detail="核算月份必须传入该月第一天")
+    report_date = report_date or _previous_month_end(_next_month_start(report_month))
+    if user.role == "admin" and store_id is None:
+        store_ids = set((await db.execute(
+            select(Store.id).where(Store.is_active.is_(True))
+        )).scalars().all())
+    else:
+        store = await _resolve_report_store(db, user, store_id)
+        store_ids = {store.id}
+    rows = await _product_line_profit_data(db, store_ids, report_month, report_date)
+    result = []
+    for item in rows:
+        current_gross = item["current"]["revenue"] - item["current"]["cost"]
+        previous_gross = item["previous"]["revenue"] - item["previous"]["cost"]
+        ytd_gross = item["ytd"]["revenue"] - item["ytd"]["cost"]
+        current_margin = (
+            current_gross / item["current"]["revenue"]
+            if item["current"]["revenue"] else None
+        )
+        previous_margin = (
+            previous_gross / item["previous"]["revenue"]
+            if item["previous"]["revenue"] else None
+        )
+        result.append({
+            "name": item["name"],
+            "sku_count": item["sku_count"],
+            "current_revenue": item["current"]["revenue"],
+            "current_cost": item["current"]["cost"],
+            "current_gross": current_gross,
+            "current_margin": current_margin,
+            "previous_margin": previous_margin,
+            "margin_change": (
+                current_margin - previous_margin
+                if current_margin is not None and previous_margin is not None else None
+            ),
+            "ytd_revenue": item["ytd"]["revenue"],
+            "ytd_gross": ytd_gross,
+            "ytd_margin": (
+                ytd_gross / item["ytd"]["revenue"]
+                if item["ytd"]["revenue"] else None
+            ),
+            "note": item["note"],
+        })
+    return result
+
+
 @router.get("/inventory-impairment/export")
 async def export_inventory_impairment_report(
     report_date: date = Query(..., description="报告截止日"),
