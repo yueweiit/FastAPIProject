@@ -11,6 +11,7 @@ from routers.sales import (
     _allocate_available_stock,
     _build_sale_response,
     _component_allocation_shares,
+    _group_pending_confirmations,
     _monthly_sales_summary,
     _other_expense_from_row,
     _read_import_file,
@@ -20,6 +21,30 @@ from routers.sales import (
 )
 from services.exchange_rates import _resolve_rate_payload
 from services.fifo import fifo_sell
+
+
+class PendingConfirmationExportTests(unittest.TestCase):
+    def test_groups_by_sku_id_and_reason(self):
+        entries = [
+            SimpleNamespace(platform_sku_id="SKU-1", mapping_error="商品未匹配", quantity=2,
+                            product_name="商品 A", sku_name="红色", source_file="a.xlsx",
+                            store=SimpleNamespace(name="店铺 A")),
+            SimpleNamespace(platform_sku_id="SKU-1", mapping_error="商品未匹配", quantity=3,
+                            product_name="商品 A", sku_name="红色", source_file="b.xlsx",
+                            store=SimpleNamespace(name="店铺 B")),
+            SimpleNamespace(platform_sku_id="SKU-1", mapping_error="库存不足", quantity=4,
+                            product_name="商品 A", sku_name="红色", source_file="a.xlsx",
+                            store=SimpleNamespace(name="店铺 A")),
+        ]
+
+        rows = _group_pending_confirmations(entries)
+
+        self.assertEqual(len(rows), 2)
+        unmatched = next(row for row in rows if row["mapping_error"] == "商品未匹配")
+        self.assertEqual(unmatched["quantity"], 5)
+        self.assertEqual(unmatched["record_count"], 2)
+        self.assertEqual(unmatched["store_names"], "店铺 A、店铺 B")
+        self.assertEqual(unmatched["source_files"], "a.xlsx、b.xlsx")
 
 
 class StandalonePriceTests(unittest.TestCase):

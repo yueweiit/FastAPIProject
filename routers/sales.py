@@ -8,7 +8,9 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from openpyxl import load_workbook
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1418,6 +1420,93 @@ async def list_pending_confirmations(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+def _group_pending_confirmations(entries):
+    grouped = {}
+    for entry in entries:
+        sku_id = (entry.platform_sku_id or "").strip()
+        reason = (entry.mapping_error or "待确认").strip()
+        key = (sku_id, reason)
+        item = grouped.setdefault(key, {
+            "platform_sku_id": sku_id,
+            "mapping_error": reason,
+            "quantity": 0,
+            "record_count": 0,
+            "product_names": set(),
+            "sku_names": set(),
+            "store_names": set(),
+            "source_files": set(),
+        })
+        item["quantity"] += entry.quantity or 0
+        item["record_count"] += 1
+        if entry.product_name:
+            item["product_names"].add(entry.product_name.strip())
+        if entry.sku_name:
+            item["sku_names"].add(entry.sku_name.strip())
+        if entry.store and entry.store.name:
+            item["store_names"].add(entry.store.name.strip())
+        if entry.source_file:
+            item["source_files"].add(entry.source_file.strip())
+
+    rows = []
+    for item in grouped.values():
+        rows.append({
+            **{key: value for key, value in item.items() if not isinstance(value, set)},
+            "product_names": "、".join(sorted(item["product_names"])),
+            "sku_names": "、".join(sorted(item["sku_names"])),
+            "store_names": "、".join(sorted(item["store_names"])),
+            "source_files": "、".join(sorted(item["source_files"])),
+        })
+    return sorted(rows, key=lambda row: (row["platform_sku_id"], row["mapping_error"]))
+
+
+@router.get("/pending-confirmations/export")
+async def export_pending_confirmations(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    """导出全部待确认记录，并按 SKU ID 和待确认原因合并。"""
+    result = await db.execute(
+        select(SettlementEntry).options(selectinload(SettlementEntry.store))
+        .where(SettlementEntry.mapping_status == "pending_confirmation")
+    )
+    rows = _group_pending_confirmations(result.scalars().all())
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "待确认汇总"
+    headers = ["SKU ID", "待确认原因", "合计数量", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件"]
+    sheet.append(headers)
+    for row in rows:
+        sheet.append([
+            row["platform_sku_id"], row["mapping_error"], row["quantity"], row["record_count"],
+            row["product_names"], row["sku_names"], row["store_names"], row["source_files"],
+        ])
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    for cell in sheet[1]:
+        cell.font = Font(color="FFFFFF", bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    widths = (20, 42, 12, 10, 32, 32, 24, 40)
+    for index, width in enumerate(widths, 1):
+        sheet.column_dimensions[chr(64 + index)].width = width
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"pending_confirmations_{date.today():%Y%m%d}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

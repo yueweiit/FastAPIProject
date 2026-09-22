@@ -515,7 +515,10 @@
         <div class="card" id="pending-confirmations-card">
             <div class="flex-between">
                 <h3>待确认区</h3>
-                <button class="btn btn-secondary" onclick="loadPendingConfirmations()">刷新</button>
+                <div style="display:flex;gap:8px">
+                    <button class="btn btn-primary" onclick="exportPendingConfirmations()">导出列表</button>
+                    <button class="btn btn-secondary" onclick="loadPendingConfirmations()">刷新</button>
+                </div>
             </div>
             <p id="pending-confirmations-summary" style="font-size:13px;color:#687386;margin:10px 0">正在加载待确认记录...</p>
             <div class="table-scroll">
@@ -1937,6 +1940,31 @@ let pendingConfirmationsPageSize = 20;
 let pendingConfirmationsTotal = 0;
 function goPendingConfirmationsPage(page) { pendingConfirmationsPage = page; loadPendingConfirmations(); }
 function changePendingConfirmationsPageSize(size) { pendingConfirmationsPageSize = Number(size); pendingConfirmationsPage = 1; loadPendingConfirmations(); }
+
+async function exportPendingConfirmations() {
+    try {
+        const res = await fetch('/sales/pending-confirmations/export', {
+            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+        });
+        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (!res.ok) {
+            const raw = await res.text();
+            let detail = raw;
+            try { detail = JSON.parse(raw).detail || raw; } catch {}
+            throw new Error(formatApiError(detail, '导出失败'));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `待确认列表_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        showMsg('待确认列表已导出');
+    } catch (e) { showMsg(e.message, false); }
+}
 
 async function exportInventoryImpairmentReport() {
     const reportDate = document.getElementById('inventory-impairment-date').value;
