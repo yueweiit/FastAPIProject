@@ -163,6 +163,8 @@
         .mapping-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
         .mapping-summary { white-space:normal; line-height:1.55; min-width:340px; }
         .mapping-summary div + div { margin-top:3px; }
+        .mapping-card-actions { display:flex; align-items:center; gap:8px; }
+        .mapping-collapse-toggle { width:38px; height:38px; padding:0 !important; font-size:18px !important; line-height:1; }
         .profit-loss-controls { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
         .profit-loss-controls .form-row { margin:0; }
         .profit-loss-table { border-radius:8px; }
@@ -283,31 +285,36 @@
         <div id="platform-sku-mappings-card" class="card" style="display:none">
             <div class="flex-between">
                 <h3>平台 SKU ID 映射</h3>
-                <button class="btn btn-secondary" onclick="resetPlatformSkuMappingForm()">新增映射</button>
-            </div>
-            <div class="mapping-form">
-                <div class="mapping-form-title">
-                    <h4 id="platform-sku-mapping-form-title">新增平台 SKU ID 映射</h4>
-                    <label id="platform-sku-mapping-active-field" style="display:none;font-size:13px;color:#526074"><input id="platform-sku-mapping-active" type="checkbox" checked> 启用映射</label>
+                <div class="mapping-card-actions">
+                    <button id="platform-sku-mappings-toggle" class="btn btn-secondary mapping-collapse-toggle" type="button" onclick="togglePlatformSkuMappings()" aria-expanded="true" aria-controls="platform-sku-mappings-content" title="收起平台 SKU ID 映射"><span aria-hidden="true">▴</span></button>
+                    <button class="btn btn-secondary" onclick="resetPlatformSkuMappingForm()">新增映射</button>
                 </div>
-                <div class="mapping-entry-grid">
-                    <div class="form-group">
-                        <label>平台 SKU ID</label>
-                        <textarea id="platform-sku-mapping-ids" maxlength="13000" placeholder="可输入多个 SKU ID，以换行、逗号或分号分隔"></textarea>
+            </div>
+            <div id="platform-sku-mappings-content">
+                <div class="mapping-form">
+                    <div class="mapping-form-title">
+                        <h4 id="platform-sku-mapping-form-title">新增平台 SKU ID 映射</h4>
+                        <label id="platform-sku-mapping-active-field" style="display:none;font-size:13px;color:#526074"><input id="platform-sku-mapping-active" type="checkbox" checked> 启用映射</label>
+                    </div>
+                    <div class="mapping-entry-grid">
+                        <div class="form-group">
+                            <label>平台 SKU ID</label>
+                            <textarea id="platform-sku-mapping-ids" maxlength="13000" placeholder="可输入多个 SKU ID，以换行、逗号或分号分隔"></textarea>
+                        </div>
+                    </div>
+                    <div id="platform-sku-components" class="mapping-component-list"></div>
+                    <div class="mapping-actions">
+                        <button class="btn btn-secondary" onclick="addPlatformSkuComponent()">添加商品</button>
+                        <button class="btn btn-primary" onclick="savePlatformSkuMapping()">保存映射</button>
+                        <button id="platform-sku-mapping-cancel" class="btn btn-secondary" style="display:none" onclick="resetPlatformSkuMappingForm()">取消编辑</button>
                     </div>
                 </div>
-                <div id="platform-sku-components" class="mapping-component-list"></div>
-                <div class="mapping-actions">
-                    <button class="btn btn-secondary" onclick="addPlatformSkuComponent()">添加商品</button>
-                    <button class="btn btn-primary" onclick="savePlatformSkuMapping()">保存映射</button>
-                    <button id="platform-sku-mapping-cancel" class="btn btn-secondary" style="display:none" onclick="resetPlatformSkuMappingForm()">取消编辑</button>
+                <div class="table-scroll" style="margin-top:18px">
+                    <table>
+                        <thead><tr><th>平台 SKU ID</th><th>类型</th><th>商品组成</th><th>状态</th><th>操作</th></tr></thead>
+                        <tbody id="platform-sku-mappings-tbody"></tbody>
+                    </table>
                 </div>
-            </div>
-            <div class="table-scroll" style="margin-top:18px">
-                <table>
-                    <thead><tr><th>平台 SKU ID</th><th>类型</th><th>商品组成</th><th>状态</th><th>操作</th></tr></thead>
-                    <tbody id="platform-sku-mappings-tbody"></tbody>
-                </table>
             </div>
         </div>
         <div class="card">
@@ -898,7 +905,11 @@ function switchTab(name) {
     if (name === 'products') loadProducts();
     if (name === 'batches') loadBatches();
     if (name === 'gallery') loadGallery();
-    if (name === 'sales') { loadSkuOptions(); refreshSalesWorkspace(); }
+    if (name === 'sales') {
+        if (!salesMonth) setSalesMonthToCurrent();
+        loadSkuOptions();
+        refreshSalesWorkspace();
+    }
     if (name === 'reports') openReportView('inventory');
     if (name === 'users') loadUsers();
 }
@@ -1031,6 +1042,20 @@ function clearProductSearch() {
 let platformSkuMappings = [];
 let editingPlatformSkuMappingId = null;
 
+function setPlatformSkuMappingsCollapsed(collapsed) {
+    const content = document.getElementById('platform-sku-mappings-content');
+    const button = document.getElementById('platform-sku-mappings-toggle');
+    content.hidden = collapsed;
+    button.setAttribute('aria-expanded', String(!collapsed));
+    button.title = collapsed ? '展开平台 SKU ID 映射' : '收起平台 SKU ID 映射';
+    button.querySelector('span').textContent = collapsed ? '▾' : '▴';
+}
+
+function togglePlatformSkuMappings() {
+    const content = document.getElementById('platform-sku-mappings-content');
+    setPlatformSkuMappingsCollapsed(!content.hidden);
+}
+
 function platformSkuIdList(value) {
     return value.split(/[\n,;]+/).map(item => item.trim()).filter(Boolean);
 }
@@ -1062,6 +1087,7 @@ function removePlatformSkuComponent(button) {
 }
 
 function resetPlatformSkuMappingForm() {
+    setPlatformSkuMappingsCollapsed(false);
     editingPlatformSkuMappingId = null;
     document.getElementById('platform-sku-mapping-form-title').textContent = '新增平台 SKU ID 映射';
     document.getElementById('platform-sku-mapping-ids').value = '';
@@ -1101,6 +1127,7 @@ async function loadPlatformSkuMappings() {
 function editPlatformSkuMapping(mappingId) {
     const mapping = platformSkuMappings.find(item => item.id === mappingId);
     if (!mapping) return;
+    setPlatformSkuMappingsCollapsed(false);
     editingPlatformSkuMappingId = mappingId;
     document.getElementById('platform-sku-mapping-form-title').textContent = '编辑平台 SKU ID 映射';
     document.getElementById('platform-sku-mapping-ids').value = mapping.platform_sku_id;
@@ -1883,6 +1910,11 @@ let salesPageSize = 20;
 let salesTotal = 0;
 let salesMonth = '';
 let salesProductKeyword = '';
+function setSalesMonthToCurrent() {
+    const now = new Date();
+    salesMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    document.getElementById('sales-month').value = salesMonth;
+}
 function goSalesPage(page) { salesPage = page; loadSales(); }
 function changeSalesPageSize(size) { salesPageSize = Number(size); salesPage = 1; loadSales(); }
 function searchSales() {
