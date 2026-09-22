@@ -523,7 +523,7 @@
             <p id="pending-confirmations-summary" style="font-size:13px;color:#687386;margin:10px 0">正在加载待确认记录...</p>
             <div class="table-scroll">
             <table>
-                <thead><tr><th>店铺</th><th>导入文件</th><th>行号</th><th>订单 ID</th><th>SKU ID</th><th>商品名称</th><th>SKU 名称</th><th>数量</th><th>待确认原因</th></tr></thead>
+                <thead><tr><th>店铺</th><th>导入文件</th><th>行号</th><th>订单 ID</th><th>SKU ID</th><th>交易类型</th><th>商品名称</th><th>SKU 名称</th><th>数量</th><th>其他费用</th><th>待确认原因</th></tr></thead>
                 <tbody id="pending-confirmations-tbody"></tbody>
             </table>
             </div>
@@ -1785,8 +1785,8 @@ async function loadSales() {
             return `<tr>
                 <td class="${s.store_name ? '' : 'unlinked-store'}">${escapeHtml(s.store_name || '未关联店铺')}</td>
                 <td>${dateStr}</td>
-                <td><strong>${escapeHtml(p.sku || '-')}</strong></td>
-                <td>${escapeHtml(p.name || '-')}</td>
+                <td><strong>${escapeHtml(s.display_sku || p.sku || '-')}</strong></td>
+                <td>${escapeHtml(s.display_name || p.name || '-')}</td>
                 <td>${quantity.toLocaleString('zh-CN')}</td>
                 <td class="${fxReady ? '' : 'fx-missing'}" title="${escapeHtml(fxTitle)}">${money(sellingPriceCny)}</td>
                 <td title="${escapeHtml(details)}">¥${fifoUnitCost.toFixed(2)}</td>
@@ -1912,7 +1912,7 @@ async function loadPendingConfirmations() {
     const tbody = document.getElementById('pending-confirmations-tbody');
     summary.textContent = result.total ? `共 ${result.total} 条记录等待商品或库存确认` : '暂无待确认记录';
     if (!result.items.length) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无待确认记录</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" class="empty">暂无待确认记录</td></tr>';
         renderPagination('pending-confirmations-pagination', 1, 1, 0, pendingConfirmationsPageSize);
         return;
     }
@@ -1922,9 +1922,11 @@ async function loadPendingConfirmations() {
         <td>${item.source_row_number}</td>
         <td>${escapeHtml(item.order_id || '-')}</td>
         <td>${escapeHtml(item.platform_sku_id || '-')}</td>
+        <td>${escapeHtml(item.transaction_type || '-')}</td>
         <td>${escapeHtml(item.product_name || '-')}</td>
         <td>${escapeHtml(item.sku_name || '-')}</td>
         <td>${item.quantity}</td>
+        <td>${Number(item.other_expense || 0).toFixed(2)} ${escapeHtml(item.currency || '')}</td>
         <td>${escapeHtml(item.mapping_error || '待确认')}</td>
     </tr>`).join('');
     renderPagination(

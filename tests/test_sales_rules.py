@@ -12,6 +12,8 @@ from routers.sales import (
     _build_sale_response,
     _component_allocation_shares,
     _group_pending_confirmations,
+    _is_missing_sku_id,
+    _pending_confirmation_reason,
     _monthly_sales_summary,
     _other_expense_from_row,
     _read_import_file,
@@ -24,17 +26,37 @@ from services.fifo import fifo_sell
 
 
 class PendingConfirmationExportTests(unittest.TestCase):
+    def test_logistics_compensation_placeholder_is_missing_sku(self):
+        for value in (None, "", "/", "-", "N/A"):
+            self.assertTrue(_is_missing_sku_id(value))
+        self.assertFalse(_is_missing_sku_id("SKU-1"))
+
+    def test_existing_logistics_compensation_is_reclassified(self):
+        entry = SimpleNamespace(
+            transaction_type="物流赔付",
+            platform_sku_id="/",
+            mapping_error="未配置平台 SKU ID 映射: /",
+        )
+
+        self.assertEqual(
+            _pending_confirmation_reason(entry),
+            "物流赔付（无 SKU ID，金额计入其他费用）",
+        )
+
     def test_groups_by_sku_id_and_reason(self):
         entries = [
             SimpleNamespace(platform_sku_id="SKU-1", mapping_error="商品未匹配", quantity=2,
                             product_name="商品 A", sku_name="红色", source_file="a.xlsx",
-                            store=SimpleNamespace(name="店铺 A")),
+                            transaction_type="订单", currency="MXN", net_product_sales=Decimal("10"),
+                            settlement_total=Decimal("8"), store=SimpleNamespace(name="店铺 A")),
             SimpleNamespace(platform_sku_id="SKU-1", mapping_error="商品未匹配", quantity=3,
                             product_name="商品 A", sku_name="红色", source_file="b.xlsx",
-                            store=SimpleNamespace(name="店铺 B")),
+                            transaction_type="订单", currency="MXN", net_product_sales=Decimal("20"),
+                            settlement_total=Decimal("15"), store=SimpleNamespace(name="店铺 B")),
             SimpleNamespace(platform_sku_id="SKU-1", mapping_error="库存不足", quantity=4,
                             product_name="商品 A", sku_name="红色", source_file="a.xlsx",
-                            store=SimpleNamespace(name="店铺 A")),
+                            transaction_type="订单", currency="MXN", net_product_sales=Decimal("4"),
+                            settlement_total=Decimal("4"), store=SimpleNamespace(name="店铺 A")),
         ]
 
         rows = _group_pending_confirmations(entries)
@@ -43,6 +65,7 @@ class PendingConfirmationExportTests(unittest.TestCase):
         unmatched = next(row for row in rows if row["mapping_error"] == "商品未匹配")
         self.assertEqual(unmatched["quantity"], 5)
         self.assertEqual(unmatched["record_count"], 2)
+        self.assertEqual(unmatched["other_expense"], Decimal("7"))
         self.assertEqual(unmatched["store_names"], "店铺 A、店铺 B")
         self.assertEqual(unmatched["source_files"], "a.xlsx、b.xlsx")
 

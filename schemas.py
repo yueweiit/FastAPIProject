@@ -135,7 +135,7 @@ class SaleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    product_id: int
+    product_id: int | None = None
     user_id: int | None = None
     order_no: str
     quantity: int
@@ -155,6 +155,9 @@ class SaleResponse(BaseModel):
     sold_at: datetime
     created_at: datetime
     cost_details: list[CostDetailResponse] = []
+    record_type: str = "sale"
+    display_sku: str | None = None
+    display_name: str | None = None
 
 
 class SalePageResponse(BaseModel):
@@ -238,6 +241,9 @@ class PendingConfirmationResponse(BaseModel):
     product_name: str | None = None
     sku_name: str | None = None
     settlement_total: Decimal
+    transaction_type: str | None = None
+    currency: str | None = None
+    other_expense: Decimal
     imported_at: datetime
 
 

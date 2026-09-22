@@ -540,6 +540,16 @@ def _other_expense_from_row(net_product_sales: Decimal, settlement_total: Decima
     return net_product_sales - settlement_total
 
 
+def _is_missing_sku_id(value) -> bool:
+    return _text_value(value).lower() in {"", "/", "-", "--", "n/a", "null"}
+
+
+def _pending_confirmation_reason(entry) -> str:
+    if entry.transaction_type == "物流赔付" and _is_missing_sku_id(entry.platform_sku_id):
+        return "物流赔付（无 SKU ID，金额计入其他费用）"
+    return entry.mapping_error or "待确认"
+
+
 def _settlement_entry(
     row: dict,
     source_key: str,
@@ -768,9 +778,12 @@ async def import_sales_file(
             continue
 
         if source_kind == "order_detail":
-            components, mapping_error = _resolve_platform_sku_components(
-                row, platform_sku_mappings_by_sku
-            )
+            if transaction_type == "物流赔付" and _is_missing_sku_id(row.get("SKU ID")):
+                components, mapping_error = [], "物流赔付（无 SKU ID，金额计入其他费用）"
+            else:
+                components, mapping_error = _resolve_platform_sku_components(
+                    row, platform_sku_mappings_by_sku
+                )
         else:
             components, mapping_error = _resolve_product_components(
                 row, products, store_products, lookup_date
@@ -1403,7 +1416,7 @@ async def list_pending_confirmations(
             order_id=entry.order_id,
             platform_sku_id=entry.platform_sku_id,
             mapping_status=entry.mapping_status,
-            mapping_error=entry.mapping_error,
+            mapping_error=_pending_confirmation_reason(entry),
             store_name=entry.store.name if entry.store else None,
             settlement_date=entry.settlement_date,
             order_created_at=entry.order_created_at,
@@ -1411,6 +1424,12 @@ async def list_pending_confirmations(
             product_name=entry.product_name,
             sku_name=entry.sku_name,
             settlement_total=entry.settlement_total,
+            transaction_type=entry.transaction_type,
+            currency=entry.currency,
+            other_expense=_other_expense_from_row(
+                entry.net_product_sales or Decimal("0"),
+                entry.settlement_total or Decimal("0"),
+            ),
             imported_at=entry.imported_at,
         )
         for entry in result.scalars().all()
@@ -1427,7 +1446,7 @@ def _group_pending_confirmations(entries):
     grouped = {}
     for entry in entries:
         sku_id = (entry.platform_sku_id or "").strip()
-        reason = (entry.mapping_error or "待确认").strip()
+        reason = _pending_confirmation_reason(entry).strip()
         key = (sku_id, reason)
         item = grouped.setdefault(key, {
             "platform_sku_id": sku_id,
@@ -1438,6 +1457,9 @@ def _group_pending_confirmations(entries):
             "sku_names": set(),
             "store_names": set(),
             "source_files": set(),
+            "transaction_types": set(),
+            "currencies": set(),
+            "other_expense": Decimal("0"),
         })
         item["quantity"] += entry.quantity or 0
         item["record_count"] += 1
@@ -1449,6 +1471,14 @@ def _group_pending_confirmations(entries):
             item["store_names"].add(entry.store.name.strip())
         if entry.source_file:
             item["source_files"].add(entry.source_file.strip())
+        if entry.transaction_type:
+            item["transaction_types"].add(entry.transaction_type.strip())
+        if entry.currency:
+            item["currencies"].add(entry.currency.strip())
+        item["other_expense"] += _other_expense_from_row(
+            entry.net_product_sales or Decimal("0"),
+            entry.settlement_total or Decimal("0"),
+        )
 
     rows = []
     for item in grouped.values():
@@ -1458,6 +1488,8 @@ def _group_pending_confirmations(entries):
             "sku_names": "、".join(sorted(item["sku_names"])),
             "store_names": "、".join(sorted(item["store_names"])),
             "source_files": "、".join(sorted(item["source_files"])),
+            "transaction_types": "、".join(sorted(item["transaction_types"])),
+            "currencies": "、".join(sorted(item["currencies"])),
         })
     return sorted(rows, key=lambda row: (row["platform_sku_id"], row["mapping_error"]))
 
@@ -1477,12 +1509,13 @@ async def export_pending_confirmations(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "待确认汇总"
-    headers = ["SKU ID", "待确认原因", "合计数量", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件"]
+    headers = ["SKU ID", "待确认原因", "交易类型", "合计数量", "其他费用（原币）", "货币", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件"]
     sheet.append(headers)
     for row in rows:
         sheet.append([
-            row["platform_sku_id"], row["mapping_error"], row["quantity"], row["record_count"],
-            row["product_names"], row["sku_names"], row["store_names"], row["source_files"],
+            row["platform_sku_id"], row["mapping_error"], row["transaction_types"], row["quantity"],
+            row["other_expense"], row["currencies"], row["record_count"], row["product_names"],
+            row["sku_names"], row["store_names"], row["source_files"],
         ])
 
     header_fill = PatternFill("solid", fgColor="1F4E78")
@@ -1490,7 +1523,7 @@ async def export_pending_confirmations(
         cell.font = Font(color="FFFFFF", bold=True)
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    widths = (20, 42, 12, 10, 32, 32, 24, 40)
+    widths = (20, 42, 16, 12, 18, 10, 10, 32, 32, 24, 40)
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[chr(64 + index)].width = width
     for row in sheet.iter_rows(min_row=2):
@@ -1679,6 +1712,102 @@ async def list_sales(
             source_net_product_sales=import_context.get("source_net_product_sales"),
             source_other_expense=import_context.get("source_other_expense"),
         ))
+    if page is not None and product_id is None:
+        expense_conditions = [
+            SettlementEntry.transaction_type == "物流赔付",
+            func.lower(func.trim(SettlementEntry.platform_sku_id)).in_(["", "/", "-", "--", "n/a", "null"]),
+        ]
+        if month:
+            month_start = datetime.strptime(month, "%Y-%m")
+            next_month = datetime(
+                month_start.year + (1 if month_start.month == 12 else 0),
+                1 if month_start.month == 12 else month_start.month + 1,
+                1,
+            )
+            expense_conditions.extend((
+                func.coalesce(SettlementEntry.settlement_date, SettlementEntry.imported_at) >= month_start,
+                func.coalesce(SettlementEntry.settlement_date, SettlementEntry.imported_at) < next_month,
+            ))
+        if normalized_keyword:
+            expense_conditions.append(SettlementEntry.transaction_type.ilike(f"%{normalized_keyword}%"))
+        if user.role == "operator":
+            expense_conditions.append(SalesImportBatch.user_id == user.id)
+        expense_stmt = (
+            select(SettlementEntry)
+            .options(selectinload(SettlementEntry.store))
+            .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id)
+            .where(*expense_conditions)
+            .order_by(
+                func.coalesce(SettlementEntry.settlement_date, SettlementEntry.imported_at).desc(),
+                SettlementEntry.id.desc(),
+            )
+        )
+        expense_entries = list((await db.execute(expense_stmt)).scalars().all())
+        expense_responses = []
+        for entry in expense_entries:
+            currency = (entry.currency or "CNY").upper()
+            rate = entry.exchange_rate_to_cny
+            if currency == "CNY":
+                rate = rate or Decimal("1")
+            other_expense = _other_expense_from_row(
+                entry.net_product_sales or Decimal("0"),
+                entry.settlement_total or Decimal("0"),
+            )
+            expense_cny = other_expense * rate if rate is not None else None
+            occurred_at = entry.settlement_date or entry.imported_at
+            expense_responses.append(SaleResponse(
+                id=-entry.id,
+                product_id=None,
+                order_no=entry.order_id or f"物流赔付-{entry.id}",
+                quantity=0,
+                selling_price=Decimal("0"),
+                total_cost=Decimal("0"),
+                platform_fee=other_expense,
+                profit=-other_expense,
+                currency=currency,
+                exchange_rate_to_cny=rate,
+                exchange_rate_date=entry.exchange_rate_date,
+                exchange_rate_source=entry.exchange_rate_source,
+                selling_price_cny=Decimal("0") if rate is not None else None,
+                sales_revenue_cny=Decimal("0") if rate is not None else None,
+                platform_fee_cny=expense_cny,
+                profit_cny=-expense_cny if expense_cny is not None else None,
+                store_name=entry.store.name if entry.store else None,
+                sold_at=occurred_at,
+                created_at=entry.imported_at,
+                record_type="other_expense",
+                display_sku="-",
+                display_name="物流赔付",
+            ))
+        combined = sorted(
+            [*response, *expense_responses],
+            key=lambda item: (item.sold_at, item.id),
+            reverse=True,
+        )
+        total += len(expense_responses)
+        start = (page - 1) * page_size
+        # Sales were already paged. Requery all sales only when expense rows affect this view.
+        if expense_responses:
+            all_sales = await _filtered_sales(db, product_id, keyword, month, user)
+            all_context, all_stores = await _sale_import_context(db, all_sales)
+            combined_sales = [
+                _build_sale_response(
+                    sale, [],
+                    currency=all_context.get(sale.id, {}).get("currency", "CNY"),
+                    store_name=all_stores.get(sale.id),
+                    exchange_rate_to_cny=all_context.get(sale.id, {}).get("exchange_rate_to_cny", Decimal("1")),
+                    exchange_rate_date=all_context.get(sale.id, {}).get("exchange_rate_date"),
+                    exchange_rate_source=all_context.get(sale.id, {}).get("exchange_rate_source", "CNY"),
+                    source_net_product_sales=all_context.get(sale.id, {}).get("source_net_product_sales"),
+                    source_other_expense=all_context.get(sale.id, {}).get("source_other_expense"),
+                ) for sale in all_sales
+            ]
+            combined = sorted(
+                [*combined_sales, *expense_responses],
+                key=lambda item: (item.sold_at, item.id),
+                reverse=True,
+            )[start:start + page_size]
+        response = combined
     if page is None:
         return response
     return SalePageResponse(items=response, total=total, page=page, page_size=page_size)
