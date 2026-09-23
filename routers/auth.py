@@ -25,6 +25,12 @@ class UpdateUserStoreRequest(BaseModel):
     store_id: int | None = None
 
 
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "operator"
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     """用户登录"""
@@ -37,31 +43,35 @@ async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
     return LoginResponse(token=token, user_id=user.id, username=user.username, role=user.role)
 
 
-@router.post("/register", response_model=LoginResponse)
-async def register(
-    username: str,
-    password: str,
-    role: str = "operator",
+@router.post("/users", response_model=UserResponse)
+async def create_user(
+    data: CreateUserRequest,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAdmin),
 ):
-    """注册 - 默认运营身份，只能选 operator 或 viewer"""
-    if role not in ("operator", "viewer"):
-        raise HTTPException(status_code=400, detail="注册角色只能是operator或viewer")
+    """创建用户 - 仅管理员"""
+    if data.role not in ("admin", "operator", "viewer"):
+        raise HTTPException(status_code=400, detail="无效角色")
 
+    username = data.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="用户名不能为空")
     result = await db.execute(select(User).where(User.username == username))
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="用户名已存在")
 
-    if len(password) < 3:
+    if len(data.password) < 3:
         raise HTTPException(status_code=400, detail="密码至少3位")
 
-    user = User(username=username, password_hash=hash_password(password), role=role)
+    user = User(
+        username=username,
+        password_hash=hash_password(data.password),
+        role=data.role,
+    )
     db.add(user)
     await db.commit()
     await db.refresh(user)
-
-    token = create_token(user.id, user.role)
-    return LoginResponse(token=token, user_id=user.id, username=user.username, role=user.role)
+    return UserResponse.model_validate(user)
 
 
 @router.get("/users", response_model=list[UserResponse])

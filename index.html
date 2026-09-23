@@ -95,14 +95,18 @@
         .sales-filter-toolbar .form-group input[type="month"] { width:150px; }
         .sales-monthly-summary { margin:2px 0 16px; }
         .sales-monthly-summary-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; color:var(--muted); font-size:12px; font-weight:700; }
-        .sales-monthly-table { min-width:980px !important; }
-        .sales-monthly-table thead th { background:#eef4f8; color:#526074; }
+        .sales-monthly-scroll, .sales-ledger-scroll { overflow-x:auto; }
+        .table-scroll .sales-monthly-table { width:100%; min-width:980px !important; table-layout:fixed; }
+        .sales-monthly-table thead th { background:#eef4f8; color:#526074; text-align:center; }
         .sales-monthly-table th:nth-child(n+2), .sales-monthly-table td:nth-child(n+2) { text-align:right; }
-        .sales-total-summary { margin-bottom:16px; overflow-x:auto; border:1px solid #aac9dd; border-radius:8px; }
-        .sales-total-summary table { min-width:1390px; background:#cfe3f1; }
+        .sales-monthly-table td { text-align:center; }
+        .sales-monthly-table .empty, .sales-ledger-table .empty { padding:34px 20px !important; background:#fbfcfd; color:#8b97a8; }
+        .sales-total-summary { margin-bottom:12px; overflow-x:auto; border:1px solid #aac9dd; border-radius:8px; box-shadow:0 2px 6px rgba(15,59,93,.06); }
+        .sales-total-summary table { width:100%; min-width:1390px; table-layout:fixed; background:#d9eaf5; }
         .sales-total-summary td { font-weight:800; color:#152238; border-bottom:0; }
         .sales-total-summary td:first-child { text-align:left; }
-        .sales-ledger-table { min-width:1390px !important; }
+        .table-scroll .sales-ledger-table { width:100%; min-width:1390px !important; table-layout:fixed; }
+        .sales-ledger-scroll { box-shadow:0 2px 8px rgba(21,34,56,.04); }
         .sales-ledger-table .fx-missing { color:#a06108; font-weight:700; }
         .import-history-table { min-width:1120px !important; }
         .file-primary { max-width:320px; overflow:hidden; text-overflow:ellipsis; font-weight:700; }
@@ -209,24 +213,6 @@
         <input id="l-pass" type="password" placeholder="密码" autocomplete="current-password">
         <button class="btn btn-primary" onclick="doLogin()">登 录</button>
         <div id="l-err" style="color:#e94560;font-size:13px;text-align:center;margin-top:12px;display:none"></div>
-        <p style="text-align:center;margin-top:16px;font-size:13px;color:#888">
-            没有账号？<a href="#" onclick="showRegister()" style="color:#e94560">注册</a>
-        </p>
-    </div>
-    <div class="login-box" id="register-box" style="display:none">
-        <h2>注册账号</h2>
-        <input id="r-user" placeholder="用户名" autocomplete="username">
-        <input id="r-pass" type="password" placeholder="密码（至少3位）">
-        <div style="margin-bottom:12px;display:flex;align-items:center;gap:4px">
-            <span style="font-size:13px;color:#666;margin-right:12px">选择身份：</span>
-            <label style="font-size:13px;margin-right:14px;cursor:pointer;display:flex;align-items:center;gap:2px"><input type="radio" name="r-role" value="operator" checked style="vertical-align:middle"> 运营</label>
-            <label style="font-size:13px;cursor:pointer;display:flex;align-items:center;gap:2px"><input type="radio" name="r-role" value="viewer" style="vertical-align:middle"> 查看者</label>
-        </div>
-        <button class="btn btn-primary" onclick="doRegister()">注 册</button>
-        <div id="r-err" style="color:#e94560;font-size:13px;text-align:center;margin-top:12px;display:none"></div>
-        <p style="text-align:center;margin-top:16px;font-size:13px;color:#888">
-            已有账号？<a href="#" onclick="showLogin()" style="color:#e94560">登录</a>
-        </p>
     </div>
 </div>
 
@@ -489,7 +475,7 @@
             </div>
             <div class="sales-monthly-summary">
                 <div class="sales-monthly-summary-title"><span>月度统计</span><span id="sales-monthly-summary-note">金额均为人民币</span></div>
-                <div class="table-scroll">
+                <div class="table-scroll sales-monthly-scroll">
                     <table class="sales-monthly-table">
                         <thead><tr><th>月份</th><th>销售记录</th><th>销售数量</th><th>净商品收入（元）</th><th>销售成本（元）</th><th>其他费用（元）</th><th>毛利（元）</th></tr></thead>
                         <tbody id="sales-monthly-tbody"></tbody>
@@ -497,10 +483,14 @@
                 </div>
             </div>
             <div class="sales-total-summary">
-                <table><tbody id="sales-total-summary-body"></tbody></table>
+                <table>
+                    <colgroup><col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:17%"><col style="width:7%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:7%"></colgroup>
+                    <tbody id="sales-total-summary-body"></tbody>
+                </table>
             </div>
-            <div class="table-scroll">
+            <div class="table-scroll sales-ledger-scroll">
             <table class="sales-ledger-table">
+                <colgroup><col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:17%"><col style="width:7%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:7%"></colgroup>
                 <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>净商品收入（元）</th><th>销售成本（元）</th><th>其他费用（元）</th><th>毛利（元）</th></tr></thead>
                 <tbody id="sales-tbody"></tbody>
             </table>
@@ -743,7 +733,7 @@ async function adminCreateUser() {
     const password = document.getElementById('u-pass').value;
     const role = document.getElementById('u-role').value;
     try {
-        await api('POST', `/auth/register?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&role=${role}`);
+        await api('POST', '/auth/users', {username, password, role});
         showMsg(`用户 ${username} 创建成功`);
         document.getElementById('u-name').value = '';
         document.getElementById('u-pass').value = '';
@@ -843,42 +833,8 @@ async function deleteUser(id) {
     } catch (e) { showMsg(e.message, false); }
 }
 
-// 登录/注册切换
 function showLogin() {
-    document.getElementById('register-box').style.display = 'none';
     document.getElementById('login-box').style.display = '';
-}
-function showRegister() {
-    document.getElementById('login-box').style.display = 'none';
-    document.getElementById('register-box').style.display = '';
-}
-
-async function doRegister() {
-    const username = document.getElementById('r-user').value;
-    const password = document.getElementById('r-pass').value;
-    const role = document.querySelector('input[name="r-role"]:checked').value;
-    const errEl = document.getElementById('r-err');
-    try {
-        const params = new URLSearchParams({username, password, role});
-        const res = await fetch(`/auth/register?${params}`, {method: 'POST'});
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail);
-        // 注册成功后自动登录
-        AUTH_TOKEN = data.token;
-        CURRENT_ROLE = data.role;
-        CURRENT_USER = data.username;
-        CURRENT_USER_ID = data.user_id;
-        localStorage.setItem('latingo_token', AUTH_TOKEN);
-        localStorage.setItem('latingo_role', CURRENT_ROLE);
-        localStorage.setItem('latingo_user', CURRENT_USER);
-        localStorage.setItem('latingo_user_id', String(CURRENT_USER_ID));
-        document.getElementById('login-overlay').style.display = 'none';
-        updateUserBar();
-        loadProducts();
-    } catch (e) {
-        errEl.textContent = e.message;
-        errEl.style.display = 'block';
-    }
 }
 
 // 初始检查登录状态
