@@ -18,8 +18,6 @@ from routers.sales import (
     _other_expense_from_row,
     _read_import_file,
     _resolve_platform_sku_components,
-    _select_standalone_price,
-    _standalone_price_from_row,
 )
 from services.exchange_rates import _resolve_rate_payload
 from services.fifo import fifo_sell
@@ -30,18 +28,6 @@ class PendingConfirmationExportTests(unittest.TestCase):
         for value in (None, "", "/", "-", "N/A"):
             self.assertTrue(_is_missing_sku_id(value))
         self.assertFalse(_is_missing_sku_id("SKU-1"))
-
-    def test_existing_logistics_compensation_is_reclassified(self):
-        entry = SimpleNamespace(
-            transaction_type="物流赔付",
-            platform_sku_id="/",
-            mapping_error="未配置平台 SKU ID 映射: /",
-        )
-
-        self.assertEqual(
-            _pending_confirmation_reason(entry),
-            "物流赔付（无 SKU ID，金额计入其他费用）",
-        )
 
     def test_groups_by_sku_id_and_reason(self):
         entries = [
@@ -70,42 +56,11 @@ class PendingConfirmationExportTests(unittest.TestCase):
         self.assertEqual(unmatched["source_files"], "a.xlsx、b.xlsx")
 
 
-class StandalonePriceTests(unittest.TestCase):
-    def test_original_price_is_preferred_and_converted_to_unit_price(self):
-        row = {"商品原价小计": "180", "净商品销售额": "150"}
-
-        self.assertEqual(_standalone_price_from_row(row, 2), Decimal("90"))
-
-    def test_net_sales_is_used_when_original_price_is_missing(self):
-        row = {"商品原价小计": "0", "净商品销售额": "150"}
-
-        self.assertEqual(_standalone_price_from_row(row, 2), Decimal("75"))
-
-    def test_nearest_price_prefers_past_date_when_distance_is_tied(self):
-        observations = [
-            {"price": Decimal("80"), "sold_at": datetime(2026, 8, 9), "row_number": 2},
-            {"price": Decimal("90"), "sold_at": datetime(2026, 8, 11), "row_number": 3},
-        ]
-
-        selected = _select_standalone_price(observations, datetime(2026, 8, 10))
-
-        self.assertEqual(selected, Decimal("80"))
-
-    def test_most_common_price_is_used_for_same_nearest_date(self):
-        observations = [
-            {"price": Decimal("85"), "sold_at": datetime(2026, 8, 10), "row_number": 2},
-            {"price": Decimal("95"), "sold_at": datetime(2026, 8, 10), "row_number": 3},
-            {"price": Decimal("95"), "sold_at": datetime(2026, 8, 10), "row_number": 4},
-        ]
-
-        selected = _select_standalone_price(observations, datetime(2026, 8, 10))
-
-        self.assertEqual(selected, Decimal("95"))
-
-    def test_bundle_shares_use_standalone_price_and_multiplier(self):
+class BundleAllocationTests(unittest.TestCase):
+    def test_bundle_shares_use_fifo_cost_and_multiplier(self):
         components = [
-            {"multiplier": 3, "price_allocation_weight": Decimal("300")},
-            {"multiplier": 1, "price_allocation_weight": Decimal("50")},
+            {"multiplier": 3, "cost_allocation_weight": Decimal("300")},
+            {"multiplier": 1, "cost_allocation_weight": Decimal("50")},
         ]
 
         shares = _component_allocation_shares(components, item_quantity=2)
@@ -196,6 +151,15 @@ class ExchangeRateTests(unittest.TestCase):
             _other_expense_from_row(Decimal("144"), Decimal("98.82")),
             Decimal("45.18"),
         )
+
+    def test_compensation_is_a_positive_expense_deduction(self):
+        for transaction_type in ("物流赔付", "平台赔付"):
+            self.assertEqual(
+                _other_expense_from_row(
+                    Decimal("0"), Decimal("159.98"), transaction_type
+                ),
+                Decimal("159.98"),
+            )
 
     def test_weekend_uses_latest_available_business_day(self):
         payload = {

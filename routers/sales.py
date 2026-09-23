@@ -417,64 +417,14 @@ def _resolve_product_components(
     return components, None
 
 
-def _standalone_price_from_row(row: dict, quantity: int) -> Decimal | None:
-    """Return a positive per-unit standalone price from an order-detail row."""
-    if quantity <= 0:
-        return None
-    for field_name in ("商品原价小计", "净商品销售额"):
-        try:
-            amount = _decimal_value(row.get(field_name))
-        except ValueError:
-            continue
-        if amount > 0:
-            return amount / Decimal(quantity)
-    return None
-
-
-def _select_standalone_price(
-    observations: list[dict],
-    sold_at: datetime | None,
-) -> Decimal | None:
-    """Pick the most representative observation nearest to the bundle sale date."""
-    if not observations:
-        return None
-    candidates = observations
-    if sold_at is not None:
-        target_date = sold_at.date()
-        dated = [item for item in observations if item["sold_at"] is not None]
-        if dated:
-            best_date_rank = min(
-                (
-                    abs((item["sold_at"].date() - target_date).days),
-                    0 if item["sold_at"].date() <= target_date else 1,
-                )
-                for item in dated
-            )
-            candidates = [
-                item
-                for item in dated
-                if (
-                    abs((item["sold_at"].date() - target_date).days),
-                    0 if item["sold_at"].date() <= target_date else 1,
-                ) == best_date_rank
-            ]
-
-    price_counts = Counter(item["price"] for item in candidates)
-    selected = min(
-        candidates,
-        key=lambda item: (-price_counts[item["price"]], item["row_number"]),
-    )
-    return selected["price"]
-
-
 def _component_allocation_shares(components: list[dict], item_quantity: int) -> list[Decimal]:
-    total_price_weight = sum(
-        (component.get("price_allocation_weight", Decimal("0")) for component in components),
+    total_cost_weight = sum(
+        (component.get("cost_allocation_weight", Decimal("0")) for component in components),
         Decimal("0"),
     )
-    if total_price_weight > 0:
+    if total_cost_weight > 0:
         return [
-            component["price_allocation_weight"] / total_price_weight
+            component["cost_allocation_weight"] / total_cost_weight
             for component in components
         ]
 
@@ -535,9 +485,19 @@ def _source_key(row: dict, source_kind: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _other_expense_from_row(net_product_sales: Decimal, settlement_total: Decimal) -> Decimal:
+COMPENSATION_TRANSACTION_TYPES = {"物流赔付", "平台赔付"}
+
+
+def _other_expense_from_row(
+    net_product_sales: Decimal,
+    settlement_total: Decimal,
+    transaction_type: str | None = None,
+) -> Decimal:
     """Return the settlement difference shown as other expense."""
-    return net_product_sales - settlement_total
+    expense = net_product_sales - settlement_total
+    if transaction_type in COMPENSATION_TRANSACTION_TYPES:
+        return abs(expense)
+    return expense
 
 
 def _is_missing_sku_id(value) -> bool:
@@ -545,8 +505,6 @@ def _is_missing_sku_id(value) -> bool:
 
 
 def _pending_confirmation_reason(entry) -> str:
-    if entry.transaction_type == "物流赔付" and _is_missing_sku_id(entry.platform_sku_id):
-        return "物流赔付（无 SKU ID，金额计入其他费用）"
     return entry.mapping_error or "待确认"
 
 
@@ -771,25 +729,33 @@ async def import_sales_file(
             order_id = _text_value(row.get("订单ID/调整单ID"))
             sku_id = _text_value(row.get("SKU ID"))
             order_no = _order_no(order_id, sku_id)
-            other_expense = _other_expense_from_row(net_product_sales, settlement_total)
+            other_expense = _other_expense_from_row(
+                net_product_sales, settlement_total, transaction_type
+            )
 
         if is_inventory_sale and quantity <= 0:
             errors.append(SalesImportError(row=row_number, message="销售数量必须大于 0", identifier=identifier))
             continue
 
         if source_kind == "order_detail":
-            if transaction_type == "物流赔付" and _is_missing_sku_id(row.get("SKU ID")):
-                components, mapping_error = [], "物流赔付（无 SKU ID，金额计入其他费用）"
+            is_compensation = (
+                transaction_type in COMPENSATION_TRANSACTION_TYPES
+                and _is_missing_sku_id(row.get("SKU ID"))
+            )
+            if is_compensation:
+                components, mapping_error = [], None
+                is_inventory_sale = False
             else:
                 components, mapping_error = _resolve_platform_sku_components(
                     row, platform_sku_mappings_by_sku
                 )
         else:
+            is_compensation = False
             components, mapping_error = _resolve_product_components(
                 row, products, store_products, lookup_date
             )
         pending_mapping_error = None
-        if not components:
+        if not components and not is_compensation:
             pending_mapping_error = mapping_error or "商品映射失败"
             is_inventory_sale = False
 
@@ -829,45 +795,6 @@ async def import_sales_file(
             item["exchange_rate"] = exchange_rates.get(
                 (item["currency"], item["sold_at"].date())
             )
-
-    if source_kind == "order_detail":
-        standalone_observations: dict[tuple[int, str], list[dict]] = {}
-        for item in candidates:
-            if not item["is_inventory_sale"] or len(item["components"]) != 1:
-                continue
-            component = item["components"][0]
-            if component["multiplier"] != 1:
-                continue
-            price = _standalone_price_from_row(item["row"], item["quantity"])
-            if price is None:
-                continue
-            currency = _lookup_key(item["row"].get("货币"))
-            key = (component["product"].id, currency)
-            standalone_observations.setdefault(key, []).append({
-                "price": price,
-                "sold_at": item["sold_at"],
-                "row_number": int(item["row"]["_row_number"]),
-            })
-
-        for item in candidates:
-            if not item["is_inventory_sale"] or len(item["components"]) <= 1:
-                continue
-            currency = _lookup_key(item["row"].get("货币"))
-            missing_price_names = []
-            for component in item["components"]:
-                price = _select_standalone_price(
-                    standalone_observations.get((component["product"].id, currency), []),
-                    item["sold_at"],
-                )
-                if price is None:
-                    missing_price_names.append(component["component_name"])
-                    continue
-                component["price_allocation_weight"] = price * component["multiplier"]
-            if missing_price_names:
-                item["is_inventory_sale"] = False
-                item["mapping_error"] = (
-                    "组合商品缺少单独售价：" + "、".join(missing_price_names)
-                )
 
     candidate_order_nos = [item["order_no"] for item in candidates if item["is_inventory_sale"]]
     existing_order_nos = set(
@@ -921,20 +848,25 @@ async def import_sales_file(
         for item in candidates:
             sales_by_product = {}
             if item["is_inventory_sale"]:
-                component_shares = _component_allocation_shares(
-                    item["components"], item["quantity"]
+                component_sales = []
+                total_component_quantity = sum(
+                    item["quantity"] * component["multiplier"]
+                    for component in item["components"]
                 )
-                for component, component_share in zip(item["components"], component_shares):
+                initial_share = (
+                    item["net_product_sales"] / Decimal(total_component_quantity)
+                    if total_component_quantity > 0 else Decimal("0")
+                )
+                for component in item["components"]:
                     component_quantity = item["quantity"] * component["multiplier"]
-                    component_sales = item["net_product_sales"] * component_share
-                    component_other_expense = item["other_expense"] * component_share
+                    component_other_expense = item["other_expense"] * Decimal(component_quantity) / Decimal(total_component_quantity)
                     try:
                         sale, _ = await fifo_sell(
                             db=db,
                             product_id=component["product"].id,
                             order_no=item["order_no"],
                             quantity=component_quantity,
-                            selling_price=component_sales / component_quantity,
+                            selling_price=initial_share,
                             platform_fee=component_other_expense,
                             sold_at=item["sold_at"],
                             user_id=user.id,
@@ -944,7 +876,21 @@ async def import_sales_file(
                     except InsufficientStockError as exc:
                         raise HTTPException(status_code=400, detail=str(exc))
                     sales_by_product[component["product"].id] = sale
+                    component_sales.append((component, sale, component_quantity))
                     sales_created += 1
+                total_cost = sum((sale.total_cost for _, sale, *_ in component_sales), Decimal("0"))
+                if total_cost > 0:
+                    for component, sale, _ in component_sales:
+                        component["cost_allocation_weight"] = sale.total_cost
+                    component_shares = _component_allocation_shares(
+                        item["components"], item["quantity"]
+                    )
+                    for (_, sale, component_quantity), component_share in zip(component_sales, component_shares):
+                        allocated_sales = item["net_product_sales"] * component_share
+                        allocated_other_expense = item["other_expense"] * component_share
+                        sale.selling_price = allocated_sales / Decimal(component_quantity)
+                        sale.platform_fee = allocated_other_expense
+                        sale.profit = allocated_sales - sale.total_cost - allocated_other_expense
 
             settlement_product_id = None
             settlement_sale_id = None
@@ -1251,6 +1197,7 @@ async def _sale_import_context(
                 SettlementEntry.exchange_rate_source,
                 SettlementEntry.settlement_total,
                 SettlementEntry.net_product_sales,
+                SettlementEntry.transaction_type,
             )
             .join(
                 SettlementEntry,
@@ -1301,7 +1248,9 @@ async def _sale_import_context(
 
         net_product_sales = first.net_product_sales or Decimal("0")
         settlement_total = first.settlement_total or Decimal("0")
-        other_expense = _other_expense_from_row(net_product_sales, settlement_total)
+        other_expense = _other_expense_from_row(
+            net_product_sales, settlement_total, first.transaction_type
+        )
         for sale_id, share in shares.items():
             amount = net_product_sales * share
             expense = other_expense * share
@@ -1395,14 +1344,17 @@ async def list_pending_confirmations(
     user: User = Depends(RequireAnyRole),
 ):
     """列出订单详情导入中尚未匹配本地商品的结算行。"""
-    base_filter = SettlementEntry.mapping_status == "pending_confirmation"
+    base_filter = (
+        SettlementEntry.mapping_status == "pending_confirmation",
+        SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
+    )
     total = (await db.execute(
-        select(func.count()).select_from(SettlementEntry).where(base_filter)
+        select(func.count()).select_from(SettlementEntry).where(*base_filter)
     )).scalar_one()
     page = min(page, max(1, (total + page_size - 1) // page_size))
     result = await db.execute(
         select(SettlementEntry).options(selectinload(SettlementEntry.store))
-        .where(base_filter)
+        .where(*base_filter)
         .order_by(SettlementEntry.imported_at.desc(), SettlementEntry.id.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -1429,6 +1381,7 @@ async def list_pending_confirmations(
             other_expense=_other_expense_from_row(
                 entry.net_product_sales or Decimal("0"),
                 entry.settlement_total or Decimal("0"),
+                entry.transaction_type,
             ),
             imported_at=entry.imported_at,
         )
@@ -1478,6 +1431,7 @@ def _group_pending_confirmations(entries):
         item["other_expense"] += _other_expense_from_row(
             entry.net_product_sales or Decimal("0"),
             entry.settlement_total or Decimal("0"),
+            entry.transaction_type,
         )
 
     rows = []
@@ -1502,7 +1456,10 @@ async def export_pending_confirmations(
     """导出全部待确认记录，并按 SKU ID 和待确认原因合并。"""
     result = await db.execute(
         select(SettlementEntry).options(selectinload(SettlementEntry.store))
-        .where(SettlementEntry.mapping_status == "pending_confirmation")
+        .where(
+            SettlementEntry.mapping_status == "pending_confirmation",
+            SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
+        )
     )
     rows = _group_pending_confirmations(result.scalars().all())
 
@@ -1529,6 +1486,7 @@ async def export_pending_confirmations(
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
+        row[4].number_format = "0.00"
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
 
@@ -1714,7 +1672,7 @@ async def list_sales(
         ))
     if page is not None and product_id is None:
         expense_conditions = [
-            SettlementEntry.transaction_type == "物流赔付",
+            SettlementEntry.transaction_type.in_(COMPENSATION_TRANSACTION_TYPES),
             func.lower(func.trim(SettlementEntry.platform_sku_id)).in_(["", "/", "-", "--", "n/a", "null"]),
         ]
         if month:
@@ -1752,13 +1710,14 @@ async def list_sales(
             other_expense = _other_expense_from_row(
                 entry.net_product_sales or Decimal("0"),
                 entry.settlement_total or Decimal("0"),
+                entry.transaction_type,
             )
             expense_cny = other_expense * rate if rate is not None else None
             occurred_at = entry.settlement_date or entry.imported_at
             expense_responses.append(SaleResponse(
                 id=-entry.id,
                 product_id=None,
-                order_no=entry.order_id or f"物流赔付-{entry.id}",
+                order_no=entry.order_id or f"{entry.transaction_type}-{entry.id}",
                 quantity=0,
                 selling_price=Decimal("0"),
                 total_cost=Decimal("0"),
@@ -1777,7 +1736,7 @@ async def list_sales(
                 created_at=entry.imported_at,
                 record_type="other_expense",
                 display_sku="-",
-                display_name="物流赔付",
+                display_name=entry.transaction_type or "赔付",
             ))
         combined = sorted(
             [*response, *expense_responses],
