@@ -81,8 +81,10 @@
         .sales-entry-card { padding:20px 22px; }
         .sales-entry-card .flex-between { align-items:flex-start; }
         .sales-entry-card h3 { margin-bottom:4px; font-size:16px; }
-        .sales-entry-grid { display:grid; grid-template-columns:minmax(220px,1.4fr) minmax(170px,.8fr) minmax(150px,.7fr) auto; gap:12px; align-items:end; width:min(820px,100%); }
+        .sales-entry-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:12px; align-items:end; width:100%; }
         .sales-entry-grid .form-group input, .sales-entry-grid .form-group select { width:100%; }
+        .sales-entry-summary { display:flex; align-items:center; justify-content:space-between; min-height:40px; padding:9px 12px; border:1px solid #dbe3ec; border-radius:7px; background:#f7f9fb; color:var(--muted); font-size:12px; }
+        .sales-entry-summary strong { color:var(--ink); font-size:14px; }
         .sales-kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; margin:2px 0 16px; }
         .sales-kpi { border-left:3px solid #d7dee8; padding:10px 14px; background:#f7f9fb; }
         .sales-kpi:nth-child(2) { border-left-color:var(--teal); }
@@ -272,11 +274,11 @@
             <div class="flex-between">
                 <h3>平台 SKU ID 映射</h3>
                 <div class="mapping-card-actions">
-                    <button id="platform-sku-mappings-toggle" class="btn btn-secondary mapping-collapse-toggle" type="button" onclick="togglePlatformSkuMappings()" aria-expanded="true" aria-controls="platform-sku-mappings-content" title="收起平台 SKU ID 映射"><span aria-hidden="true">▴</span></button>
-                    <button class="btn btn-secondary" onclick="resetPlatformSkuMappingForm()">新增映射</button>
+                    <button id="platform-sku-mappings-toggle" class="btn btn-secondary mapping-collapse-toggle" type="button" onclick="togglePlatformSkuMappings()" aria-expanded="false" aria-controls="platform-sku-mappings-content" title="展开平台 SKU ID 映射"><span aria-hidden="true">▾</span></button>
+                    <button class="btn btn-secondary" onclick="setPlatformSkuMappingsCollapsed(false); resetPlatformSkuMappingForm()">新增映射</button>
                 </div>
             </div>
-            <div id="platform-sku-mappings-content">
+            <div id="platform-sku-mappings-content" hidden>
                 <div class="mapping-form">
                     <div class="mapping-form-title">
                         <h4 id="platform-sku-mapping-form-title">新增平台 SKU ID 映射</h4>
@@ -456,10 +458,15 @@
             </div>
             <div class="sales-entry-grid">
                 <div class="form-group"><label>产品SKU</label>
-                    <select id="s-sku"><option value="">选择产品</option></select>
+                    <select id="s-sku" onchange="refreshManualSaleOrderNo()"><option value="">选择产品</option></select>
                 </div>
-                <div class="form-group"><label>日期</label><input id="s-date" type="date"></div>
-                <div class="form-group"><label>数量</label><input id="s-qty" type="number" placeholder="10"></div>
+                <div class="form-group"><label>店铺</label><select id="s-store"><option value="">选择店铺</option></select></div>
+                <div class="form-group"><label>日期</label><input id="s-date" type="date" onchange="refreshManualSaleOrderNo()"></div>
+                <div class="form-group"><label>数量</label><input id="s-qty" type="number" min="1" step="1" placeholder="10" oninput="updateManualSaleSummary()"></div>
+                <div class="form-group"><label>销售单价（元）</label><input id="s-price" type="number" min="0" step="0.01" placeholder="0.00" oninput="updateManualSaleSummary()"></div>
+                <div class="form-group"><label>其他费用（元）</label><input id="s-fee" type="number" min="0" step="0.01" value="0.00" oninput="updateManualSaleSummary()"></div>
+                <div class="form-group"><label>订单号</label><input id="s-order-no" maxlength="64" placeholder="自动生成或手工填写" oninput="this.dataset.auto='false'"></div>
+                <div class="sales-entry-summary"><span>预计净收入</span><strong id="s-estimated-revenue">¥0.00</strong></div>
                 <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createSale()">录入</button></div>
             </div>
         </div>
@@ -689,7 +696,13 @@ function doLogout() {
     localStorage.clear();
     AUTH_TOKEN = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
     document.getElementById('login-overlay').style.display = 'flex';
+    showLogin();
+    document.getElementById('user-bar').style.display = 'none';
     document.getElementById('curr-user').textContent = '未登录';
+    document.getElementById('curr-role').textContent = '';
+    document.getElementById('nav-users').style.display = 'none';
+    document.getElementById('l-pass').value = '';
+    document.getElementById('l-err').style.display = 'none';
 }
 
 function updateUserBar() {
@@ -1043,7 +1056,6 @@ function removePlatformSkuComponent(button) {
 }
 
 function resetPlatformSkuMappingForm() {
-    setPlatformSkuMappingsCollapsed(false);
     editingPlatformSkuMappingId = null;
     document.getElementById('platform-sku-mapping-form-title').textContent = '新增平台 SKU ID 映射';
     document.getElementById('platform-sku-mapping-ids').value = '';
@@ -1647,6 +1659,32 @@ async function loadSkuOptions() {
     await loadProductOptions();
     const sel = document.getElementById('s-sku');
     sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.sku}">${p.sku} - ${p.name}</option>`).join('');
+    await loadManualSaleStores();
+}
+
+async function loadManualSaleStores() {
+    const [stores, me] = await Promise.all([api('GET', '/finance-masters/stores?active_only=true'), api('GET', '/auth/me')]);
+    const select = document.getElementById('s-store');
+    const allowed = isAdmin() ? stores : stores.filter(store => Number(store.id) === Number(me.store_id));
+    select.innerHTML = '<option value="">选择店铺</option>' + allowed.map(store => `<option value="${store.id}">${escapeHtml(store.name)}</option>`).join('');
+    if (!isAdmin() && me.store_id && allowed.length) select.value = String(me.store_id);
+}
+
+function refreshManualSaleOrderNo() {
+    const sku = document.getElementById('s-sku').value;
+    const date = document.getElementById('s-date').value;
+    const input = document.getElementById('s-order-no');
+    if (sku && date && (!input.value || input.dataset.auto === 'true')) {
+        input.value = `MANUAL-${date.replaceAll('-', '')}-${sku}-${Date.now().toString().slice(-6)}`;
+        input.dataset.auto = 'true';
+    }
+}
+
+function updateManualSaleSummary() {
+    const quantity = Number(document.getElementById('s-qty').value) || 0;
+    const price = Number(document.getElementById('s-price').value) || 0;
+    const fee = Number(document.getElementById('s-fee').value) || 0;
+    document.getElementById('s-estimated-revenue').textContent = `¥${Math.max(0, quantity * price - fee).toFixed(2)}`;
 }
 
 function getProductIdBySku(sku) {
@@ -1658,20 +1696,34 @@ async function createSale() {
     try {
         const sku = document.getElementById('s-sku').value;
         const dateStr = document.getElementById('s-date').value;
+        const storeId = Number(document.getElementById('s-store').value);
+        const quantity = Number(document.getElementById('s-qty').value);
+        const sellingPrice = Number(document.getElementById('s-price').value);
+        const platformFee = Number(document.getElementById('s-fee').value || 0);
+        const orderNo = document.getElementById('s-order-no').value.trim();
         const pid = getProductIdBySku(sku);
         if (!sku || !pid) { showMsg('请选择产品', false); return; }
+        if (!storeId) { showMsg('请选择店铺', false); return; }
         if (!dateStr) { showMsg('请选择日期', false); return; }
-        const order_no = `${dateStr}-${sku}`;
+        if (!Number.isInteger(quantity) || quantity <= 0) { showMsg('销售数量必须是大于 0 的整数', false); return; }
+        if (!Number.isFinite(sellingPrice) || sellingPrice < 0) { showMsg('请输入正确的销售单价', false); return; }
+        if (!Number.isFinite(platformFee) || platformFee < 0) { showMsg('请输入正确的其他费用', false); return; }
+        if (!orderNo) { showMsg('请填写订单号', false); return; }
         const s = await api('POST', '/sales', {
             product_id: pid,
-            order_no: order_no,
-            quantity: +document.getElementById('s-qty').value,
-            selling_price: 0,
-            platform_fee: 0,
+            store_id: storeId,
+            order_no: orderNo,
+            quantity,
+            selling_price: sellingPrice,
+            platform_fee: platformFee,
             sold_at: `${dateStr}T23:59:59`,
         });
         const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}件@¥${d.unit_cost}`).join(' + ') || '';
-        showMsg(`销售成功: ${dateStr} ${sku} | 成本 ¥${s.total_cost} | ${details}`);
+        showMsg(`销售成功: ${dateStr} ${sku} | 收入 ¥${(sellingPrice * quantity).toFixed(2)} | 成本 ¥${Number(s.total_cost).toFixed(2)} | 毛利 ¥${Number(s.profit).toFixed(2)} | ${details}`);
+        document.getElementById('s-qty').value = '';
+        document.getElementById('s-order-no').value = '';
+        document.getElementById('s-order-no').dataset.auto = 'true';
+        updateManualSaleSummary();
         loadSales();
         loadBatches();
     } catch (e) { showMsg(e.message, false); }

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -488,6 +488,25 @@ def _source_key(row: dict, source_kind: str) -> str:
 COMPENSATION_TRANSACTION_TYPES = {"物流赔付", "平台赔付"}
 
 
+def _require_bound_store(user: User) -> int:
+    if user.store_id is None:
+        raise HTTPException(status_code=403, detail="当前账号未绑定店铺，无法查看店铺敏感数据")
+    return user.store_id
+
+
+def _sale_store_scope(user: User):
+    if user.role == "admin":
+        return None
+    store_id = _require_bound_store(user)
+    return or_(
+        Sale.store_id == store_id,
+        and_(
+            Sale.store_id.is_(None),
+            Sale.user_id.in_(select(User.id).where(User.store_id == store_id)),
+        ),
+    )
+
+
 def _other_expense_from_row(
     net_product_sales: Decimal,
     settlement_total: Decimal,
@@ -957,7 +976,7 @@ async def list_sales_imports(
         .limit(limit)
     )
     if user.role != "admin":
-        stmt = stmt.where(SalesImportBatch.user_id == user.id)
+        stmt = stmt.where(SalesImportBatch.store_id == _require_bound_store(user))
     rows = (await db.execute(stmt)).all()
     return [
         SalesImportBatchResponse(
@@ -977,7 +996,8 @@ async def list_sales_imports(
             rolled_back_at=batch.rolled_back_at,
             can_rollback=(
                 batch.status == "completed"
-                and (user.role == "admin" or batch.user_id == user.id)
+                and user.role in ("admin", "operator")
+                and (user.role == "admin" or batch.store_id == user.store_id)
             ),
         )
         for batch, username, store_name in rows
@@ -993,8 +1013,8 @@ async def rollback_sales_import(
     import_batch = await db.get(SalesImportBatch, import_batch_id)
     if not import_batch:
         raise HTTPException(status_code=404, detail="导入记录不存在")
-    if user.role != "admin" and import_batch.user_id != user.id:
-        raise HTTPException(status_code=403, detail="只能撤销自己导入的文件")
+    if user.role != "admin" and import_batch.store_id != _require_bound_store(user):
+        raise HTTPException(status_code=403, detail="只能撤销当前店铺导入的文件")
     if import_batch.status != "completed":
         raise HTTPException(status_code=409, detail="该导入已经撤销")
 
@@ -1319,16 +1339,36 @@ async def create_sale(
     user: User = Depends(RequireOperator),
 ):
     """记录销售 - admin和operator可操作"""
+    order_no = data.order_no.strip()
+    if not order_no:
+        raise HTTPException(status_code=400, detail="订单号不能为空")
+    if await db.scalar(select(Sale.id).where(Sale.order_no == order_no).limit(1)):
+        raise HTTPException(status_code=400, detail="订单号已存在")
+
+    store_id = data.store_id
+    if user.role != "admin":
+        if user.store_id is None:
+            raise HTTPException(status_code=400, detail="当前账号未绑定店铺，请联系管理员")
+        if store_id is not None and store_id != user.store_id:
+            raise HTTPException(status_code=403, detail="只能录入当前账号绑定店铺的销售")
+        store_id = user.store_id
+    if store_id is None:
+        raise HTTPException(status_code=400, detail="请选择店铺")
+    store = await db.get(Store, store_id)
+    if not store or not store.is_active:
+        raise HTTPException(status_code=400, detail="所选店铺不存在或已停用")
+
     try:
         sale, cost_details = await fifo_sell(
             db=db,
             product_id=data.product_id,
-            order_no=data.order_no,
+            order_no=order_no,
             quantity=data.quantity,
             selling_price=data.selling_price,
             platform_fee=data.platform_fee,
             sold_at=data.sold_at,
             user_id=user.id,
+            store_id=store_id,
         )
     except InsufficientStockError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1348,6 +1388,8 @@ async def list_pending_confirmations(
         SettlementEntry.mapping_status == "pending_confirmation",
         SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
     )
+    if user.role != "admin":
+        base_filter += (SettlementEntry.store_id == _require_bound_store(user),)
     total = (await db.execute(
         select(func.count()).select_from(SettlementEntry).where(*base_filter)
     )).scalar_one()
@@ -1454,12 +1496,14 @@ async def export_pending_confirmations(
     user: User = Depends(RequireAnyRole),
 ):
     """导出全部待确认记录，并按 SKU ID 和待确认原因合并。"""
+    conditions = [
+        SettlementEntry.mapping_status == "pending_confirmation",
+        SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
+    ]
+    if user.role != "admin":
+        conditions.append(SettlementEntry.store_id == _require_bound_store(user))
     result = await db.execute(
-        select(SettlementEntry).options(selectinload(SettlementEntry.store))
-        .where(
-            SettlementEntry.mapping_status == "pending_confirmation",
-            SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
-        )
+        select(SettlementEntry).options(selectinload(SettlementEntry.store)).where(*conditions)
     )
     rows = _group_pending_confirmations(result.scalars().all())
 
@@ -1527,8 +1571,9 @@ def _sale_filter_values(
             1,
         )
         conditions.extend((Sale.sold_at >= month_start, Sale.sold_at < next_month))
-    if user.role == "operator":
-        conditions.append(Sale.user_id == user.id)
+    store_scope = _sale_store_scope(user)
+    if store_scope is not None:
+        conditions.append(store_scope)
     return conditions, normalized_keyword
 
 
@@ -1688,8 +1733,10 @@ async def list_sales(
             ))
         if normalized_keyword:
             expense_conditions.append(SettlementEntry.transaction_type.ilike(f"%{normalized_keyword}%"))
-        if user.role == "operator":
-            expense_conditions.append(SalesImportBatch.user_id == user.id)
+        if user.role != "admin":
+            expense_conditions.append(
+                SettlementEntry.store_id == _require_bound_store(user)
+            )
         expense_stmt = (
             select(SettlementEntry)
             .options(selectinload(SettlementEntry.store))
@@ -1783,8 +1830,15 @@ async def get_sale(
     sale = result.scalar_one_or_none()
     if not sale:
         raise HTTPException(status_code=404, detail="销售记录不存在")
-    if user.role == "operator" and sale.user_id != user.id:
-        raise HTTPException(status_code=403, detail="无权查看此记录")
+    if user.role != "admin":
+        store_id = _require_bound_store(user)
+        sale_store_id = sale.store_id
+        if sale_store_id is None and sale.user_id is not None:
+            sale_store_id = await db.scalar(
+                select(User.store_id).where(User.id == sale.user_id)
+            )
+        if sale_store_id != store_id:
+            raise HTTPException(status_code=403, detail="无权查看其他店铺的销售记录")
 
     details = []
     for cd in sale.cost_details:

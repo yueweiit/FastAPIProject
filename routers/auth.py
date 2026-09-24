@@ -210,4 +210,9 @@ async def delete_user(
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)):
     """获取当前用户信息"""
-    return {"id": user.id, "username": user.username, "role": user.role}
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "store_id": user.store_id,
+    }

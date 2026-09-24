@@ -455,11 +455,11 @@ async def _store_inventory_impairment_totals(
 async def _resolve_report_store(
     db: AsyncSession, user: User, store_id: int | None
 ) -> Store:
-    if user.role == "operator":
+    if user.role != "admin":
         if user.store_id is None:
-            raise HTTPException(status_code=400, detail="当前账号未绑定店铺，请联系管理员")
+            raise HTTPException(status_code=403, detail="当前账号未绑定店铺，无法查看店铺敏感数据")
         if store_id is not None and store_id != user.store_id:
-            raise HTTPException(status_code=403, detail="运营账号只能查看绑定店铺")
+            raise HTTPException(status_code=403, detail="非管理员只能查看绑定店铺")
         store_id = user.store_id
     if store_id is None:
         store_id = await db.scalar(
@@ -1229,7 +1229,7 @@ def _build_product_line_profit_sheet(
 
 
 async def _load_inventory_impairment_report_rows(
-    db: AsyncSession, report_date: date
+    db: AsyncSession, report_date: date, store_id: int | None = None
 ) -> list[dict]:
     report_cutoff = datetime.combine(report_date + timedelta(days=1), time.min)
     previous_month_end = _previous_month_end(report_date)
@@ -1245,7 +1245,7 @@ async def _load_inventory_impairment_report_rows(
         ).scalars().all()
     }
 
-    batch_result = await db.execute(
+    batch_stmt = (
         select(
             InventoryBatch,
             Product.sku,
@@ -1261,6 +1261,9 @@ async def _load_inventory_impairment_report_rows(
         .where(InventoryBatch.arrived_at < report_cutoff)
         .order_by(Store.name, Product.sku, InventoryBatch.arrived_at, InventoryBatch.id)
     )
+    if store_id is not None:
+        batch_stmt = batch_stmt.where(User.store_id == store_id)
+    batch_result = await db.execute(batch_stmt)
     batch_rows = batch_result.all()
     batch_ids = [row[0].id for row in batch_rows]
     product_ids = {row[0].product_id for row in batch_rows}
@@ -1514,7 +1517,10 @@ async def export_financial_attachments(
     )
     selected_remarks = report.remarks if report else {}
 
-    inventory_rows = await _load_inventory_impairment_report_rows(db, report_date)
+    inventory_store_id = None if user.role == "admin" else selected_store.id
+    inventory_rows = await _load_inventory_impairment_report_rows(
+        db, report_date, inventory_store_id
+    )
     workbook, formula_cache = _build_inventory_impairment_workbook(inventory_rows, report_date)
     _build_store_profit_loss_sheet(
         workbook, selected_store, report_month, selected_values, selected_remarks
@@ -1588,8 +1594,9 @@ async def monthly_report(
         .group_by(month_expr, Sale.product_id)
         .order_by(month_expr, Sale.product_id)
     )
-    if user.role == "operator":
-        stmt = stmt.where(Sale.user_id == user.id)
+    if user.role != "admin":
+        store = await _resolve_report_store(db, user, None)
+        stmt = stmt.where(_store_sale_scope(store.id))
 
     result = await db.execute(stmt)
     sold_rows = result.all()

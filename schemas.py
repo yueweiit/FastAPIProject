@@ -115,6 +115,7 @@ class BatchPageResponse(BaseModel):
 # ========== 销售 ==========
 class SaleCreate(BaseModel):
     product_id: int
+    store_id: int | None = Field(default=None, ge=1)
     order_no: str = Field(..., max_length=64, examples=["ORD-20240101-001"])
     quantity: int = Field(..., gt=0)
     selling_price: Decimal = Field(default=0, ge=0, examples=[180.00])
