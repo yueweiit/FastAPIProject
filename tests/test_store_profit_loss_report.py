@@ -119,6 +119,13 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }),
             ),
+            patch(
+                "routers.reports.shared_admin_totals_by_application_date",
+                new=AsyncMock(return_value={
+                    date(2026, 8, 8): Decimal("30"),
+                    date(2026, 7, 18): Decimal("10"),
+                }),
+            ),
         ):
             values = await _store_profit_loss_auto_values(
                 db, 7, date(2026, 8, 1), "测试店铺"
@@ -159,6 +166,11 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "previous": Decimal("40"),
             "ytd": Decimal("120"),
         })
+        self.assertEqual(values["shared_admin"], {
+            "current": Decimal("15"),
+            "previous": Decimal("5"),
+            "ytd": Decimal("20"),
+        })
         self.assertEqual(
             impairment_totals.await_args.args[2],
             [
@@ -186,6 +198,9 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "inventory_impairment": {
                 "current": Decimal("3"), "previous": Decimal("1"), "ytd": Decimal("8"),
             },
+            "shared_admin": {
+                "current": Decimal("9"), "previous": Decimal("3"), "ytd": Decimal("15"),
+            },
         }
         manual_values = {
             "shipping_revenue": {"current": "5", "previous": "1", "ytd": "10"},
@@ -200,7 +215,6 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "warehousing": {"current": "4", "previous": "1", "ytd": "6"},
             "delivery": {"current": "5", "previous": "2", "ytd": "8"},
             "platform_fines": {"current": "6", "previous": "0", "ytd": "7"},
-            "shared_admin": {"current": "9", "previous": "3", "ytd": "15"},
             "research_development": {"current": "2", "previous": "1", "ytd": "3"},
             "finance_expenses": {"current": "3", "previous": "1", "ytd": "4"},
             "credit_impairment_loss": {"current": "4", "previous": "2", "ytd": "6"},
@@ -247,6 +261,26 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(values["salary"], {
             "current": Decimal("120"),
+            "previous": Decimal("80"),
+            "ytd": Decimal("500"),
+        })
+
+    def test_saved_shared_admin_value_cannot_override_oa_default(self):
+        auto_values = {
+            "shared_admin": {
+                "current": Decimal("100"),
+                "previous": Decimal("80"),
+                "ytd": Decimal("500"),
+            },
+        }
+        manual_values = {
+            "shared_admin": {"current": "999", "previous": "999", "ytd": "999"},
+        }
+
+        values = _build_store_profit_loss_values(auto_values, manual_values)
+
+        self.assertEqual(values["shared_admin"], {
+            "current": Decimal("100"),
             "previous": Decimal("80"),
             "ytd": Decimal("500"),
         })

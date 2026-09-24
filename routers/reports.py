@@ -40,6 +40,7 @@ from services.accounting_periods import ensure_period_snapshot
 from services.oa_office_expenses import (
     china_salary_totals_by_store_and_application_date,
     office_space_totals_by_application_date,
+    shared_admin_totals_by_application_date,
 )
 from services.inventory_impairment import (
     InventoryLayer,
@@ -95,7 +96,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("platform_fines", "  平台罚款/赔偿", "manual", None),
     ("admin_expenses", "减：管理费用", "formula", None),
     ("rent_utilities", "  房租+水电+网费", "auto", "OA 办公场地费用中 LatínGo 的租金和电费，均分至有效店铺"),
-    ("shared_admin", "  平摊人事+财务管理费用", "manual", None),
+    ("shared_admin", "  平摊人事+财务管理费用", "auto", "OA 同名组件非零金额均分至有效店铺"),
     ("research_development", "减：研发费用", "manual", None),
     ("finance_expenses", "减：财务费用", "manual", None),
     ("asset_impairment_loss", "减：资产减值损失", "formula", None),
@@ -344,6 +345,16 @@ async def _store_profit_loss_auto_values(
         for application_date, total in office_totals.items():
             _add_period_value(
                 auto_values["rent_utilities"],
+                application_date,
+                total / Decimal(active_store_count),
+                periods,
+            )
+        shared_admin_totals = await shared_admin_totals_by_application_date(
+            ytd_start, ytd_end
+        )
+        for application_date, total in shared_admin_totals.items():
+            _add_period_value(
+                auto_values["shared_admin"],
                 application_date,
                 total / Decimal(active_store_count),
                 periods,
@@ -821,6 +832,10 @@ def _workbook_bytes_with_formula_cache(
 FINANCIAL_ATTACHMENT_SHEET = "09-店铺损益表"
 STORE_PROFIT_LOSS_SUMMARY_SHEET = "10-各店铺损益汇总表"
 PRODUCT_LINE_PROFIT_SHEET = "12-各产品线毛利分析表"
+PRODUCT_LINE_ALLOCATED_REVENUE_KEYS = ("shipping_revenue", "other_revenue")
+PRODUCT_LINE_ALLOCATED_COST_KEYS = (
+    "customs_import_tax", "local_logistics_cost", "fulfillment_cost",
+)
 
 
 def _excel_number(value: Decimal | int | float | None):
@@ -947,7 +962,7 @@ def _build_store_profit_loss_summary_sheet(
     _style_financial_sheet(sheet, headers)
     for row_number in range(first_data_row, last_data_row + 1):
         key = STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][0]
-        for column in range(2, len(headers)):
+        for column in range(2, len(headers) + 1):
             sheet.cell(row_number, column).number_format = "0.00%" if key == "gross_margin" or column == len(headers) else '¥#,##0.00'
         if key == "gross_margin":
             sheet.cell(row_number, len(headers)).number_format = "General"
@@ -1016,6 +1031,40 @@ def _product_line_mapping_for_sale(
     return max(candidates, key=lambda item: item[0].effective_from) if candidates else None
 
 
+def _allocate_store_profit_loss_to_product_lines(
+    line_data: dict[int | None, dict],
+    revenue_by_store_line: dict[int, dict[int | None, dict[str, Decimal]]],
+    manual_values_by_store: dict[int, dict],
+) -> None:
+    """Allocate store-level revenue and direct costs by product-line sales share."""
+    for store_id, line_revenues in revenue_by_store_line.items():
+        manual_values = manual_values_by_store.get(store_id, {})
+        for period in STORE_PROFIT_LOSS_PERIODS:
+            period_total = sum(
+                (values[period] for values in line_revenues.values()), Decimal("0")
+            )
+            if not period_total:
+                continue
+            revenue_to_allocate = sum(
+                (
+                    _decimal_or_zero(manual_values.get(key, {}).get(period))
+                    for key in PRODUCT_LINE_ALLOCATED_REVENUE_KEYS
+                ),
+                Decimal("0"),
+            )
+            cost_to_allocate = sum(
+                (
+                    _decimal_or_zero(manual_values.get(key, {}).get(period))
+                    for key in PRODUCT_LINE_ALLOCATED_COST_KEYS
+                ),
+                Decimal("0"),
+            )
+            for line_id, values in line_revenues.items():
+                share = values[period] / period_total
+                line_data[line_id][period]["revenue"] += revenue_to_allocate * share
+                line_data[line_id][period]["cost"] += cost_to_allocate * share
+
+
 async def _product_line_profit_data(
     db: AsyncSession,
     store_ids: set[int],
@@ -1032,6 +1081,11 @@ async def _product_line_profit_data(
     )).all() if store_ids else []
     mappings_by_store_product: dict[tuple[int, int], list[tuple[StoreProduct, ProductLine, Product]]] = defaultdict(list)
     line_data: dict[int | None, dict] = {}
+    revenue_by_store_line: defaultdict[
+        int, defaultdict[int | None, dict[str, Decimal]]
+    ] = defaultdict(lambda: defaultdict(
+        lambda: {period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS}
+    ))
     for mapping, product_line, product in mapping_rows:
         mappings_by_store_product[(mapping.store_id, mapping.product_id)].append((mapping, product_line, product))
         if _mapping_effective_on(mapping, report_date):
@@ -1098,6 +1152,7 @@ async def _product_line_profit_data(
 
     sale_line_by_id: dict[int, int | None] = {}
     for sale, user_store_id in sales:
+        sale_store_id = sale.store_id or user_store_id
         line_id, line_name = line_for(sale, user_store_id)
         item = line_data.setdefault(line_id, {
             "name": line_name,
@@ -1120,6 +1175,8 @@ async def _product_line_profit_data(
             start, end = periods[period]
             if start <= sale.sold_at.date() < end:
                 item[period]["revenue"] += revenue
+                if sale_store_id is not None:
+                    revenue_by_store_line[sale_store_id][line_id][period] += revenue
         other_expense = context.get("source_other_expense", sale.platform_fee) * rate
         for period in STORE_PROFIT_LOSS_PERIODS:
             start, end = periods[period]
@@ -1145,6 +1202,18 @@ async def _product_line_profit_data(
                 start, end = periods[period]
                 if start <= sale.sold_at.date() < end:
                     line_data[line_id][period]["cost"] += batch_cost
+
+    reports = list((await db.execute(
+        select(StoreProfitLossReport).where(
+            StoreProfitLossReport.report_month == report_month,
+            StoreProfitLossReport.store_id.in_(store_ids),
+        )
+    )).scalars().all()) if store_ids else []
+    _allocate_store_profit_loss_to_product_lines(
+        line_data,
+        revenue_by_store_line,
+        {report.store_id: report.manual_values for report in reports},
+    )
 
     rows = []
     for item in sorted(line_data.values(), key=lambda value: value["name"]):
@@ -1211,7 +1280,7 @@ def _build_product_line_profit_sheet(
     note_row = sheet.max_row + 2
     sheet.cell(note_row, 1, "说明")
     sheet.cell(note_row, 2, f"核算期间：{report_month.year}年{report_month.month}月；收入沿用销售记录口径，成本包含可按销售/FIFO明细归属的采购成本、头程尾程物流及销售关联费用。")
-    sheet.cell(note_row + 1, 2, "店铺损益表中人工录入的税费、本地物流、代发等未按产品线分摊；未匹配产品线的销售单独列示。")
+    sheet.cell(note_row + 1, 2, "店铺损益表中的运费收入、其他收入、关税及进口税费、本地物流配送成本、代发成本，按各店铺同期间产品线商品销售收入占比分摊；未匹配产品线的销售单独列示。")
     for row_number in (note_row, note_row + 1):
         sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == note_row)
         sheet.cell(row_number, 2).font = Font(name="等线", size=9, color="666666")

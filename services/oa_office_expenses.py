@@ -1,4 +1,4 @@
-"""Read approved office-space and China-salary expenses from the OA database."""
+"""Read approved expense data from the OA database."""
 
 import json
 import logging
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 OA_OPERATION_PROCESS_CODE = "PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B"
 OA_OFFICE_SPACE_EXPENSE = "办公场地总费用Gastos de local de oficinas"
 OA_CHINA_SALARY_EXPENSE = "工资中国Salario en China"
+OA_SHARED_ADMIN_COMPONENT = "平摊人事+财务管理费用"
 OA_OFFICE_SPACE_TABLE_ID = "TableField_9KUR3Y1BQYW0"
 LATIN_GO_DEPARTMENT_ID = "1089990115"
 OFFICE_DETAIL_VALUES = {"租金Alquiler", "电费Electricidad"}
@@ -142,8 +143,22 @@ def _china_salary_totals(form_component_values: Any) -> dict[str, Decimal]:
     return dict(totals)
 
 
+def _shared_admin_total(form_component_values: Any) -> Decimal:
+    total = Decimal("0")
+    for component in _json_list(form_component_values):
+        component_name = str(
+            component.get("name") or component.get("label") or ""
+        ).strip()
+        if component_name != OA_SHARED_ADMIN_COMPONENT:
+            continue
+        value = _decimal(component.get("value"))
+        if value:
+            total += value
+    return total
+
+
 async def _approved_forms_by_expense(
-    start_date: date, end_date: date, expense_name: str
+    start_date: date, end_date: date, expense_name: str | None
 ) -> list[Any]:
     config = _oa_database_config()
     if config is None:
@@ -165,14 +180,14 @@ async def _approved_forms_by_expense(
           AND LOWER(COALESCE(source.result, '')) IN ('agree', 'approved', '同意', '通过')
           AND (request_field.value ->> 'value')::date >= $2::date
           AND (request_field.value ->> 'value')::date < $3::date
-          AND EXISTS (
+          AND ($4::text IS NULL OR EXISTS (
               SELECT 1
               FROM jsonb_array_elements(
                   COALESCE(source.form_component_values, '[]'::jsonb)
               ) AS management_field(value)
               WHERE management_field.value ->> 'name' = '管理支出Gastos de operación'
                 AND management_field.value ->> 'value' = $4
-          )
+          ))
     """
     try:
         connection = await asyncpg.connect(
@@ -241,3 +256,19 @@ async def china_salary_totals_by_store_and_application_date(
         store_name: dict(date_totals)
         for store_name, date_totals in totals.items()
     }
+
+
+async def shared_admin_totals_by_application_date(
+    start_date: date, end_date: date
+) -> dict[date, Decimal]:
+    """Return non-zero shared administration expenses by application date."""
+    totals: defaultdict[date, Decimal] = defaultdict(lambda: Decimal("0"))
+    for row in await _approved_forms_by_expense(start_date, end_date, None):
+        try:
+            request_date = date.fromisoformat(str(row["request_date"]))
+        except (TypeError, ValueError):
+            continue
+        total = _shared_admin_total(row["form_component_values"])
+        if total:
+            totals[request_date] += total
+    return dict(totals)

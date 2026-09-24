@@ -7,10 +7,13 @@ from services.oa_office_expenses import (
     OA_CHINA_SALARY_EXPENSE,
     OA_OFFICE_SPACE_EXPENSE,
     OA_OPERATION_PROCESS_CODE,
+    OA_SHARED_ADMIN_COMPONENT,
     _china_salary_totals,
     _office_space_total,
+    _shared_admin_total,
     china_salary_totals_by_store_and_application_date,
     office_space_totals_by_application_date,
+    shared_admin_totals_by_application_date,
 )
 
 
@@ -29,6 +32,13 @@ def _row(department_id: str, detail: str, amount: str) -> dict:
 
 
 class OaOfficeExpenseTests(unittest.TestCase):
+    def test_shared_admin_total_uses_only_non_zero_exact_name_components(self):
+        self.assertEqual(_shared_admin_total([
+            {"name": OA_SHARED_ADMIN_COMPONENT, "value": "1200.50"},
+            {"label": OA_SHARED_ADMIN_COMPONENT, "value": "0"},
+            {"name": f"其他{OA_SHARED_ADMIN_COMPONENT}", "value": "999"},
+        ]), Decimal("1200.50"))
+
     def test_only_latin_go_rent_and_electricity_rows_are_counted(self):
         form_component_values = [
             {
@@ -74,6 +84,46 @@ class OaOfficeExpenseTests(unittest.TestCase):
 
 
 class OaOfficeExpenseDatabaseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_shared_admin_totals_keep_application_date_and_skip_zero(self):
+        connection = AsyncMock()
+        connection.fetch.return_value = [
+            {
+                "request_date": "2026-09-10",
+                "form_component_values": [
+                    {"name": OA_SHARED_ADMIN_COMPONENT, "value": "600"}
+                ],
+            },
+            {
+                "request_date": "2026-09-11",
+                "form_component_values": [
+                    {"name": OA_SHARED_ADMIN_COMPONENT, "value": "0"}
+                ],
+            },
+        ]
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "OA_DB_HOST": "oa.example.test",
+                    "OA_DB_DATABASE": "dingtalk_oa",
+                    "OA_DB_USER": "readonly",
+                    "OA_DB_PASSWORD": "test-password",
+                },
+                clear=False,
+            ),
+            patch(
+                "services.oa_office_expenses.asyncpg.connect",
+                new=AsyncMock(return_value=connection),
+            ),
+        ):
+            result = await shared_admin_totals_by_application_date(
+                date(2026, 9, 1), date(2026, 10, 1)
+            )
+
+        self.assertEqual(result, {date(2026, 9, 10): Decimal("600")})
+        self.assertIsNone(connection.fetch.await_args.args[4])
+
     async def test_query_binds_dates_as_date_objects(self):
         connection = AsyncMock()
         connection.fetch.return_value = []

@@ -13,11 +13,81 @@ from routers.reports import (
     _build_store_profit_loss_sheet,
     _build_store_profit_loss_summary_sheet,
     _build_store_profit_loss_values,
+    _allocate_store_profit_loss_to_product_lines,
     _product_line_mapping_for_sale,
 )
 
 
 class FinancialAttachmentsWorkbookTests(unittest.TestCase):
+    def test_store_level_revenue_and_costs_are_allocated_by_product_line_sales(self):
+        line_data = {
+            1: {
+                "current": {"revenue": Decimal("80"), "cost": Decimal("30")},
+                "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "ytd": {"revenue": Decimal("80"), "cost": Decimal("30")},
+            },
+            2: {
+                "current": {"revenue": Decimal("20"), "cost": Decimal("10")},
+                "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "ytd": {"revenue": Decimal("20"), "cost": Decimal("10")},
+            },
+        }
+        revenue_by_store_line = {
+            7: {
+                1: {"current": Decimal("80"), "previous": Decimal("0"), "ytd": Decimal("80")},
+                2: {"current": Decimal("20"), "previous": Decimal("0"), "ytd": Decimal("20")},
+            },
+        }
+        manual_values_by_store = {
+            7: {
+                "shipping_revenue": {"current": "10", "ytd": "10"},
+                "other_revenue": {"current": "20", "ytd": "20"},
+                "customs_import_tax": {"current": "30", "ytd": "30"},
+                "local_logistics_cost": {"current": "40", "ytd": "40"},
+                "fulfillment_cost": {"current": "50", "ytd": "50"},
+            },
+        }
+
+        _allocate_store_profit_loss_to_product_lines(
+            line_data, revenue_by_store_line, manual_values_by_store
+        )
+
+        self.assertEqual(line_data[1]["current"], {
+            "revenue": Decimal("104"), "cost": Decimal("126"),
+        })
+        self.assertEqual(line_data[2]["current"], {
+            "revenue": Decimal("26"), "cost": Decimal("34"),
+        })
+
+    def test_store_level_allocations_do_not_mix_between_stores(self):
+        line_data = {
+            1: {
+                "current": {"revenue": Decimal("100"), "cost": Decimal("0")},
+                "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "ytd": {"revenue": Decimal("100"), "cost": Decimal("0")},
+            },
+            2: {
+                "current": {"revenue": Decimal("100"), "cost": Decimal("0")},
+                "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
+                "ytd": {"revenue": Decimal("100"), "cost": Decimal("0")},
+            },
+        }
+        revenue_by_store_line = {
+            1: {1: {"current": Decimal("100"), "previous": Decimal("0"), "ytd": Decimal("100")}},
+            2: {2: {"current": Decimal("100"), "previous": Decimal("0"), "ytd": Decimal("100")}},
+        }
+        manual_values_by_store = {
+            1: {"shipping_revenue": {"current": "10", "ytd": "10"}},
+            2: {"shipping_revenue": {"current": "30", "ytd": "30"}},
+        }
+
+        _allocate_store_profit_loss_to_product_lines(
+            line_data, revenue_by_store_line, manual_values_by_store
+        )
+
+        self.assertEqual(line_data[1]["current"]["revenue"], Decimal("110"))
+        self.assertEqual(line_data[2]["current"]["revenue"], Decimal("130"))
+
     def _values(self, sales: Decimal, purchase_cost: Decimal) -> dict:
         auto_values = {
             "product_sales_revenue": {"current": sales, "previous": Decimal("80"), "ytd": sales + Decimal("80")},
@@ -59,6 +129,7 @@ class FinancialAttachmentsWorkbookTests(unittest.TestCase):
         self.assertEqual(sheet[3][2].value, 50)
         self.assertEqual(sheet[3][3].value, 150)
         self.assertAlmostEqual(sheet[3][4].value, 1.0)
+        self.assertEqual(sheet[3][4].number_format, "0.00%")
         self.assertFalse(any(isinstance(cell.value, str) and cell.value.startswith("=") for row in sheet.iter_rows() for cell in row))
 
     def test_product_line_sheet_calculates_margins_and_exposes_unassigned_sales(self):
