@@ -474,7 +474,26 @@ def _order_no(order_id: str, sku_id: str) -> str:
     return f"tt:{hashlib.sha256(value.encode('utf-8')).hexdigest()[:60]}"
 
 
-def _source_key(row: dict, source_kind: str) -> str:
+ORDER_DETAIL_EVENT_KEY_FIELDS = (
+    "结算单 ID",
+    "付款 ID",
+    "订单ID/调整单ID",
+    "SKU ID",
+    "交易类型",
+    "结算日期",
+    "数量",
+    "结算总金额",
+    "净商品销售额",
+    "商品退款",
+    "调整金额",
+    "调整原因",
+    "相关订单 ID",
+    "客户付款",
+    "客户退款",
+)
+
+
+def _legacy_source_key(row: dict, source_kind: str) -> str:
     if source_kind == "legacy_csv":
         value = f"legacy|{row.get('SKU','')}|{row.get('日期','')}|{row.get('数量','')}"
     else:
@@ -482,6 +501,18 @@ def _source_key(row: dict, source_kind: str) -> str:
             _text_value(row.get(name))
             for name in ("结算单 ID", "付款 ID", "订单ID/调整单ID", "SKU ID")
         )
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _source_key(row: dict, source_kind: str) -> str:
+    if source_kind == "legacy_csv":
+        return _legacy_source_key(row, source_kind)
+
+    # A TikTok order/SKU can legitimately have multiple settlement events,
+    # such as the original sale followed by a refund or adjustment.
+    value = "v2|" + "|".join(
+        _text_value(row.get(name)) for name in ORDER_DETAIL_EVENT_KEY_FIELDS
+    )
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -669,6 +700,7 @@ async def import_sales_file(
             ).scalars().all()
         )
     source_keys = [_source_key(row, source_kind) for row in rows]
+    legacy_source_keys = [_legacy_source_key(row, source_kind) for row in rows]
     existing_entries = {
         key
         for key in (
@@ -677,6 +709,21 @@ async def import_sales_file(
             )
         ).scalars()
     }
+    if source_kind == "order_detail":
+        # Preserve idempotency for records imported before the event key was
+        # expanded. Compare their raw rows with the new key instead of treating
+        # every sale/refund pair as the same legacy event.
+        legacy_entries = (
+            await db.execute(
+                select(SettlementEntry).where(
+                    SettlementEntry.source_key.in_(legacy_source_keys)
+                )
+            )
+        ).scalars().all()
+        existing_entries.update(
+            _source_key(entry.raw_data or {}, source_kind)
+            for entry in legacy_entries
+        )
     errors: list[SalesImportError] = []
     warnings: list[str] = []
     candidates = []

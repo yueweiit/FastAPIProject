@@ -18,6 +18,7 @@ from routers.sales import (
     _other_expense_from_row,
     _read_import_file,
     _resolve_platform_sku_components,
+    _source_key,
 )
 from services.exchange_rates import _resolve_rate_payload
 from services.fifo import fifo_sell
@@ -311,6 +312,42 @@ class MonthlySalesSummaryTests(unittest.TestCase):
 
 
 class ImportFormatTests(unittest.TestCase):
+    def test_order_detail_sale_and_refund_have_distinct_event_keys(self):
+        base = {
+            "结算单 ID": "SETTLEMENT-1",
+            "付款 ID": "PAYOUT-1",
+            "订单ID/调整单ID": "ORDER-1",
+            "SKU ID": "SKU-1",
+            "交易类型": "订单",
+            "结算日期": "2026/09/25",
+            "数量": "1",
+        }
+        sale = {
+            **base,
+            "结算总金额": "66.33",
+            "净商品销售额": "94",
+            "商品退款": "0",
+            "客户付款": "94",
+            "客户退款": "0",
+        }
+        refund = {
+            **base,
+            "结算总金额": "-73.85",
+            "净商品销售额": "-94",
+            "商品退款": "-94",
+            "客户付款": "0",
+            "客户退款": "-94",
+        }
+
+        self.assertNotEqual(
+            _source_key(sale, "order_detail"),
+            _source_key(refund, "order_detail"),
+        )
+        self.assertEqual(
+            _source_key(sale, "order_detail"),
+            _source_key(dict(sale), "order_detail"),
+        )
+
     def test_order_detail_sheet_is_selected_and_required_header_spacing_is_tolerated(self):
         workbook = Workbook()
         workbook.active.title = "说明"
