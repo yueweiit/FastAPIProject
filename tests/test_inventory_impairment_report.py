@@ -161,15 +161,50 @@ class InventoryImpairmentReportTests(unittest.TestCase):
         self.assertEqual(impairments[2].provision_quantity, 0)
         self.assertEqual(impairments[1].rate, Decimal("0.6"))
 
-    def test_new_product_uses_half_percent_rate_from_september(self):
+    def test_new_product_uses_half_percent_rate_from_arrival(self):
         self.assertEqual(
             impairment_rate(date(2026, 9, 30), date(2026, 9, 10), PRODUCT_TYPE_NEW),
             Decimal("0.1"),
         )
         self.assertEqual(
             impairment_rate(date(2026, 8, 31), date(2026, 8, 1), PRODUCT_TYPE_NEW),
-            Decimal("0.3"),
+            Decimal("0.15"),
         )
+
+    def test_new_product_rate_starts_at_arrival_at_new_product_rate(self):
+        self.assertEqual(
+            impairment_rate(date(2026, 9, 29), date(2026, 8, 1), PRODUCT_TYPE_NEW),
+            Decimal("0.295"),
+        )
+
+    def test_first_known_rule_backfills_from_earliest_arrival(self):
+        impairments = batch_impairments([
+            InventoryLayer(
+                1, 10, 1, date(2026, 8, 1), 236, PRODUCT_TYPE_NEW, 0,
+                (ImpairmentRule(PRODUCT_TYPE_NEW, 0, date(2026, 9, 22)),),
+            ),
+        ], date(2026, 9, 29))
+
+        self.assertEqual(impairments[1].provision_quantity, 236)
+        self.assertEqual(impairments[1].rate, Decimal("0.295"))
+
+    def test_stable_product_applies_safe_stock_from_arrival(self):
+        impairments = batch_impairments([
+            InventoryLayer(1, 10, 1, date(2026, 8, 1), 200, PRODUCT_TYPE_STABLE, 100),
+        ], date(2026, 9, 29))
+
+        self.assertEqual(impairments[1].provision_quantity, 100)
+        self.assertEqual(impairments[1].impairment_units, Decimal("59.000"))
+        self.assertEqual(impairments[1].rate, Decimal("0.59"))
+
+    def test_stable_product_newly_arrived_uses_excess_over_safe_stock(self):
+        impairments = batch_impairments([
+            InventoryLayer(1, 10, 1, date(2026, 9, 10), 200, PRODUCT_TYPE_STABLE, 100),
+        ], date(2026, 9, 29))
+
+        self.assertEqual(impairments[1].provision_quantity, 100)
+        self.assertEqual(impairments[1].impairment_units, Decimal("19.000"))
+        self.assertEqual(impairments[1].rate, Decimal("0.19"))
 
     def test_new_product_history_is_preserved_when_all_stock_becomes_safe(self):
         impairments = batch_impairments([

@@ -275,7 +275,7 @@
                 <h3>平台 SKU ID 映射</h3>
                 <div class="mapping-card-actions">
                     <button id="platform-sku-mappings-toggle" class="btn btn-secondary mapping-collapse-toggle" type="button" onclick="togglePlatformSkuMappings()" aria-expanded="false" aria-controls="platform-sku-mappings-content" title="展开平台 SKU ID 映射"><span aria-hidden="true">▾</span></button>
-                    <button class="btn btn-secondary" onclick="setPlatformSkuMappingsCollapsed(false); resetPlatformSkuMappingForm()">新增映射</button>
+                    <button class="btn btn-secondary" onclick="openNewPlatformSkuMapping()">新增映射</button>
                 </div>
             </div>
             <div id="platform-sku-mappings-content" hidden>
@@ -994,7 +994,6 @@ async function loadProducts() {
     productPage = result.page;
     productPageSize = result.page_size;
     renderProductPage();
-    await loadPlatformSkuMappings();
 }
 
 function searchProducts() {
@@ -1010,6 +1009,8 @@ function clearProductSearch() {
 
 let platformSkuMappings = [];
 let editingPlatformSkuMappingId = null;
+let platformSkuMappingsLoaded = false;
+let platformSkuMappingsPromise = null;
 
 function setPlatformSkuMappingsCollapsed(collapsed) {
     const content = document.getElementById('platform-sku-mappings-content');
@@ -1022,7 +1023,12 @@ function setPlatformSkuMappingsCollapsed(collapsed) {
 
 function togglePlatformSkuMappings() {
     const content = document.getElementById('platform-sku-mappings-content');
-    setPlatformSkuMappingsCollapsed(!content.hidden);
+    if (content.hidden) {
+        setPlatformSkuMappingsCollapsed(false);
+        loadPlatformSkuMappings();
+    } else {
+        setPlatformSkuMappingsCollapsed(true);
+    }
 }
 
 function platformSkuIdList(value) {
@@ -1082,14 +1088,28 @@ function renderPlatformSkuMappings() {
     }).join('') : '<tr><td colspan="5" class="empty">暂无平台 SKU ID 映射</td></tr>';
 }
 
-async function loadPlatformSkuMappings() {
-    const [mappings] = await Promise.all([
-        api('GET', '/finance-masters/platform-sku-mappings'),
-        loadProductOptions(),
-    ]);
-    platformSkuMappings = mappings;
-    renderPlatformSkuMappings();
-    if (editingPlatformSkuMappingId === null) resetPlatformSkuMappingForm();
+async function loadPlatformSkuMappings(force = false) {
+    if (force) platformSkuMappingsLoaded = false;
+    if (platformSkuMappingsLoaded) return platformSkuMappings;
+    if (!platformSkuMappingsPromise) {
+        platformSkuMappingsPromise = Promise.all([
+            api('GET', '/finance-masters/platform-sku-mappings'),
+            loadProductOptions(),
+        ]).then(([mappings]) => {
+            platformSkuMappings = mappings;
+            platformSkuMappingsLoaded = true;
+            renderPlatformSkuMappings();
+            if (editingPlatformSkuMappingId === null) resetPlatformSkuMappingForm();
+            return mappings;
+        }).finally(() => { platformSkuMappingsPromise = null; });
+    }
+    return platformSkuMappingsPromise;
+}
+
+async function openNewPlatformSkuMapping() {
+    setPlatformSkuMappingsCollapsed(false);
+    await loadPlatformSkuMappings();
+    resetPlatformSkuMappingForm();
 }
 
 function editPlatformSkuMapping(mappingId) {
@@ -1147,7 +1167,7 @@ async function savePlatformSkuMapping() {
             showMsg(`已创建 ${skuIds.length} 条平台 SKU ID 映射`);
         }
         resetPlatformSkuMappingForm();
-        await loadPlatformSkuMappings();
+        await loadPlatformSkuMappings(true);
     } catch (e) { showMsg(e.message, false); }
 }
 
@@ -1157,7 +1177,7 @@ async function deletePlatformSkuMapping(mappingId) {
     try {
         await api('DELETE', `/finance-masters/platform-sku-mappings/${mappingId}`);
         if (editingPlatformSkuMappingId === mappingId) resetPlatformSkuMappingForm();
-        await loadPlatformSkuMappings();
+        await loadPlatformSkuMappings(true);
         showMsg('平台 SKU ID 映射已删除');
     } catch (e) { showMsg(e.message, false); }
 }
