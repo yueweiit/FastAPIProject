@@ -756,7 +756,7 @@ def _build_inventory_impairment_workbook(
         f"报告截止日：{report_date.isoformat()}；上月末：{previous_month_end.isoformat()}。",
         "计提规则：新品从入库日起全部库存按每日0.5%计提；稳健商品从入库日起仅超出安全库存的数量按每日1%计提；类型变更前已计提金额保留，累计上限90%。",
         "安全库存口径：从入库日起按商品全仓汇总，优先豁免最新入库批次。",
-        "库存口径：当前库存按截止日前已确认销售计算；上月末使用系统自动生成的月末快照。",
+        "库存口径：当前库存按截止日前已确认销售计算；上月末库存数量使用系统快照，账面价值按本次统一计提规则重算。",
         "成本口径：单件到仓成本使用系统批次单件成本，包含采购、头程、尾程及其他成本；当前未单列关税。",
         "店铺口径：按入库批次创建人的当前绑定店铺；无法确认时显示“未关联店铺”。",
     ]
@@ -1382,9 +1382,6 @@ async def _load_inventory_impairment_report_rows(
         quantity = max(0, batch.quantity - report_deducted)
         previous_snapshot = snapshots_by_batch.get(batch.id)
         previous_month_quantity = int(previous_snapshot.quantity) if previous_snapshot else 0
-        previous_book_value = (
-            Decimal(previous_snapshot.book_value) if previous_snapshot else None
-        )
         if quantity == 0 and previous_month_quantity == 0:
             continue
         report_items.append({
@@ -1399,11 +1396,12 @@ async def _load_inventory_impairment_report_rows(
             "unit_cost": batch.unit_cost,
             "quantity": quantity,
             "previous_month_quantity": previous_month_quantity,
-            "previous_book_value": previous_book_value,
+            "previous_book_value": None,
+            "previous_snapshot": previous_snapshot,
             "batch_no": batch.batch_no,
         })
 
-    current_impairments = batch_impairments([
+    current_layers = [
         InventoryLayer(
             batch_id=item["batch"].id,
             product_id=item["batch"].product_id,
@@ -1415,10 +1413,39 @@ async def _load_inventory_impairment_report_rows(
             rules=tuple(rules_by_product[item["batch"].product_id]),
         )
         for item in report_items
-    ], report_date)
+    ]
+    current_impairments = batch_impairments(current_layers, report_date)
+    previous_layers = [
+        InventoryLayer(
+            batch_id=item["batch"].id,
+            product_id=item["batch"].product_id,
+            store_id=item["store_id"],
+            arrived_at=item["arrived_at"],
+            quantity=item["previous_month_quantity"],
+            product_type=item["product_type"],
+            safe_stock_quantity=item["safe_stock_quantity"],
+            rules=tuple(rules_by_product[item["batch"].product_id]),
+        )
+        for item in report_items
+        if item["previous_month_quantity"] > 0
+    ]
+    previous_impairments = batch_impairments(previous_layers, previous_month_end)
+    for item in report_items:
+        snapshot = item["previous_snapshot"]
+        if snapshot is None:
+            continue
+        previous_impairment = previous_impairments.get(item["batch"].id)
+        previous_impairment_units = (
+            previous_impairment.impairment_units if previous_impairment else Decimal("0")
+        )
+        item["previous_book_value"] = (
+            Decimal(snapshot.unit_cost) * item["previous_month_quantity"]
+            - Decimal(snapshot.unit_cost) * previous_impairment_units
+        )
     return [
         {
-            key: value for key, value in item.items() if key != "batch"
+            key: value for key, value in item.items()
+            if key not in {"batch", "previous_snapshot"}
         } | {
             "provision_quantity": (
                 current_impairments[item["batch"].id].provision_quantity

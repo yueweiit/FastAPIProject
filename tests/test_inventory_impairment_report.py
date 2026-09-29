@@ -1,7 +1,10 @@
+import asyncio
 import unittest
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from openpyxl import load_workbook
 
@@ -9,6 +12,7 @@ from routers.reports import (
     INVENTORY_IMPAIRMENT_HEADERS,
     INVENTORY_IMPAIRMENT_SHEET,
     _build_inventory_impairment_workbook,
+    _load_inventory_impairment_report_rows,
     _previous_month_end,
     _workbook_bytes_with_formula_cache,
 )
@@ -176,6 +180,61 @@ class InventoryImpairmentReportTests(unittest.TestCase):
             impairment_rate(date(2026, 9, 29), date(2026, 8, 1), PRODUCT_TYPE_NEW),
             Decimal("0.295"),
         )
+
+    def test_same_rule_comparison_keeps_decreasing_inventory_book_value_negative(self):
+        current_layer = InventoryLayer(
+            1, 10, 1, date(2026, 7, 8), 371, PRODUCT_TYPE_NEW, 0
+        )
+        previous_layer = InventoryLayer(
+            1, 10, 1, date(2026, 7, 8), 394, PRODUCT_TYPE_NEW, 0
+        )
+        current_impairment = batch_impairments([current_layer], date(2026, 9, 29))[1]
+        previous_impairment = batch_impairments([previous_layer], date(2026, 8, 31))[1]
+        current_book_value = Decimal("5.689") * current_layer.quantity - (
+            Decimal("5.689") * current_impairment.impairment_units
+        )
+        previous_book_value = Decimal("5.689") * previous_layer.quantity - (
+            Decimal("5.689") * previous_impairment.impairment_units
+        )
+
+        self.assertLess(current_book_value - previous_book_value, 0)
+
+    def test_report_restates_previous_book_value_without_overwriting_snapshot(self):
+        batch = SimpleNamespace(
+            id=1, product_id=10, quantity=394, unit_cost=Decimal("5.689"),
+            arrived_at=datetime(2026, 7, 8), batch_no="BATCH-001",
+        )
+        snapshot = SimpleNamespace(
+            batch_id=1, quantity=394, unit_cost=Decimal("5.689"),
+            book_value=Decimal("1031.0744"),
+        )
+        rule = SimpleNamespace(
+            product_id=10, product_type=PRODUCT_TYPE_NEW,
+            safe_stock_quantity=0, effective_date=date(2026, 9, 22),
+        )
+        results = [
+            [snapshot],
+            [(batch, "CW000175", "测试商品", "测试店铺", PRODUCT_TYPE_NEW, 0, 1)],
+            [rule],
+            [SimpleNamespace(batch_id=1, report_quantity=23)],
+        ]
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: results[0])),
+            SimpleNamespace(all=lambda: results[1]),
+            SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: results[2])),
+            SimpleNamespace(all=lambda: results[3]),
+        ]))
+        with patch("routers.reports.ensure_period_snapshot", new_callable=AsyncMock) as ensure:
+            ensure.return_value = SimpleNamespace(id=1)
+            rows = asyncio.run(
+                _load_inventory_impairment_report_rows(db, date(2026, 9, 29))
+            )
+
+        self.assertEqual(rows[0]["previous_month_quantity"], 394)
+        self.assertEqual(rows[0]["previous_book_value"], Decimal("1636.270180"))
+        self.assertEqual(snapshot.book_value, Decimal("1031.0744"))
+        current_book_value = rows[0]["unit_cost"] * rows[0]["quantity"] - rows[0]["impairment_amount"]
+        self.assertLess(current_book_value - rows[0]["previous_book_value"], 0)
 
     def test_first_known_rule_backfills_from_earliest_arrival(self):
         impairments = batch_impairments([
