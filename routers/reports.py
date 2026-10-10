@@ -68,6 +68,7 @@ INVENTORY_IMPAIRMENT_HEADERS = [
     "累计跌价准备(元)",
     "账面价值(元)",
     "与上月末账面价值差额(元)",
+    "本月计提（现存库存）(元)",
     "状态",
     "备注",
 ]
@@ -648,13 +649,24 @@ def _build_inventory_impairment_workbook(
         previous_book_value = (
             Decimal(snapshot_previous_book_value)
             if snapshot_previous_book_value is not None
+            else None if "previous_book_value" in item
             else calculated_previous_book_value
         )
-        book_value_difference = book_value - previous_book_value
-        status = "安全库存内" if provision_quantity == 0 and item["quantity"] else (
-            "达到上限" if current_rate >= Decimal("0.9") else (
-                "接近上限" if current_rate >= Decimal("0.6") else "正常计提"
-            )
+        book_value_difference = (
+            book_value - previous_book_value if previous_book_value is not None else None
+        )
+        monthly_impairment_amount = Decimal(item.get(
+            "monthly_impairment_amount",
+            Decimal(item["unit_cost"]) * provision_quantity * max(
+                current_rate - previous_rate, Decimal("0")
+            ),
+        ))
+        status = (
+            "已售完" if item["quantity"] == 0
+            else "安全库存内" if provision_quantity == 0
+            else "达到上限" if current_rate >= Decimal("0.9")
+            else "接近上限" if current_rate >= Decimal("0.6")
+            else "正常计提"
         )
         daily_rate = daily_impairment_rate(report_date, product_type)
         previous_daily_rate = daily_impairment_rate(previous_month_end, product_type)
@@ -667,9 +679,17 @@ def _build_inventory_impairment_workbook(
             f"J{row_number}": current_rate,
             f"K{row_number}": impairment_amount,
             f"L{row_number}": book_value,
-            f"M{row_number}": book_value_difference,
-            f"N{row_number}": status,
+            f"N{row_number}": monthly_impairment_amount,
+            f"O{row_number}": status,
         })
+        if book_value_difference is not None:
+            formula_cache[f"M{row_number}"] = book_value_difference
+        previous_book_value_note = (
+            f"{previous_book_value:.4f}" if previous_book_value is not None else "待核实"
+        )
+        previous_quantity_note = (
+            str(item["previous_month_quantity"]) if previous_book_value is not None else "待核实"
+        )
         sheet.append([
             item["store_name"],
             item["sku"],
@@ -690,7 +710,7 @@ def _build_inventory_impairment_workbook(
             ),
             f'=IF(OR(I{row_number}="",K{row_number}=""),"",I{row_number}-K{row_number})',
             (
-                book_value_difference if uses_historical_amount
+                book_value_difference if "previous_book_value" in item or uses_historical_amount
                 or uses_snapshot_previous_book_value
                 else (
                     f'=IF(OR(D{row_number}="",F{row_number}="",L{row_number}=""),"",'
@@ -698,15 +718,18 @@ def _build_inventory_impairment_workbook(
                     f'{previous_provision_quantity}*MIN(MAX({previous_month_end_formula}-D{row_number},0)*{previous_daily_rate},0.9)))'
                 )
             ),
+            monthly_impairment_amount,
             (
-                f'=IF(H{row_number}=0,"安全库存内",IF(J{row_number}>=0.9,"达到上限",'
-                f'IF(J{row_number}>=0.6,"接近上限","正常计提")))'
+                f'=IF(G{row_number}=0,"已售完",IF(H{row_number}=0,"安全库存内",'
+                f'IF(J{row_number}>=0.9,"达到上限",'
+                f'IF(J{row_number}>=0.6,"接近上限","正常计提"))))'
             ),
             (
                 f"批次号：{item['batch_no']}；商品类型："
                 f"{'新品' if product_type == PRODUCT_TYPE_NEW else '稳健商品'}；"
-                f"上月末库存：{item['previous_month_quantity']}；"
-                f"上月末账面价值：{previous_book_value:.4f}；"
+                f"上月末库存：{previous_quantity_note}；"
+                f"上月末账面价值：{previous_book_value_note}；"
+                f"{item['comparison_note'] + '；' if item.get('comparison_note') else ''}"
                 "单件成本含采购、头程、尾程及其他成本，未单列关税"
             ),
         ])
@@ -716,7 +739,7 @@ def _build_inventory_impairment_workbook(
             cell.border = table_border
         sheet.cell(row_number, 4).number_format = "yyyy-mm-dd"
         sheet.cell(row_number, 5).number_format = "0"
-        for column in (6, 9, 11, 12, 13):
+        for column in (6, 9, 11, 12, 13, 14):
             sheet.cell(row_number, column).number_format = '¥#,##0.00'
         for column in (7, 8):
             sheet.cell(row_number, column).number_format = "#,##0"
@@ -726,8 +749,14 @@ def _build_inventory_impairment_workbook(
     last_data_row = len(rows) + 1
     total_row = last_data_row + 1
     sheet.cell(total_row, 1, "合计")
+    missing_comparison = any(
+        "previous_book_value" in item and item["previous_book_value"] is None
+        for item in rows
+    )
     if rows:
-        for column in range(5, 14):
+        for column in range(5, 15):
+            if column == 13 and missing_comparison:
+                continue
             letter = sheet.cell(1, column).column_letter
             sheet.cell(total_row, column, f"=SUM({letter}{first_data_row}:{letter}{last_data_row})")
             formula_cache[f"{letter}{total_row}"] = sum(
@@ -737,14 +766,14 @@ def _build_inventory_impairment_workbook(
                 for row_number in range(first_data_row, last_data_row + 1)
             )
     else:
-        for column in range(5, 14):
+        for column in range(5, 15):
             sheet.cell(total_row, column, 0)
     for cell in sheet[total_row]:
         cell.fill = PatternFill("solid", fgColor="F2F2F2")
         cell.font = Font(name="等线", size=10, bold=True)
         cell.alignment = Alignment(horizontal="center", vertical="center")
         cell.border = table_border
-    for column in (6, 9, 11, 12, 13):
+    for column in (6, 9, 11, 12, 13, 14):
         sheet.cell(total_row, column).number_format = '¥#,##0.00'
     sheet.cell(total_row, 5).number_format = "0"
     for column in (7, 8):
@@ -757,25 +786,27 @@ def _build_inventory_impairment_workbook(
         "计提规则：新品从入库日起全部库存按每日0.5%计提；稳健商品从入库日起仅超出安全库存的数量按每日1%计提；类型变更前已计提金额保留，累计上限90%。",
         "安全库存口径：从入库日起按商品全仓汇总，优先豁免最新入库批次。",
         "库存口径：当前库存按截止日前已确认销售计算；上月末库存数量使用系统快照，账面价值按本次统一计提规则重算。",
+        "本月计提（现存库存）：报告日仍在库商品从本月1日至报告日新增的准备，按规则历史和上限分段计算；本月已售商品的计提不在此列。",
+        "账面价值差额：当前账面价值减上月末账面价值，包含库存数量变化；本月新增批次上月为0，缺少上月快照的历史批次及差额合计留空。",
         "成本口径：单件到仓成本使用系统批次单件成本，包含采购、头程、尾程及其他成本；当前未单列关税。",
         "店铺口径：按入库批次创建人的当前绑定店铺；无法确认时显示“未关联店铺”。",
     ]
     for offset, note in enumerate(notes):
         row_number = notes_row + offset
-        sheet.merge_cells(start_row=row_number, start_column=1, end_row=row_number, end_column=15)
+        sheet.merge_cells(start_row=row_number, start_column=1, end_row=row_number, end_column=16)
         cell = sheet.cell(row_number, 1, note)
         cell.font = Font(name="等线", size=9, color="666666")
         cell.alignment = Alignment(vertical="center", wrap_text=True)
 
     widths = {
         "A": 18, "B": 18, "C": 28, "D": 13, "E": 12, "F": 18, "G": 12,
-        "H": 12, "I": 18, "J": 14, "K": 20, "L": 17, "M": 25, "N": 13, "O": 62,
+        "H": 12, "I": 18, "J": 14, "K": 20, "L": 17, "M": 25, "N": 24, "O": 13, "P": 62,
     }
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
-    sheet.auto_filter.ref = f"A1:O{max(1, last_data_row)}"
+    sheet.auto_filter.ref = f"A1:P{max(1, last_data_row)}"
     sheet.print_title_rows = "1:1"
-    sheet.print_area = f"A1:O{notes_row + len(notes) - 1}"
+    sheet.print_area = f"A1:P{notes_row + len(notes) - 1}"
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1
     sheet.page_setup.fitToHeight = 0
@@ -1396,7 +1427,16 @@ async def _load_inventory_impairment_report_rows(
             "unit_cost": batch.unit_cost,
             "quantity": quantity,
             "previous_month_quantity": previous_month_quantity,
-            "previous_book_value": None,
+            "previous_book_value": (
+                Decimal("0") if batch.arrived_at.date() > previous_month_end else None
+            ),
+            "comparison_note": (
+                "" if previous_snapshot is not None else (
+                    "本月新增批次，上月账面价值为0"
+                    if batch.arrived_at.date() > previous_month_end
+                    else "缺少上月快照，无法比较"
+                )
+            ),
             "previous_snapshot": previous_snapshot,
             "batch_no": batch.batch_no,
         })
@@ -1414,7 +1454,9 @@ async def _load_inventory_impairment_report_rows(
         )
         for item in report_items
     ]
-    current_impairments = batch_impairments(current_layers, report_date)
+    current_impairments = batch_impairments(
+        current_layers, report_date, period_start=report_date.replace(day=1)
+    )
     previous_layers = [
         InventoryLayer(
             batch_id=item["batch"].id,
@@ -1459,6 +1501,10 @@ async def _load_inventory_impairment_report_rows(
                 item["unit_cost"] * current_impairments[item["batch"].id].impairment_units
                 if item["batch"].id in current_impairments else Decimal("0")
             ),
+            "monthly_impairment_amount": (
+                item["unit_cost"] * current_impairments[item["batch"].id].period_impairment_units
+                if item["batch"].id in current_impairments else Decimal("0")
+            ),
         }
         for item in report_items
     ]
@@ -1480,7 +1526,8 @@ async def inventory_impairment_report(
         previous_book_value = item["previous_book_value"]
         rate = item["impairment_rate"]
         status = (
-            "安全库存内" if item["provision_quantity"] == 0
+            "已售完" if item["quantity"] == 0
+            else "安全库存内" if item["provision_quantity"] == 0
             else "达到上限" if rate >= Decimal("0.9")
             else "接近上限" if rate >= Decimal("0.6")
             else "正常计提"
@@ -1498,11 +1545,13 @@ async def inventory_impairment_report(
             "inventory_amount": inventory_amount,
             "impairment_rate": rate,
             "impairment_amount": item["impairment_amount"],
+            "monthly_impairment_amount": item["monthly_impairment_amount"],
             "book_value": book_value,
             "book_value_difference": (
                 book_value - previous_book_value
                 if previous_book_value is not None else None
             ),
+            "comparison_note": item["comparison_note"],
             "status": status,
         })
     return result

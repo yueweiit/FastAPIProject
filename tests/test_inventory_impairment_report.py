@@ -15,6 +15,7 @@ from routers.reports import (
     _load_inventory_impairment_report_rows,
     _previous_month_end,
     _workbook_bytes_with_formula_cache,
+    inventory_impairment_report,
 )
 from services.inventory_impairment import (
     ImpairmentRule,
@@ -27,6 +28,137 @@ from services.inventory_impairment import (
 
 
 class InventoryImpairmentReportTests(unittest.TestCase):
+    def _report_rows(self, *, arrived_at, quantity, deducted=0, snapshot=None, rules=()):
+        batch = SimpleNamespace(
+            id=1, product_id=10, quantity=quantity, unit_cost=Decimal("10"),
+            arrived_at=arrived_at, batch_no="BATCH-001",
+        )
+        results = [
+            [snapshot] if snapshot is not None else [],
+            [(batch, "SKU-001", "测试商品", "测试店铺", PRODUCT_TYPE_NEW, 0, 1)],
+            list(rules),
+            [SimpleNamespace(batch_id=1, report_quantity=deducted)],
+        ]
+        db = SimpleNamespace(execute=AsyncMock(side_effect=[
+            SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: results[0])),
+            SimpleNamespace(all=lambda: results[1]),
+            SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: results[2])),
+            SimpleNamespace(all=lambda: results[3]),
+        ]))
+        with patch("routers.reports.ensure_period_snapshot", new_callable=AsyncMock) as ensure:
+            ensure.return_value = SimpleNamespace(id=1)
+            return asyncio.run(_load_inventory_impairment_report_rows(db, date(2026, 9, 30)))
+
+    def _report_response(self, rows):
+        with patch("routers.reports._load_inventory_impairment_report_rows", new_callable=AsyncMock) as load:
+            load.return_value = rows
+            return asyncio.run(inventory_impairment_report(date(2026, 9, 30), None, None))
+
+    def test_monthly_provision_on_remaining_stock_is_separate_from_sales_reduction(self):
+        snapshot = SimpleNamespace(batch_id=1, quantity=100, unit_cost=Decimal("10"))
+        rows = self._report_rows(
+            arrived_at=datetime(2026, 8, 1), quantity=100, deducted=50, snapshot=snapshot,
+        )
+        response = self._report_response(rows)[0]
+        self.assertEqual(response["impairment_amount"], Decimal("150"))
+        self.assertEqual(response["monthly_impairment_amount"], Decimal("75"))
+        self.assertEqual(response["book_value"], Decimal("350"))
+        self.assertEqual(response["book_value_difference"], Decimal("-500"))
+
+        workbook, formula_cache = _build_inventory_impairment_workbook(rows, date(2026, 9, 30))
+        output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
+        sheet = load_workbook(output, data_only=True)[INVENTORY_IMPAIRMENT_SHEET]
+        self.assertEqual(sheet["K2"].value, 150)
+        self.assertEqual(sheet["M2"].value, -500)
+        self.assertEqual(sheet["N2"].value, 75)
+        self.assertEqual(sheet["N3"].value, 75)
+
+    def test_monthly_provision_preserves_rule_history_and_safe_stock(self):
+        layers = [InventoryLayer(
+            1, 10, 1, date(2026, 8, 1), 200, PRODUCT_TYPE_STABLE, 100,
+            (
+                ImpairmentRule(PRODUCT_TYPE_NEW, 0, date(2026, 8, 1)),
+                ImpairmentRule(PRODUCT_TYPE_STABLE, 100, date(2026, 9, 11)),
+            ),
+        )]
+        result = batch_impairments(layers, date(2026, 9, 30), period_start=date(2026, 9, 1))[1]
+        self.assertEqual(result.impairment_units, Decimal("60"))
+        self.assertEqual(result.period_impairment_units, Decimal("30"))
+
+    def test_monthly_provision_obeys_cap_and_backfilled_first_rule(self):
+        capped = batch_impairments([
+            InventoryLayer(1, 10, 1, date(2026, 7, 1), 100, PRODUCT_TYPE_STABLE, 0),
+        ], date(2026, 9, 30), period_start=date(2026, 9, 1))[1]
+        self.assertEqual(capped.impairment_units, Decimal("90"))
+        self.assertEqual(capped.period_impairment_units, Decimal("29"))
+
+        backfilled = batch_impairments([
+            InventoryLayer(
+                1, 10, 1, date(2026, 8, 1), 100, PRODUCT_TYPE_NEW, 0,
+                (ImpairmentRule(PRODUCT_TYPE_NEW, 0, date(2026, 9, 22)),),
+            ),
+        ], date(2026, 9, 30), period_start=date(2026, 9, 1))[1]
+        self.assertEqual(backfilled.impairment_units, Decimal("30"))
+        self.assertEqual(backfilled.period_impairment_units, Decimal("15"))
+
+    def test_monthly_provision_handles_partial_month_across_year_boundary(self):
+        result = batch_impairments([
+            InventoryLayer(1, 10, 1, date(2025, 12, 1), 100, PRODUCT_TYPE_NEW, 0),
+        ], date(2026, 1, 15), period_start=date(2026, 1, 1))[1]
+        self.assertEqual(result.impairment_units, Decimal("22.5"))
+        self.assertEqual(result.period_impairment_units, Decimal("7.5"))
+
+    def test_missing_snapshot_is_unknown_in_page_and_export(self):
+        rows = self._report_rows(arrived_at=datetime(2026, 8, 1), quantity=100)
+        response = self._report_response(rows)[0]
+        self.assertIsNone(response["book_value_difference"])
+        self.assertEqual(response["comparison_note"], "缺少上月快照，无法比较")
+        self.assertEqual(response["monthly_impairment_amount"], Decimal("150"))
+
+        workbook, formula_cache = _build_inventory_impairment_workbook(rows, date(2026, 9, 30))
+        output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
+        sheet = load_workbook(output, data_only=True)[INVENTORY_IMPAIRMENT_SHEET]
+        self.assertIsNone(sheet["M2"].value)
+        self.assertIsNone(sheet["M3"].value)
+        self.assertEqual(sheet["N2"].value, 150)
+        self.assertIn("缺少上月快照", sheet["P2"].value)
+        self.assertIn("上月末库存：待核实", sheet["P2"].value)
+
+    def test_missing_snapshot_keeps_difference_total_unknown_with_other_valid_rows(self):
+        missing_rows = self._report_rows(arrived_at=datetime(2026, 8, 1), quantity=100)
+        snapshot = SimpleNamespace(batch_id=1, quantity=100, unit_cost=Decimal("10"))
+        valid_rows = self._report_rows(
+            arrived_at=datetime(2026, 8, 1), quantity=100, deducted=50, snapshot=snapshot,
+        )
+        workbook, formula_cache = _build_inventory_impairment_workbook(
+            missing_rows + valid_rows, date(2026, 9, 30),
+        )
+        sheet = load_workbook(
+            _workbook_bytes_with_formula_cache(workbook, formula_cache), data_only=True,
+        )[INVENTORY_IMPAIRMENT_SHEET]
+        self.assertIsNone(sheet["M4"].value)
+        self.assertEqual(sheet["N4"].value, 225)
+
+    def test_new_batch_has_zero_previous_book_value_and_only_current_month_provision(self):
+        rows = self._report_rows(arrived_at=datetime(2026, 9, 10), quantity=100)
+        response = self._report_response(rows)[0]
+        self.assertEqual(rows[0]["previous_book_value"], Decimal("0"))
+        self.assertEqual(response["impairment_amount"], Decimal("100"))
+        self.assertEqual(response["monthly_impairment_amount"], Decimal("100"))
+        self.assertEqual(response["book_value_difference"], Decimal("900"))
+        self.assertEqual(response["comparison_note"], "本月新增批次，上月账面价值为0")
+
+    def test_fully_sold_batch_has_no_provision_for_remaining_stock(self):
+        snapshot = SimpleNamespace(batch_id=1, quantity=100, unit_cost=Decimal("10"))
+        rows = self._report_rows(
+            arrived_at=datetime(2026, 8, 1), quantity=100, deducted=100, snapshot=snapshot,
+        )
+        response = self._report_response(rows)[0]
+        self.assertEqual(response["impairment_amount"], Decimal("0"))
+        self.assertEqual(response["monthly_impairment_amount"], Decimal("0"))
+        self.assertEqual(response["book_value_difference"], Decimal("-850"))
+        self.assertEqual(response["status"], "已售完")
+
     def test_previous_month_end_handles_year_boundary(self):
         self.assertEqual(_previous_month_end(date(2026, 1, 15)), date(2025, 12, 31))
         self.assertEqual(_previous_month_end(date(2026, 9, 30)), date(2026, 8, 31))
@@ -62,7 +194,7 @@ class InventoryImpairmentReportTests(unittest.TestCase):
             sheet["M2"].value,
             '=IF(OR(D2="",F2="",L2=""),"",L2-F2*(0-0*MIN(MAX(DATE(2026,7,31)-D2,0)*0.01,0.9)))',
         )
-        self.assertIn("J2>=0.6", sheet["N2"].value)
+        self.assertIn("J2>=0.6", sheet["O2"].value)
         self.assertEqual(sheet["E3"].value, "=SUM(E2:E2)")
         self.assertEqual(sheet["F3"].value, "=SUM(F2:F2)")
         self.assertEqual(sheet["G3"].value, "=SUM(G2:G2)")
@@ -78,7 +210,8 @@ class InventoryImpairmentReportTests(unittest.TestCase):
         self.assertEqual(cached_sheet["K2"].value, 7.5)
         self.assertEqual(cached_sheet["L2"].value, 17.5)
         self.assertEqual(cached_sheet["M2"].value, 17.5)
-        self.assertEqual(cached_sheet["N2"].value, "正常计提")
+        self.assertEqual(cached_sheet["N2"].value, 7.5)
+        self.assertEqual(cached_sheet["O2"].value, "正常计提")
         self.assertEqual(cached_sheet["H3"].value, 2)
 
     def test_previous_month_book_value_uses_actual_previous_inventory_quantity(self):
@@ -147,12 +280,14 @@ class InventoryImpairmentReportTests(unittest.TestCase):
         self.assertEqual(cached_sheet["G2"].value, 0)
         self.assertEqual(cached_sheet["K2"].value, 0)
         self.assertEqual(cached_sheet["M2"].value, -35)
+        self.assertEqual(cached_sheet["N2"].value, 0)
+        self.assertEqual(cached_sheet["O2"].value, "已售完")
 
     def test_empty_report_has_numeric_totals_without_circular_formulas(self):
         workbook, _ = _build_inventory_impairment_workbook([], date(2026, 8, 31))
         sheet = workbook[INVENTORY_IMPAIRMENT_SHEET]
         self.assertEqual(sheet["A2"].value, "合计")
-        for cell in ("E2", "F2", "G2", "H2", "I2", "J2", "K2", "L2", "M2"):
+        for cell in ("E2", "F2", "G2", "H2", "I2", "J2", "K2", "L2", "M2", "N2"):
             self.assertEqual(sheet[cell].value, 0)
 
     def test_new_rule_allocates_safe_stock_to_newest_stable_batch(self):

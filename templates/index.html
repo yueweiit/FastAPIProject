@@ -558,7 +558,8 @@
             <div>
                 <div id="report-pane-inventory" class="report-pane active card">
                     <div class="flex-between"><h3>存货跌价准备明细表</h3><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div>
-                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU</th><th>产品名称</th><th>批次</th><th>入库日期</th><th>库龄</th><th>单件成本</th><th>库存</th><th>计提数量</th><th>库存金额</th><th>计提比例</th><th>跌价准备</th><th>账面价值</th><th>较上月变化</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody></table></div>
+                    <p style="font-size:12px;color:#64748b;margin:8px 0">累计准备按报告日仍在库商品计算；本月计提为这些库存本月新增的准备。账面价值较上月变化包含销售出库等库存数量变化。</p>
+                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU</th><th>产品名称</th><th>批次</th><th>入库日期</th><th>库龄</th><th>单件成本</th><th>库存</th><th>计提数量</th><th>库存金额</th><th>累计计提比例</th><th>累计跌价准备</th><th>本月计提（现存库存）</th><th>账面价值</th><th>账面价值较上月变化</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody></table></div>
                 </div>
                 <div id="report-pane-profit-loss" class="report-pane card">
                     <div class="flex-between"><h3>店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
@@ -2221,15 +2222,16 @@ function openReportView(name, button) {
 async function loadInventoryImpairment() {
     const tbody = document.getElementById('inventory-impairment-tbody');
     const reportDate = document.getElementById('inventory-impairment-date').value;
-    tbody.innerHTML = '<tr><td colspan="15" class="empty">正在加载...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="16" class="empty">正在加载...</td></tr>';
     try {
         const rows = await api('GET', `/reports/inventory-impairment?report_date=${encodeURIComponent(reportDate)}`);
         tbody.innerHTML = rows.length ? rows.map(row => `<tr>
             <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td class="text-left">${escapeHtml(row.batch_no)}</td>
             <td>${row.arrived_at}</td><td>${row.age_days}天</td><td>${reportMoney(row.unit_cost)}</td><td>${row.quantity}</td><td>${row.provision_quantity}</td><td>${reportMoney(row.inventory_amount)}</td>
-            <td>${reportPercent(row.impairment_rate)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.book_value)}</td><td>${reportMoney(row.book_value_difference)}</td><td class="text-left">${escapeHtml(row.status)}</td>
-        </tr>`).join('') : '<tr><td colspan="15" class="empty">当前截止日无库存记录</td></tr>';
-    } catch (e) { tbody.innerHTML = `<tr><td colspan="15" class="empty">${escapeHtml(e.message)}</td></tr>`; }
+            <td>${reportPercent(row.impairment_rate)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.book_value)}</td>
+            <td title="${escapeHtml(row.comparison_note || '')}">${row.book_value_difference == null ? escapeHtml(row.comparison_note || '缺少上月快照，无法比较') : reportMoney(row.book_value_difference)}</td><td class="text-left">${escapeHtml(row.status)}</td>
+        </tr>`).join('') : '<tr><td colspan="16" class="empty">当前截止日无库存记录</td></tr>';
+    } catch (e) { tbody.innerHTML = `<tr><td colspan="16" class="empty">${escapeHtml(e.message)}</td></tr>`; }
 }
 
 async function loadProductLineProfit() {

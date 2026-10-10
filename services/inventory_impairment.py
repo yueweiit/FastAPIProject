@@ -36,6 +36,7 @@ class BatchImpairment:
     provision_quantity: int
     rate: Decimal
     impairment_units: Decimal
+    period_impairment_units: Decimal = Decimal("0")
 
 
 def normalized_product_type(value: str | None) -> str:
@@ -81,7 +82,8 @@ def _safe_stock_protection(layers: list[InventoryLayer], quantity: int) -> dict[
 
 
 def _legacy_batch_impairments(
-    grouped: defaultdict[int, list[InventoryLayer]], as_of: date
+    grouped: defaultdict[int, list[InventoryLayer]], as_of: date,
+    period_start: date | None = None,
 ) -> dict[int, BatchImpairment]:
     """Keep the existing calculation for products without rule history."""
     results: dict[int, BatchImpairment] = {}
@@ -105,12 +107,20 @@ def _legacy_batch_impairments(
                 provision_quantity=provision_quantity,
                 rate=rate,
                 impairment_units=Decimal(provision_quantity) * rate,
+                period_impairment_units=(
+                    Decimal(provision_quantity) * max(
+                        rate - impairment_rate(
+                            period_start - timedelta(days=1), layer.arrived_at, product_type
+                        ), Decimal("0"),
+                    ) if period_start is not None else Decimal("0")
+                ),
             )
     return results
 
 
 def _historical_batch_impairments(
-    group_layers: list[InventoryLayer], as_of: date
+    group_layers: list[InventoryLayer], as_of: date,
+    period_start: date | None = None,
 ) -> dict[int, BatchImpairment]:
     rules = sorted(
         {
@@ -122,7 +132,9 @@ def _historical_batch_impairments(
         key=lambda rule: rule.effective_date,
     )
     if not rules:
-        return _legacy_batch_impairments(defaultdict(list, {0: group_layers}), as_of)
+        return _legacy_batch_impairments(
+            defaultdict(list, {0: group_layers}), as_of, period_start
+        )
 
     # Imported or older products can have their first rule recorded only when
     # the product type is edited. In that case the first known rule applies
@@ -141,6 +153,7 @@ def _historical_batch_impairments(
         layer.batch_id: [(layer.quantity, Decimal("0"))]
         for layer in group_layers
     }
+    period_units = {layer.batch_id: Decimal("0") for layer in group_layers}
     for index, rule in enumerate(rules):
         segment_end = (
             rules[index + 1].effective_date
@@ -163,6 +176,11 @@ def _historical_batch_impairments(
             interval_start = max(layer.arrived_at + timedelta(days=1), rule.effective_date)
             interval_end = min(as_of + timedelta(days=1), segment_end)
             rate = _rate_for_interval(interval_start, interval_end, rule.product_type)
+            rate_before_period = (
+                _rate_for_interval(
+                    interval_start, min(interval_end, period_start), rule.product_type
+                ) if period_start is not None else rate
+            )
             protected_quantity = (
                 protected.get(layer.batch_id, 0)
                 if normalized_product_type(rule.product_type) == PRODUCT_TYPE_STABLE
@@ -176,9 +194,15 @@ def _historical_batch_impairments(
                     updated_components.append((protected_part, accumulated_rate))
                 excess_part = quantity - protected_part
                 if excess_part:
+                    updated_rate = min(accumulated_rate + rate, MAX_IMPAIRMENT_RATE)
+                    period_units[layer.batch_id] += Decimal(excess_part) * (
+                        updated_rate - min(
+                            accumulated_rate + rate_before_period, MAX_IMPAIRMENT_RATE
+                        )
+                    )
                     updated_components.append((
                         excess_part,
-                        min(accumulated_rate + rate, MAX_IMPAIRMENT_RATE),
+                        updated_rate,
                     ))
             components[layer.batch_id] = updated_components
 
@@ -194,18 +218,23 @@ def _historical_batch_impairments(
             provision_quantity=provision_quantity,
             rate=(units / Decimal(provision_quantity) if provision_quantity else Decimal("0")),
             impairment_units=units,
+            period_impairment_units=period_units[layer.batch_id],
         )
     return results
 
 
 def batch_impairments(
-    layers: list[InventoryLayer], as_of: date
+    layers: list[InventoryLayer], as_of: date, *, period_start: date | None = None
 ) -> dict[int, BatchImpairment]:
     """Calculate cumulative provisions, retaining amounts accrued before rule changes.
 
     A new-product period accrues against all remaining stock. On a later stable
     period, that accrued amount stays in place while only stock outside the safe
     quantity continues to accrue at the stable-product rate.
+
+    period_impairment_units counts increments from period_start through as_of
+    on the same remaining quantities. It excludes provisions on stock already
+    sold, and is independent of previous-month snapshot quantities.
     """
     grouped: defaultdict[int, list[InventoryLayer]] = defaultdict(list)
     for layer in layers:
@@ -215,7 +244,7 @@ def batch_impairments(
     results: dict[int, BatchImpairment] = {}
     for group_layers in grouped.values():
         if group_layers[0].rules:
-            results.update(_historical_batch_impairments(group_layers, as_of))
+            results.update(_historical_batch_impairments(group_layers, as_of, period_start))
         else:
             earliest_arrival = min(layer.arrived_at for layer in group_layers)
             inferred_rule = ImpairmentRule(
@@ -226,5 +255,5 @@ def batch_impairments(
             results.update(_historical_batch_impairments([
                 replace(layer, rules=(inferred_rule,))
                 for layer in group_layers
-            ], as_of))
+            ], as_of, period_start))
     return results
