@@ -61,6 +61,16 @@ async def _next_batch_no(db: AsyncSession, prefix: str) -> str:
     return f"{prefix}-{max_sequence + 1:03d}"
 
 
+async def _locked_batch(db: AsyncSession, batch_id: int) -> InventoryBatch | None:
+    """Read a batch after in-flight sales have released its row lock."""
+    return await db.scalar(
+        select(InventoryBatch)
+        .where(InventoryBatch.id == batch_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+
+
 @router.post("", response_model=BatchResponse)
 async def create_batch(
     data: BatchCreate,
@@ -121,7 +131,7 @@ async def update_batch(
     user: User = Depends(RequireOperator),
 ):
     """编辑批次 - 只能改未被销售消耗的批次"""
-    batch = await db.get(InventoryBatch, batch_id)
+    batch = await _locked_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
 
@@ -166,7 +176,7 @@ async def delete_batch(
     user: User = Depends(RequireOperator),
 ):
     """删除批次 - 只能删未被消耗的批次"""
-    batch = await db.get(InventoryBatch, batch_id)
+    batch = await _locked_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
 

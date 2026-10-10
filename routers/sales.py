@@ -44,7 +44,7 @@ from schemas import (
     PendingConfirmationPageResponse,
     PendingConfirmationResponse,
 )
-from services.fifo import fifo_sell, InsufficientStockError
+from services.fifo import fifo_sell, lock_fifo_batches, InsufficientStockError
 from services.exchange_rates import ExchangeRateError, get_cny_rates
 from auth import RequireOperator, RequireAnyRole
 
@@ -884,12 +884,12 @@ async def import_sales_file(
             for component in item["components"]:
                 required_product_ids.add(component["product"].id)
     if required_product_ids:
-        stock_rows = await db.execute(
-            select(InventoryBatch.product_id, func.sum(InventoryBatch.remaining_quantity))
-            .where(InventoryBatch.product_id.in_(required_product_ids))
-            .group_by(InventoryBatch.product_id)
-        )
-        stock_map = {product_id: int(quantity or 0) for product_id, quantity in stock_rows.all()}
+        # Keep the import's per-row stock allocation in the same locked view
+        # used by fifo_sell, including when another sale is finishing now.
+        locked_batches = await lock_fifo_batches(db, required_product_ids)
+        stock_map: dict[int, int] = {}
+        for batch in locked_batches:
+            stock_map[batch.product_id] = stock_map.get(batch.product_id, 0) + batch.remaining_quantity
         _allocate_available_stock(candidates, stock_map)
 
     pending_confirmation = sum(1 for item in candidates if item["mapping_error"])
@@ -1057,7 +1057,12 @@ async def rollback_sales_import(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
 ):
-    import_batch = await db.get(SalesImportBatch, import_batch_id)
+    import_batch = await db.scalar(
+        select(SalesImportBatch)
+        .where(SalesImportBatch.id == import_batch_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if not import_batch:
         raise HTTPException(status_code=404, detail="导入记录不存在")
     if user.role != "admin" and import_batch.store_id != _require_bound_store(user):
@@ -1119,7 +1124,13 @@ async def rollback_sales_import(
                 await db.execute(
                     select(InventoryBatch)
                     .where(InventoryBatch.id.in_([row.batch_id for row in restore_rows]))
+                    .order_by(
+                        InventoryBatch.product_id,
+                        InventoryBatch.arrived_at,
+                        InventoryBatch.id,
+                    )
                     .with_for_update()
+                    .execution_options(populate_existing=True)
                 )
             ).scalars()
         }

@@ -17,23 +17,22 @@
 
 本项目与钉钉审批、`dingtalk-oa`、`dingtalk-expense-sync`、`dingtalk-budget` 没有代码级依赖。当前数据库是本项目独立使用的 MySQL 库 `inventory_fifo`。
 
-## 2. 当前运行拓扑
+## 2. 本地测试拓扑
 
 ```text
-浏览器
-  -> fifo-inventory Web 容器
-     -> FastAPI / Uvicorn（应用端口 8000）
-     -> MySQL localhost:3306（本机开发数据库服务）
-     -> 项目 uploads/ 目录（宿主机持久化文件）
+本机直接运行的 FastAPI / Uvicorn
+  -> 127.0.0.1:3308
+     -> Docker 容器 mysql57:3306
+        -> inventory_fifo 本地测试库
 ```
 
-Docker Compose 对外提供：
+项目 Docker Compose 的 Web 服务配置为：
 
 ```text
 宿主机 8006 -> 容器 8000
 ```
 
-当前 Docker 容器：
+历史服务器部署信息：
 
 ```text
 容器名：fifo-inventory
@@ -42,7 +41,7 @@ Docker Compose 对外提供：
 数据库名：inventory_fifo
 ```
 
-服务器历史配置中的 `172.19.49.226` 不属于 `fifo-inventory` 当前 Docker 网络，也不是当前容器内的数据库。它是独立的 MySQL 服务或另一台内网主机。本地开发配置已经切换为 `localhost`，两者不能混用。
+服务器历史配置中的 `172.19.49.226` 是独立的远端 MySQL 地址。本地测试使用 `mysql57` 容器及独立账号。当前 `.env` 的 `127.0.0.1:3308` 适用于宿主机直接运行 Python；在 Web 容器内，`127.0.0.1` 指向 Web 容器自身，不能直接复用此地址。
 
 ## 3. 数据和存储边界
 
@@ -58,18 +57,18 @@ MYSQL_USER（数据库用户）
 MYSQL_PASSWORD（数据库密码）
 ```
 
-当前本地开发连接为：
+当前本地测试连接为：
 
 ```text
-主机：localhost
-端口：3306
-用户：root
-数据库：inventory_fifo（本机测试库，已于 2026-08-20 初始化）
+主机：127.0.0.1
+端口：3308（映射到 mysql57 容器的 3306）
+用户：fifo_local_app
+数据库：inventory_fifo（2026-10-08 创建的本机测试库）
 ```
 
-该数据库名是应用配置中的目标库。本机 `inventory_fifo` 仅供测试，不能与服务器数据库混用。应用启动会创建缺失表，但不会为既有表自动补齐新增字段；字段变更必须执行对应的迁移脚本。
+该数据库名是应用配置中的目标库。本机 `inventory_fifo` 仅供测试，不能与服务器数据库混用。本地 `.env` 保存随机生成的测试账号密码和 JWT 密钥，并被 Git 忽略。应用启动依次执行 `create_all` 和 `migrate()`；较复杂的结构变更仍需专门迁移。
 
-注意：Docker 容器内的 `localhost` 指向容器自身，不指向宿主机。当前 `.env` 适合直接在本机运行 FastAPI；如果使用 Docker，不能直接把此配置用于容器，必须改回可从容器访问的数据库地址，例如宿主机网关或独立 MySQL 主机。
+注意：当前 `.env` 适合直接在本机运行 FastAPI。若改用 Docker 运行 Web 服务，须配置该 Web 容器实际可访问的 MySQL 地址和端口；本机 `127.0.0.1:3308` 不能直接作为容器内的数据库地址。
 
 数据库真实数据不等同于 Docker 存储卷。必须通过 MySQL 工具或 DataGrip 进行数据库备份，例如 `mysqldump`。
 
@@ -104,7 +103,7 @@ Docker 存储卷可能保存其他项目的 PostgreSQL、Kafka、Redis 或应用
 4. 只有用户表为空时，才创建默认用户；
 5. 应用开始提供 HTTP 接口。
 
-当前不是完整的版本化数据库迁移系统。`create_all` 不会安全地自动补齐已有表的字段变更，`migrate.py` 仍然需要人工执行，而且其中部分异常会被静默忽略。批次钉钉单号、总金额和三个成本单号字段使用 `migrations/20260820_add_batch_dingtalk_fields.py`，可重复执行且只添加缺失列。
+当前不是完整的版本化数据库迁移系统。`create_all` 不会安全地自动补齐已有表的字段变更；启动时会自动执行 `migrate.py` 中的兼容迁移。`migrations/20260820_add_batch_dingtalk_fields.py` 是批次钉钉单号、总金额和三个成本单号字段的历史独立脚本，仅在核对目标库确有需要时执行。
 
 ## 5. 目录与模块职责
 
@@ -114,8 +113,8 @@ database.py             .env 加载、异步 MySQL 引擎、数据库会话、�
 models.py               SQLAlchemy ORM（对象关系映射）模型
 schemas.py              Pydantic 请求和响应模型
 auth.py                 JWT（JSON Web Token，JSON 网络令牌）、密码哈希、认证依赖
-migrate.py              手工兼容迁移脚本
-routers/auth.py         登录、注册、用户和角色管理
+migrate.py              启动时执行的兼容迁移脚本
+routers/auth.py         登录、管理员创建用户和角色管理
 routers/products.py     商品增删改查和图片上传
 routers/batches.py      入库批次增删改查
 routers/sales.py        销售记录、出库和 FIFO 成本明细
@@ -126,7 +125,8 @@ uploads/                商品图片文件
 mysql-init/init.sql     MySQL root（根用户）初始化 SQL，不由 Web 服务自动执行
 Dockerfile              Python 3.13 镜像和 Uvicorn 启动方式
 docker-compose.yml      Web 容器、端口映射、uploads 挂载和数据库环境变量
-test_main.http          手工请求示例，不是自动化测试
+tests/                  unittest 自动化测试，含 FIFO 并发回归测试
+test_main.http          手工请求示例
 ```
 
 批次列表的“显示字段”是纯前端列可见性控制，默认显示全部字段；它不调用后端接口，也不改变批次查询、数据库或 FIFO 计算。
@@ -139,7 +139,7 @@ test_main.http          手工请求示例，不是自动化测试
 
 ## 6. 数据库表和业务关系
 
-当前主要有五张表：
+当前 ORM 定义了 17 张表；以下是 FIFO 核心的五张表，其余用于店铺、平台 SKU、销售导入、结算和财务报表：
 
 ```text
 users
@@ -206,14 +206,16 @@ profit（利润）
 
 销售创建时，`services/fifo.py` 执行：
 
-1. 查询同一商品且 `remaining_quantity > 0`（剩余数量大于 0）的批次；
-2. 按 `arrived_at`（入库时间）升序排列；
+1. 对同一商品且 `remaining_quantity > 0`（剩余数量大于 0）的批次执行 MySQL `SELECT ... FOR UPDATE`，等待正在修改这些批次的事务结束后读取最新数量；
+2. 按 `product_id`、`arrived_at`（入库时间）、批次 ID 升序排列；
 3. 计算总可用库存；
 4. 库存不足时返回 HTTP 400，不创建销售记录；
 5. 从最早批次开始扣减，必要时跨多个批次；
 6. 创建 `sales`（销售记录）；
 7. 创建 `sale_cost_details`（成本明细）；
-8. 在同一个数据库会话中提交事务。
+8. 在同一个数据库事务中提交库存扣减、销售和成本明细；提交或回滚前不释放批次行锁。
+
+销售文件导入会在分配各行可用库存前，按相同顺序锁定涉及商品的库存批次；因此“库存不足则待确认”的预检和后续 FIFO 扣减基于同一份受锁保护的库存。批次编辑、删除也先锁定目标批次，再判断是否已经被销售消耗。并发销售争用最后一批库存时，后到的请求会等待前一个事务结束，并按最新库存决定成功或返回库存不足。此逻辑依赖 MySQL/InnoDB 的事务和行锁；新增库存写入路径也必须遵守相同约束。
 
 重要约束：
 
@@ -224,13 +226,13 @@ profit（利润）
 
 ## 8. 接口和权限
 
-除登录和注册外，接口通过 `Authorization: Bearer <JWT>`（Bearer 令牌认证）保护。
+除登录外，业务接口通过 `Authorization: Bearer <JWT>`（Bearer 令牌认证）保护。
 
 ### 8.1 认证接口
 
 ```text
 POST /auth/login              登录
-POST /auth/register           注册
+POST /auth/users              管理员创建用户
 GET  /auth/me                 当前用户
 GET  /auth/users              管理员查看用户
 PUT  /auth/users/{id}/role    管理员修改角色
@@ -280,17 +282,17 @@ GET /reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
 以下风险在后续改造前必须明确处理，不得忽略：
 
 1. **数据库迁移风险**：`create_all` 不是完整迁移方案，字段变更必须有可回滚迁移脚本。
-2. **FIFO 并发风险**：当前查询和扣减没有显式行锁，并发销售同一 SKU 可能超卖。
+2. **FIFO 并发约束**：销售、销售文件导入和批次编辑/删除已使用批次行锁；以后新增直接修改 `remaining_quantity` 的路径必须在同一事务内加锁并复查数量。
 3. **批次编号并发风险**：批次号通过查询当天数量再加一生成，并发入库可能生成冲突编号。
 4. **删除风险**：商品、用户、批次删除没有完整的业务级级联策略，删除前必须核对外键和历史记录。
-5. **权限风险**：注册接口公开，外部访问时任何人都可能注册普通账号。
+5. **权限边界风险**：当前 `viewer` 可以修改商品和平台 SKU 映射，与旧版“只读”描述不一致，需要按实际业务要求复核。
 6. **JWT 安全风险**：`JWT_SECRET`（JWT 密钥）有代码默认值，Compose 当前没有显式传入，生产环境必须覆盖。
 7. **默认账号风险**：默认账号和密码只适用于首次本地初始化，生产部署后必须修改。
 8. **上传风险**：当前主要按原始扩展名保存文件，未完整限制文件类型、大小和内容。
 9. **报表权限风险**：运营用户的销售记录会过滤，但库存汇总没有完全按用户过滤。
 10. **时区风险**：部分时间使用 Python 本地时间或无时区 `datetime`，跨服务器部署时必须统一时区策略。
 11. **输入兼容风险**：`test_main.http` 仍使用旧字段 `duty_cost`（关税费用），当前模型使用 `last_mile_cost`（尾程费用）。
-12. **测试不足**：当前没有自动化测试套件，`test_main.http` 只是手工请求示例。
+12. **测试范围**：已有 `tests/` 自动化测试；FIFO 并发回归测试使用锁语义模拟，部署前仍应在目标 MySQL/InnoDB 环境验证。
 
 ## 10. 后续改造规则
 
@@ -314,14 +316,14 @@ GET /reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
 ### 第一阶段：安全和可回滚
 
 - 移除默认 JWT 密钥和默认账号密码的生产依赖；
-- 限制注册接口；
+- 复核 `viewer` 对商品和平台 SKU 映射的写入权限；
 - 增加数据库备份和迁移流程；
 - 增加上传文件类型、大小和文件名校验；
 - 增加自动化测试基础。
 
 ### 第二阶段：库存一致性
 
-- 为 FIFO 扣减增加事务锁；
+- 持续验证 FIFO 事务行锁和并发导入；
 - 为批次编号增加数据库唯一约束下的重试机制；
 - 为销售创建增加幂等键，防止重复订单重复扣库存；
 - 增加库存、批次和成本明细一致性检查。
@@ -364,7 +366,10 @@ SELECT COUNT(*) FROM sale_cost_details;
 
 ## 13. 当前状态
 
-截至 2026-08-19：
+- 2026-10-08：FIFO 扣库、销售导入库存预检、批次编辑/删除使用事务行锁；增加并发回归测试，无数据库结构变更。
+- 2026-10-08：本机 `mysql57` 容器创建独立 `inventory_fifo` 测试库，初始化 17 张表，并在 MySQL 5.7.43/InnoDB 上通过真实并发扣库验证；测试销售和商品已清理。
+
+以下为 2026-08-19 的历史审阅记录，不代表当前环境状态：
 
 - 已完成项目结构和核心逻辑审阅；
 - 本次已将本地开发 MySQL 连接切换为 `localhost:3306`、`root` 用户；

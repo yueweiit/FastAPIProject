@@ -1,5 +1,6 @@
 """FIFO（先进先出）库存扣减核心逻辑"""
 
+from collections.abc import Collection
 from datetime import datetime
 from decimal import Decimal
 
@@ -11,6 +12,31 @@ from models import InventoryBatch, Sale, SaleCostDetail
 
 class InsufficientStockError(Exception):
     pass
+
+
+async def lock_fifo_batches(
+    db: AsyncSession, product_ids: Collection[int]
+) -> list[InventoryBatch]:
+    """Lock current stock rows until the caller commits or rolls back."""
+    if not product_ids:
+        return []
+
+    stmt = (
+        select(InventoryBatch)
+        .where(
+            InventoryBatch.product_id.in_(sorted(set(product_ids))),
+            InventoryBatch.remaining_quantity > 0,
+        )
+        .order_by(
+            InventoryBatch.product_id.asc(),
+            InventoryBatch.arrived_at.asc(),
+            InventoryBatch.id.asc(),
+        )
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def fifo_sell(
@@ -28,26 +54,17 @@ async def fifo_sell(
     if sold_at is None:
         sold_at = datetime.now()
 
-    # 1. 查询有库存的批次，按到货时间排序
-    stmt = (
-        select(InventoryBatch)
-        .where(
-            InventoryBatch.product_id == product_id,
-            InventoryBatch.remaining_quantity > 0,
-        )
-        .order_by(InventoryBatch.arrived_at.asc())
-    )
-    result = await db.execute(stmt)
-    batches = list(result.scalars().all())
+    # 锁住当前库存批次，等前一个销售事务提交后再读取最新剩余数量。
+    batches = await lock_fifo_batches(db, [product_id])
 
-    # 2. 检查库存
+    # 1. 检查库存
     total_available = sum(b.remaining_quantity for b in batches)
     if total_available < quantity:
         raise InsufficientStockError(
             f"库存不足: 需要 {quantity} 件, 仅有 {total_available} 件"
         )
 
-    # 3. FIFO扣减
+    # 2. FIFO扣减
     remaining_to_sell = quantity
     cost_details: list[dict] = []
     total_cost = Decimal("0")
@@ -67,10 +84,10 @@ async def fifo_sell(
         batch.remaining_quantity -= take
         remaining_to_sell -= take
 
-    # 4. 计算利润
+    # 3. 计算利润
     profit = selling_price * quantity - total_cost - platform_fee
 
-    # 5. 创建销售记录
+    # 4. 创建销售记录
     sale = Sale(
         product_id=product_id,
         user_id=user_id,
@@ -86,7 +103,7 @@ async def fifo_sell(
     db.add(sale)
     await db.flush()
 
-    # 6. 创建成本明细
+    # 5. 创建成本明细
     for detail in cost_details:
         db.add(SaleCostDetail(
             sale_id=sale.id,

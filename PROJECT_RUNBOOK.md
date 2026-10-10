@@ -10,12 +10,12 @@
 - 入口为 `main.py`；根路径 `/` 返回 `templates/index.html`，接口文档为 `/docs`。
 - Compose 服务名 `web`，容器名 `fifo-inventory`，端口映射为宿主机 `8006` 到容器 `8000`。
 - 商品图片在项目根目录 `uploads/`，挂载到容器 `/app/uploads`，访问路径 `/uploads/<文件名>`。
-- `test_main.http` 是手工请求示例，不是自动化测试；项目当前没有测试套件。
+- `tests/` 是 `unittest` 自动化测试；`test_main.http` 是手工请求示例。
 
 ## 每次运行前检查
 
 1. 阅读本文件和项目根目录的 `.env`，不要把密码复制到日志、截图或文档。
-2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地开发配置为 `localhost:3306`、用户 `root`、库名 `inventory_fifo`；该库仅作为本机测试库，已于 2026-08-20 初始化。服务器或 Docker 部署不能直接使用 `localhost`，必须配置容器可访问的 MySQL 地址。
+2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地测试库位于 Docker `mysql57` 容器，宿主机连接为 `127.0.0.1:3308`、用户 `fifo_local_app`、库名 `inventory_fifo`；本地 `.env` 中的密码为独立随机值，不使用服务器凭据。Web 容器不能直接使用此宿主机回环地址，Docker 部署须另配容器可达的数据库地址。
 3. 店铺损益表的“房租+水电+网费”还需要 OA PostgreSQL 的只读配置：`OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。FIFO 不写入 OA；只从 `dingtalk_oa.ding_approval_instance` 读取已完成且同意的指定办公场地审批明细。
    如果 OA PostgreSQL 与服务器同机且 OA 项目的 `PGHOST=localhost`，Docker 部署时将 `OA_DB_HOST` 配为 `host.docker.internal`；Compose 已加入 Linux 所需的 host-gateway 映射。若 PostgreSQL 在内网主机，则填写该内网地址。
 4. 确认运行服务器能连接 MySQL，且数据库账号有建表和改表权限。应用启动会创建缺失表。
@@ -43,14 +43,16 @@ docker compose up -d --build
 本地开发或排障：准备 `.env` 和可用 MySQL、安装 `requirements.txt` 后运行：
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+python -m uvicorn main:app --host 127.0.0.1 --port 8010
 ```
+
+本机可在项目目录执行 `\.venv\Scripts\python.exe -m tests.mysql_fifo_concurrency`，对 `127.0.0.1:3308` 的 `inventory_fifo` 运行一次真实 MySQL 并发扣库验证。脚本仅接受此本地测试连接，测试商品、批次和销售会在结束时清理。普通单元测试命令为 `\.venv\Scripts\python.exe -m unittest discover -s tests -v`。本机端口 `8006` 当前已由其他项目占用，因此上面的直接运行示例使用 `8010`。
 
 ## 启动逻辑与配置
 
 `main.py` 启动时先执行 `database.init_db()`，用 SQLAlchemy `create_all` 创建缺失表；再执行 `migrate()` 添加缺失的兼容字段；最后执行 `auth.seed_users()`，仅在 `users` 表为空时创建默认用户。这不是完整的版本化迁移。
 
-`database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `localhost` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。JWT 使用 HS256、有效期 24 小时。`JWT_SECRET` 可用环境变量覆盖，但当前 Compose 未传入该变量，生产部署必须补充强随机值。
+`database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `127.0.0.1` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。JWT 使用 HS256、有效期 24 小时。`JWT_SECRET` 可用环境变量覆盖，但当前 Compose 未传入该变量，生产部署必须补充强随机值。
 
 `services/oa_office_expenses.py` 使用独立的 `OA_DB_*` 配置以只读方式连接 OA PostgreSQL。它只统计流程 `PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B` 中申请日期落在报表期间、状态为已完成且同意的记录。管理支出为“办公场地总费用”时，仅取 `LatínGo拉丁购`（部门 ID `1089990115`）的租金和电费明细，合计后均分给当前有效店铺；管理支出为“工资中国Salario en China”时，按明细中的部门名称与系统店铺名称精确匹配并带入“人员薪资”，该值仍可人工修改并保存，已保存人工值优先；顶层组件“平摊人事+财务管理费用”非零时，按当前有效店铺数均分并带入报表同名行，该字段只允许自动取数，不允许人工修改。OA 配置缺失时，本地开发报表对应自动值为 0；配置存在但读取失败时接口必须报错，不能以 0 掩盖生产连接故障。
 
@@ -60,10 +62,10 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 main.py                 应用入口、生命周期、首页、静态 uploads
 database.py             .env、异步 MySQL 引擎、会话、建表
 auth.py                 JWT、密码哈希、认证依赖、默认用户
-models.py               五张数据表的 ORM 模型
+models.py               17 张业务数据表的 ORM 模型
 schemas.py              Pydantic 请求和响应模型
-migrate.py              手工兼容迁移，不会自动运行
-routers/auth.py         登录、注册、用户角色和密码管理
+migrate.py              启动时自动执行的兼容迁移
+routers/auth.py         登录、管理员创建用户、角色和密码管理
 routers/products.py     商品和图片上传
 routers/batches.py      入库批次与单件成本
 routers/sales.py        销售记录和 FIFO 出库
@@ -78,7 +80,7 @@ docker-compose.yml      web 服务、8006:8000、uploads 挂载、MySQL 环境�
 
 ## 数据模型与业务规则
 
-数据库 `inventory_fifo` 有五张表：
+数据库 ORM 定义了 17 张表。以下五张是 FIFO 核心表，其余用于店铺、销售导入、结算和财务报表：
 
 - `users`：用户名唯一、密码哈希、角色 `admin`、`operator`、`viewer`，非管理员可绑定一个店铺。
 - `products`：SKU 唯一、名称、图片路径。
@@ -98,13 +100,13 @@ purchase_price + (shipping_cost + last_mile_cost + other_cost) / quantity
 selling_price * quantity - total_cost - platform_fee
 ```
 
-FIFO 依据批次 `arrived_at` 升序，从 `remaining_quantity > 0` 的批次扣减。一次销售跨多个采购成本不同的批次时，`total_cost` 为各批次 `unit_cost × 扣减数量` 之和，页面展示的 FIFO 成本单价为 `total_cost ÷ 销售数量`；这里使用包含采购价和物流费用的单件成本，保证与库存计价口径一致。库存不足时，手工销售返回 HTTP 400；订单详情批量导入按 Excel 行顺序逐行判断，每一行及其所有组合商品只有在库存能够完整满足时才整行扣减，否则整行进入待确认且不扣任何库存，剩余库存可继续匹配后续数量更小的行。
+FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0` 的批次扣减。`services/fifo.py` 使用 `SELECT ... FOR UPDATE` 锁定商品的可用批次，在事务提交或回滚前保持锁；等待中的销售随后读取最新剩余数量，再决定是否扣减。销售导入在逐行分配库存前锁定所有涉及商品的可用批次，批次编辑、删除也先锁定目标行并复查是否已被消耗。此规则依赖 MySQL/InnoDB，新增直接修改库存的代码必须沿用事务内加锁和复查。一次销售跨多个采购成本不同的批次时，`total_cost` 为各批次 `unit_cost × 扣减数量` 之和，页面展示的 FIFO 成本单价为 `total_cost ÷ 销售数量`；这里使用包含采购价和物流费用的单件成本，保证与库存计价口径一致。库存不足时，手工销售返回 HTTP 400；订单详情批量导入按 Excel 行顺序逐行判断，每一行及其所有组合商品只有在库存能够完整满足时才整行扣减，否则整行进入待确认且不扣任何库存，剩余库存可继续匹配后续数量更小的行。
 
 订单详情导入会解析 `A*3`、`A+B*3` 等商品名称。跨商品组合按同一导入文件中、同币种且日期最接近的单独销售价格分摊组合销售额和平台费；单独价格优先取 `商品原价小计 ÷ 数量`，缺失时回退到 `净商品销售额 ÷ 数量`，组成数量会计入权重。任一组成商品没有可用的单独售价时，整条结算行进入待确认区，不创建销售或扣减库存。
 
 ## API 与角色
 
-除 `/auth/login` 和 `/auth/register` 外，请求均要求 `Authorization: Bearer <JWT>`。
+除 `/auth/login` 外，业务接口要求 `Authorization: Bearer <JWT>`；用户由管理员通过 `/auth/users` 创建。
 
 - `admin`：全部功能和用户管理。
 - `operator`：创建、编辑、删除商品和批次，记录销售；可查看和导出全部批次，但只能编辑、删除自己创建且未被销售消耗的批次；只能看到自己创建的销售。
@@ -133,13 +135,13 @@ FIFO 依据批次 `arrived_at` 升序，从 `remaining_quantity > 0` 的批次�
 ## 已知问题与维护风险
 
 1. Compose 未传 `JWT_SECRET`，生产部署必须加入。
-2. `/auth/register` 对外开放，任何人可注册 operator/viewer；内网系统以外的部署应关闭或增加审批。
+2. `viewer` 当前可修改商品和平台 SKU 映射；若该角色应只读，需调整服务端权限。
 3. 月度报表会过滤 operator 的销售，但库存汇总未按用户过滤，可能泄露全局库存。
 4. 删除商品或用户没有显式级联策略；有批次或销售关联时，删除前必须备份并确认外键影响。
-5. FIFO 查询没有显式行锁；并发销售同一商品可能超卖。
+5. FIFO 扣库、导入预检和批次编辑/删除已有行锁；并发库存写入必须沿用该事务约束，且大批量导入可能增加锁等待时间。
 6. 批次号按当天已有数量加一生成；并发入库可能触发唯一约束冲突。
 7. `test_main.http` 使用过时字段 `duty_cost` 且缺少认证头；当前字段为 `last_mile_cost`。
-8. `migrate.py` 需手工运行，且静默忽略部分异常；执行前必须备份数据库。新增批次留档字段（含三个成本单号）使用独立的 `migrations/20260820_add_batch_dingtalk_fields.py`，脚本会先检查列是否存在，可重复执行。
+8. `migrate.py` 在应用启动时运行，尚非完整的版本化迁移；部署含结构变更的版本前仍须备份数据库。新增批次留档字段（含三个成本单号）的历史独立脚本为 `migrations/20260820_add_batch_dingtalk_fields.py`，执行前应核对目标库与现有列。
 9. 上传仅使用原文件扩展名，未限制大小和类型；公网部署前应限制类型、大小和反向代理上传额度。
 
 ## 备份与排障
@@ -162,7 +164,7 @@ SELECT COUNT(*) FROM inventory_batches;
 SELECT COUNT(*) FROM sales;
 ```
 
-新增钉钉单号、自动计算的总金额和成本单号字段前，先备份目标库，再执行：
+仅当目标库仍缺少钉钉单号、总金额或成本单号字段，且未通过应用启动迁移补齐时，先备份目标库，再执行历史脚本：
 
 ```bash
 python migrations/20260820_add_batch_dingtalk_fields.py
@@ -185,3 +187,8 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 ## 审阅来源
 
 本文件基于 `FastAPIProject_mefrn.tar.gz` 于 2026-08-19 解压后审阅的源码、部署文件、配置、前端和手工示例整理。`.venv/`、`.idea/`、`__pycache__/` 为第三方或本地生成内容，未作为业务逻辑审阅。
+
+## 变更记录
+
+- 2026-10-08：FIFO 销售改为锁定可用库存批次后复查数量；销售文件导入在库存预检前锁定相关批次；批次编辑、删除及导入撤销读取批次时使用行锁。无需数据库结构迁移。
+- 2026-10-08：在本机 Docker `mysql57` 建立 `inventory_fifo` 和独立测试账号，项目本地 `.env` 指向 `127.0.0.1:3308`。已初始化 17 张表；真实 MySQL 并发验证确认两笔销售争用最后一件库存时仅一笔成功，测试业务记录已清理。
