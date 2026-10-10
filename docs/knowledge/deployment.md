@@ -1,0 +1,57 @@
+# 运行环境与部署方式
+
+## 源码定义的部署
+
+[Dockerfile](../../Dockerfile) 使用 python:3.13-slim，工作目录 /app，安装 requirements.txt、复制项目、建立 uploads，然后运行：
+
+```text
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+[docker-compose.yml](../../docker-compose.yml) 只定义 web：容器名 fifo-inventory，restart 为 unless-stopped，宿主机 8006 映射容器 8000；./uploads 挂载 /app/uploads，host.docker.internal 映射 host-gateway。没有 MySQL、PostgreSQL、Redis 或代理服务定义。
+
+MySQL 必须单独提供；需要 OA 自动费用时再配置外部 PostgreSQL。容器中的 localhost 指容器自身，不能直接套用宿主机连接地址。当前实际运行拓扑、数据库版本、端口占用和生产代理配置均待验证；历史记录见 [PROJECT_RUNBOOK.md](../../PROJECT_RUNBOOK.md)，不能当作实时状态。
+
+## 配置变量
+
+只记录变量名和用途，不记录任何实际凭据。依据：[.env.example](../../.env.example)、[database.py](../../database.py)、[auth.py](../../auth.py)、[OA 服务](../../services/oa_office_expenses.py)。
+
+| 变量 | 作用 | 注意 |
+| --- | --- | --- |
+| MYSQL_HOST、MYSQL_PORT | 主库地址和端口 | Compose 要求主机；端口缺省 3306 |
+| MYSQL_DATABASE | 业务库 | 默认 inventory_fifo |
+| MYSQL_USER、MYSQL_PASSWORD | 主库账号 | Compose 要求账号和密码；启动会建表/迁移 |
+| JWT_SECRET | JWT 签名 | auth.py 可读取；当前 Compose environment 未显式传入 |
+| OA_DB_HOST、OA_DB_PORT | OA PostgreSQL 地址和端口 | 可选，端口缺省 5432 |
+| OA_DB_DATABASE、OA_DB_USER、OA_DB_PASSWORD | OA 查询数据库及账号 | 应用只查表，账号实际只读权限待验证 |
+
+database.py 在加载时读取根目录 .env；现有 Dockerfile COPY . . 配合 [.dockerignore](../../.dockerignore) 排除了 .env，因此不能假定宿主机 .env 中 JWT_SECRET 会自动进入容器。OA 必需配置缺失或不完整时服务视为未配置；完整配置但查询失败时抛错。
+
+## 启动前的数据影响
+
+应用生命周期执行 create_all、migrate、默认用户初始化和月末快照。migrate 不只改结构，还会修复历史结算/导入记录。开发账号若只有业务 DML 权限，可能无法启动；生产启动权限及迁移流程需单独设计。依据：[main.py](../../main.py)、[migrate.py](../../migrate.py)。
+
+只做文档核验时不能运行 Uvicorn、迁移脚本或真实 MySQL 测试脚本。下列命令仅记录既有用法，本次没有执行：
+
+```powershell
+# 环境与数据库已准备并获运行授权时
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8010
+```
+
+```bash
+# 部署已获授权且备份/配置检查完成时
+docker compose build web
+docker compose up -d --force-recreate web
+docker compose ps
+docker compose logs --tail=200 web
+```
+
+本地 8010 是旧运行文档中的示例，不能推断当前端口空闲。完整部署及备份操作沿用 [DEPLOYMENT_HANDOFF.md](../../DEPLOYMENT_HANDOFF.md) 和 [PROJECT_RUNBOOK.md](../../PROJECT_RUNBOOK.md)，不在此重复服务器地址、凭据或历史 Git 初始化命令。
+
+## 持久化与安全限制
+
+MySQL 数据和 uploads 图片分别备份；上传目录不是数据库备份。当前 Compose 未定义数据库卷；mysql-init/init.sql 也没有被此服务挂载执行。默认不覆盖已有 .env/uploads，不删除数据库、容器卷或上传文件，不用危险 Git 清理处理环境故障。
+
+.gitignore 排除了 .env、uploads、虚拟环境及发布产物；.dockerignore 未排除 uploads，因此构建上下文是否夹带运行数据需发布前核对。源码有默认安全配置和首次种子账号，禁止将默认值作为长期生产配置。HTTPS/反向代理是部署需落实的条件，仓库未提供完整代理或证书配置。
+
+任何安装依赖、启动/重建服务、生产迁移、数据库写入、代码提交或发布都不是本次知识库初始化的执行范围。

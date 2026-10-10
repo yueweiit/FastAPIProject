@@ -1,0 +1,15 @@
+# 商品模块代码映射
+
+| 页面/功能 | 前端函数 | 后端方法 | 表/服务 |
+| --- | --- | --- | --- |
+| 创建/修改 | createProduct、openEditProduct、saveEditProduct | create_product、update_product、_impairment_settings | products、product_impairment_rules |
+| 搜索/分页/汇总 | loadProducts、searchProducts、renderProductPage | list_products、_product_summary_stmt、_enrich_product | products、inventory_batches |
+| 下拉选项 | loadProductOptions、loadSkuOptions | list_product_options | products |
+| 图片/图册 | loadGallery、分页与下载处理 | 静态 /uploads；list_products | uploads 文件、products.image |
+| 导出 | downloadProductExport、exportProduct、exportAllProducts | export_products | 商品、批次；openpyxl/Pillow |
+| 删除 | deleteProduct | delete_product | products、platform_sku_components 等引用 |
+| 平台 SKU 设置 | loadPlatformSkuMappings、savePlatformSkuMapping | 财务主数据路由 | 见[主数据代码映射](../finance-masters/code-map.md) |
+
+前端均在 [templates/index.html](../../../templates/index.html)，后端在 [routers/products.py](../../../routers/products.py)，契约在 [schemas.py](../../../schemas.py)，字段在 [models.py](../../../models.py)。创建/修改响应库存填 0，列表汇总返回实际值，应保持两条路径的用途清晰。
+
+规则变更涉及 [services/inventory_impairment.py](../../../services/inventory_impairment.py)、[services/accounting_periods.py](../../../services/accounting_periods.py) 和报表计算。测试入口为 [test_product_feature_permissions.py](../../../tests/test_product_feature_permissions.py)、[test_inventory_impairment_report.py](../../../tests/test_inventory_impairment_report.py)。
