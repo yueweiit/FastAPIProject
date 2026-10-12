@@ -30,7 +30,7 @@
 | 店铺损益查询/保存 | 任意店铺，可保存 | 当前店铺，可保存 | 当前店铺，只读 |
 | 产品线毛利 | 可汇总启用店铺 | 当前店铺 | 当前店铺 |
 | 独立存货跌价查询/导出 | 全局 | 全局 | 全局 |
-| 财务附件 | 四张，含跨店汇总 | 当前店铺三张，无跨店汇总 | 当前店铺三张，无跨店汇总 |
+| 财务附件 | 五张，含跨店损益与存货SKU汇总 | 当前店铺四张，无跨店损益汇总 | 当前店铺四张，无跨店损益汇总 |
 
 来源：[认证路由](../../routers/auth.py)、[商品](../../routers/products.py)、[批次](../../routers/batches.py)、[销售](../../routers/sales.py)、[主数据](../../routers/finance_masters.py)、[报表](../../routers/reports.py)。共享商品写权限和按店铺敏感数据过滤还由 [权限测试](../../tests/test_product_feature_permissions.py)、[店铺隔离测试](../../tests/test_store_data_isolation.py)记录。
 

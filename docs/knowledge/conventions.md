@@ -32,7 +32,7 @@
 | 认证/商品权限/店铺隔离 | test_user_creation_permissions、test_product_feature_permissions、test_store_data_isolation |
 | 商品批量新增/模板/预览/结果 | test_product_import、test_product_feature_permissions；必要时授权的 mysql_product_import 专用本地库验证 |
 | FIFO/组合分摊/汇率/导入格式 | test_sales_rules、test_fifo_concurrency；必要时授权的本地 MySQL 验证 |
-| 商品规则/跌价/快照 | test_inventory_impairment_report、test_accounting_period_snapshots、test_accounting_period_removal |
+| 商品规则/跌价/快照/批次成本及SKU汇总 | test_inventory_daily_impairment、test_inventory_impairment_report、test_inventory_cost_summary、test_accounting_period_snapshots、test_accounting_period_removal |
 | 店铺损益/OA/财务附件 | test_store_profit_loss_report、test_oa_office_expenses、test_financial_attachments_export |
 | 前端交互 | 核对模板与副本；在获准运行的环境检查分页、选择、表单、错误和导出 |
 | 纯文档 | 链接/代码路径/符号/表和路由覆盖检查，确认旧文件和业务代码未改动 |

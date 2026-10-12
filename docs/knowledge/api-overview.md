@@ -2,7 +2,7 @@
 
 ## 路由组织
 
-[main.py](../../main.py) 注册六组 APIRouter，当前源码共有 56 个业务端点（按 HTTP 方法与路径计数），另有首页和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
+[main.py](../../main.py) 注册六组 APIRouter，当前源码共有 57 个业务端点（按 HTTP 方法与路径计数），另有首页和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
 
 | 前缀 | 数量 | 文档 | 实现 |
 | --- | ---: | --- | --- |
@@ -11,7 +11,7 @@
 | /batches | 5 | [库存 API](../modules/inventory/api.md) | [routers/batches.py](../../routers/batches.py) |
 | /sales | 9 | [销售 API](../modules/sales/api.md) | [routers/sales.py](../../routers/sales.py) |
 | /finance-masters | 16 | [主数据 API](../modules/finance-masters/api.md) | [routers/finance_masters.py](../../routers/finance_masters.py) |
-| /reports | 7 | [报表 API](../modules/reports/api.md) | [routers/reports.py](../../routers/reports.py) |
+| /reports | 8 | [报表 API](../modules/reports/api.md) | [routers/reports.py](../../routers/reports.py) |
 
 默认 FastAPI 文档入口为 /docs、/redoc 和 /openapi.json，代码未显式关闭。2026-10-12 商品导入修改后，已在本机核对实际 OpenAPI；不代表服务器已更新。
 
@@ -57,6 +57,6 @@ sequenceDiagram
 
 文件导入的部分错误返回 SalesImportResponse(success=false) 的 400，而其他错误使用 HTTPException(detail)。前端会处理字符串、数组和对象错误，不存在统一的自定义响应包络。
 
-GET 存货查询/导出及财务附件可调用 ensure_period_snapshot 补建历史快照，存在数据库写入副作用；不要把所有 GET 当纯只读验证。权限过滤也不是全局中间件实现，必须同时核查查询、详情、汇总和导出，见[认证与隔离](authentication.md)。
+07存货查询/导出按销售日期重建财务自定义逐日累计，不再补建快照；应用启动仍有迁移和快照写入，其他GET入口需核实实际副作用。权限过滤也不是全局中间件实现，必须同时核查查询、详情、汇总和导出，见[认证与隔离](authentication.md)。
 
 test_main.http 保留旧字段 duty_cost 且缺认证头，不能直接作为当前契约。源码对应字段为 last_mile_cost。外部 TikTok API、OAuth 回调及公开会计期间接口未注册。
