@@ -8,7 +8,10 @@ from routers.finance_masters import (
     delete_platform_sku_mapping,
     update_platform_sku_mapping,
 )
-from routers.products import create_product, delete_product, update_product
+from routers.products import (
+    create_product, delete_product, update_product, product_import_template,
+    preview_products, import_products, export_product_import_result,
+)
 
 
 class ProductFeaturePermissionTests(unittest.IsolatedAsyncioTestCase):
@@ -22,6 +25,10 @@ class ProductFeaturePermissionTests(unittest.IsolatedAsyncioTestCase):
             create_product,
             update_product,
             delete_product,
+            product_import_template,
+            preview_products,
+            import_products,
+            export_product_import_result,
             create_platform_sku_mappings,
             update_platform_sku_mapping,
             delete_platform_sku_mapping,

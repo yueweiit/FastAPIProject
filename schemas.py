@@ -1,5 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
+
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -62,6 +64,41 @@ class ProductPageResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class ProductImportError(BaseModel):
+    field: str = Field(max_length=32)
+    message: str = Field(max_length=500)
+
+
+class ProductImportRow(BaseModel):
+    row_number: int = Field(ge=2, le=10001)
+    sku: str = Field(default="", max_length=128)
+    name: str = Field(default="", max_length=512)
+    product_type: str | None = Field(default=None, max_length=64)
+    safe_stock_quantity: int | None = None
+    status: Literal["new", "skipped", "error", "created"] = "new"
+    message: str = Field(default="", max_length=500)
+    existing_product_id: int | None = None
+    existing_product_name: str | None = Field(default=None, max_length=255)
+    product_id: int | None = None
+    errors: list[ProductImportError] = Field(default_factory=list, max_length=10)
+
+
+class ProductImportResponse(BaseModel):
+    total_rows: int
+    new_count: int
+    skipped_count: int
+    error_count: int
+    created_count: int = 0
+    can_import: bool = False
+    preview_token: str | None = None
+    message: str
+    rows: list[ProductImportRow]
+
+
+class ProductImportResultRequest(BaseModel):
+    rows: list[ProductImportRow] = Field(max_length=2000)
 
 
 # ========== 入库批次 ==========

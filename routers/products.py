@@ -27,7 +27,18 @@ from services.inventory_impairment import (
     VALID_PRODUCT_TYPES,
 )
 from schemas import ProductOptionResponse, ProductPageResponse, ProductResponse
-from auth import RequireAnyRole, get_current_user
+from auth import RequireAnyRole, SECRET_KEY, get_current_user
+from starlette.concurrency import run_in_threadpool
+from schemas import ProductImportResponse, ProductImportResultRequest
+from services.product_import import (
+    MAX_FILE_BYTES,
+    build_product_import_result,
+    build_product_import_template,
+    confirm_product_import,
+    issue_product_import_token,
+    parse_product_import,
+    preview_product_import,
+)
 
 router = APIRouter(prefix="/products", tags=["商品管理"])
 
@@ -92,6 +103,60 @@ async def create_product(
     await db.commit()
     await db.refresh(product)
     return _enrich_product(product, 0, Decimal("0"), None)
+
+
+async def _read_product_import(file: UploadFile):
+    content = await file.read(MAX_FILE_BYTES + 1)
+    if len(content) > MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="商品导入文件不能超过 5 MB")
+    return await run_in_threadpool(parse_product_import, file.filename or "", content)
+
+
+@router.get("/import-template")
+async def product_import_template(user: User = Depends(RequireAnyRole)):
+    output = await run_in_threadpool(build_product_import_template)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="product_import_template.xlsx"'},
+    )
+
+
+@router.post("/import/preview", response_model=ProductImportResponse)
+async def preview_products(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    parsed = await _read_product_import(file)
+    report = await preview_product_import(db, parsed)
+    if report.can_import:
+        report.preview_token = issue_product_import_token(parsed, report, user.id, SECRET_KEY)
+    return report
+
+
+@router.post("/import", response_model=ProductImportResponse)
+async def import_products(
+    file: UploadFile = File(...),
+    preview_token: str = Form(..., min_length=16, max_length=1024),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    parsed = await _read_product_import(file)
+    return await confirm_product_import(db, parsed, preview_token, user.id, SECRET_KEY)
+
+
+@router.post("/import/result")
+async def export_product_import_result(
+    data: ProductImportResultRequest,
+    user: User = Depends(RequireAnyRole),
+):
+    output = await run_in_threadpool(build_product_import_result, data.rows)
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="product_import_result.xlsx"'},
+    )
 
 
 @router.get("/options", response_model=list[ProductOptionResponse])
@@ -216,6 +281,10 @@ async def export_products(
             "新品" if product.product_type == PRODUCT_TYPE_NEW else "稳健商品",
             product.safe_stock_quantity, stock_qty, stock_value, last_batch, product.created_at,
         ])
+        # 导入的 SKU/名称按原始文本导出，保留前导零并避免被当作公式。
+        for column in (3, 4):
+            sheet.cell(row_index, column).data_type = "s"
+            sheet.cell(row_index, column).number_format = "@"
         image_path = None
         if product.image:
             candidate = (BASE_DIR / product.image.lstrip("/")).resolve()
