@@ -23,6 +23,12 @@ batch_impairments 按 product_id 分组，以最新 arrived_at/id 批次优先�
 
 例如新品8月1日入库、单价10元，上月末100件、本月9月30日剩50件且无安全库存：报告日累计率30%，累计准备150元，本月现存库存新增15个百分点、计提75元；上月账面850元、本月350元，账面差额为−500元。账面差额包括数量变化，不能作为本月计提。售完批次仍保留上月账面减少信息，但现存库存累计准备和本月计提均为0，状态显示“已售完”。页面与独立/财务附件 Excel 使用相同计算结果。回归用例：[test_inventory_impairment_report.py](../../../tests/test_inventory_impairment_report.py)。
 
+## 页面与 Excel 字段名称
+
+页面和 Excel 中同一指标使用相同名称：存货表以 [reports.py](../../../routers/reports.py) 的 `INVENTORY_IMPAIRMENT_HEADERS` 为准，产品线表以 `_build_product_line_profit_sheet` 的表头为准，同步维护 [运行模板](../../../templates/index.html) 和 [根目录副本](../../../index.html)。页面另列“批次号”，Excel 在备注中记录批次号；列的展示差异不代表计算口径不同。
+
+店铺损益的页面项目名通过 API 的 `row.label` 读取 `STORE_PROFIT_LOSS_ROWS`，单店 Excel 和跨店汇总也复用同一份定义。页面当前只展示本月金额，单店 Excel 另含上月金额和本年累计；这些是不同期间，不应为统一列名混为同一指标。
+
 ## 自动月末快照与比较值
 
 ```mermaid
