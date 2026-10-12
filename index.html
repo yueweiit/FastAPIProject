@@ -196,11 +196,14 @@
         .report-pane.active { display:block; }
         .report-data-table th:nth-child(n+5), .report-data-table td:nth-child(n+5) { text-align:right; font-variant-numeric:tabular-nums; }
         .report-data-table .text-left { text-align:left !important; }
-        #inventory-impairment-scroll { height:min(62vh,720px); min-height:420px; overflow:auto; scrollbar-gutter:stable; }
-        #inventory-impairment-scroll thead th { position:sticky; top:0; z-index:2; }
-        #inventory-impairment-scroll::-webkit-scrollbar { width:12px; height:12px; }
-        #inventory-impairment-scroll::-webkit-scrollbar-thumb { background:#9da8b7; border:3px solid transparent; border-radius:999px; background-clip:padding-box; }
-        #inventory-impairment-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
+        #inventory-impairment-scroll, #inventory-summary-scroll { height:min(62vh,720px); min-height:420px; overflow:auto; scrollbar-gutter:stable; }
+        #inventory-impairment-scroll thead th, #inventory-summary-scroll thead th { position:sticky; top:0; z-index:2; }
+        #inventory-impairment-scroll::-webkit-scrollbar, #inventory-summary-scroll::-webkit-scrollbar { width:12px; height:12px; }
+        #inventory-impairment-scroll::-webkit-scrollbar-thumb, #inventory-summary-scroll::-webkit-scrollbar-thumb { background:#9da8b7; border:3px solid transparent; border-radius:999px; background-clip:padding-box; }
+        #inventory-impairment-scroll::-webkit-scrollbar-thumb:hover, #inventory-summary-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
+        .report-data-table tfoot td { background:#f5f7fa; font-weight:700; }
+        .inventory-report-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+        .inventory-report-actions select { padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
         @media (max-width:900px) { .reports-layout { grid-template-columns:1fr; } .reports-sidebar { position:static; display:flex; overflow-x:auto; } .reports-sidebar button { width:auto; min-width:max-content; border-left:0; border-bottom:3px solid transparent; } .reports-sidebar button.active { border-bottom-color:var(--accent); } }
         .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
         .product-import-dialog { width:min(1080px,94vw); max-height:88vh; margin:auto; padding:24px; border:0; border-radius:12px; color:var(--ink); box-shadow:0 20px 70px rgba(17,30,50,.25); }
@@ -584,7 +587,7 @@
             <div class="flex-between">
                 <div>
                     <h3>财务附件报表</h3>
-                    <p style="font-size:13px;color:#687386;margin:6px 0 0">导出存货跌价、店铺损益、店铺汇总和产品线毛利附件；第三张表仅管理员可见</p>
+                    <p style="font-size:13px;color:#687386;margin:6px 0 0">导出存货批次明细、SKU汇总、店铺损益和产品线毛利附件；各店铺损益汇总仅管理员可见</p>
                 </div>
                 <div class="form-row" style="margin:0;align-items:flex-end">
                     <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
@@ -600,9 +603,11 @@
             </aside>
             <div>
                 <div id="report-pane-inventory" class="report-pane active card">
-                    <div class="flex-between"><h3>存货跌价准备明细表</h3><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div>
-                    <p style="font-size:12px;color:#64748b;margin:8px 0">累计准备按报告日仍在库商品计算；本月计提为这些库存本月新增的准备。账面价值较上月变化包含销售出库等库存数量变化。</p>
-                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>库存数量</th><th>计提数量</th><th>库存总金额(元)</th><th>累计计提比例</th><th>累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody></table></div>
+                    <div class="flex-between"><h3 id="inventory-report-title">存货跌价准备明细表</h3><div class="inventory-report-actions"><select id="inventory-report-view" aria-label="存货报表视图" onchange="setInventoryImpairmentView(this.value)"><option value="batch">批次明细</option><option value="sku">按SKU汇总</option></select><button class="btn btn-secondary" onclick="exportInventoryImpairmentReport()">导出当前视图</button><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div></div>
+                    <p style="font-size:12px;color:#64748b;margin:8px 0">累计跌价 = 每日销售后剩余库存按当天累计比例计算的金额逐日相加；账面价值 = 原始入库成本金额 − 累计跌价，保留负值。</p>
+                    <p id="inventory-report-scope" style="font-size:12px;color:#64748b;margin:8px 0">批次明细展示现存或上月仍有库存的批次；按SKU汇总包含截止日前全部批次，包括已售完旧批次。</p>
+                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>当日计提数量</th><th>现存库存成本金额(元)</th><th>当日累计比例</th><th>累计跌价（逐日累计）(元)</th><th>本月跌价（逐日累计）(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody><tfoot id="inventory-impairment-tfoot"></tfoot></table></div>
+                    <div id="inventory-summary-scroll" class="table-scroll" hidden><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>入库批次数</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>当日计提数量</th><th>现存库存成本金额(元)</th><th>累计跌价（逐日累计）(元)</th><th>本月跌价（逐日累计）(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th></tr></thead><tbody id="inventory-summary-tbody"></tbody><tfoot id="inventory-summary-tfoot"></tfoot></table></div>
                 </div>
                 <div id="report-pane-profit-loss" class="report-pane card">
                     <div class="flex-between"><h3>店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
@@ -2251,7 +2256,9 @@ async function exportInventoryImpairmentReport() {
         return;
     }
     try {
-        const res = await fetch(`/reports/inventory-impairment/export?report_date=${encodeURIComponent(reportDate)}`, {
+        const view = document.getElementById('inventory-report-view').value;
+        const params = new URLSearchParams({report_date: reportDate, view});
+        const res = await fetch(`/reports/inventory-impairment/export?${params.toString()}`, {
             headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
         });
         if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
@@ -2265,12 +2272,12 @@ async function exportInventoryImpairmentReport() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `存货跌价准备明细表_${reportDate}.xlsx`;
+        link.download = `${view === 'sku' ? '存货SKU汇总表' : '存货跌价准备明细表'}_${reportDate}.xlsx`;
         document.body.appendChild(link);
         link.click();
         link.remove();
         URL.revokeObjectURL(url);
-        showMsg('第一张财务附件报表已导出');
+        showMsg('存货报表已导出');
     } catch (e) { showMsg(e.message, false); }
 }
 
@@ -2434,19 +2441,75 @@ function openReportView(name, button) {
     if (name === 'product-line') loadProductLineProfit();
 }
 
+let inventoryImpairmentRequestId = 0;
+
+function setInventoryImpairmentView(view) {
+    document.getElementById('inventory-report-view').value = view === 'sku' ? 'sku' : 'batch';
+    return loadInventoryImpairment();
+}
+
+function inventoryComparisonCell(row) {
+    const note = row.comparison_note || '缺少比较基准，无法比较';
+    return `<td title="${escapeHtml(row.comparison_note || '')}">${row.book_value_difference == null ? escapeHtml(note) : reportMoney(row.book_value_difference)}</td>`;
+}
+
+function inventoryReportTotals(rows, view) {
+    const sum = key => rows.reduce((total, row) => total + Number(row[key] ?? 0), 0);
+    const fields = ['original_quantity', 'original_inventory_amount', 'sold_quantity', 'sold_cost_amount', 'quantity', 'provision_quantity', 'inventory_amount'];
+    if (view === 'batch') fields.push(null);
+    fields.push('impairment_amount', 'monthly_impairment_amount', 'book_value', 'book_value_difference');
+    if (view === 'batch') fields.push(null);
+    const quantityFields = new Set(['original_quantity', 'sold_quantity', 'quantity', 'provision_quantity']);
+    const missingComparison = rows.some(row => row.book_value_difference == null);
+    const start = view === 'sku'
+        ? `<td colspan="3" class="text-left">汇总合计</td><td>${sum('batch_count')}</td>`
+        : '<td colspan="7" class="text-left">明细合计</td>';
+    return `<tr>${start}${fields.map(key => {
+        if (!key) return '<td></td>';
+        if (key === 'book_value_difference' && missingComparison) return '<td title="部分批次缺少比较基准，差额合计无法比较">-</td>';
+        return `<td>${quantityFields.has(key) ? sum(key).toLocaleString('zh-CN') : reportMoney(sum(key))}</td>`;
+    }).join('')}</tr>`;
+}
+
 async function loadInventoryImpairment() {
-    const tbody = document.getElementById('inventory-impairment-tbody');
+    const view = document.getElementById('inventory-report-view').value;
+    const isSummary = view === 'sku';
+    const prefix = isSummary ? 'inventory-summary' : 'inventory-impairment';
+    const tbody = document.getElementById(`${prefix}-tbody`);
+    const tfoot = document.getElementById(`${prefix}-tfoot`);
+    const columnCount = isSummary ? 15 : 20;
     const reportDate = document.getElementById('inventory-impairment-date').value;
-    tbody.innerHTML = '<tr><td colspan="16" class="empty">正在加载...</td></tr>';
+    const requestId = ++inventoryImpairmentRequestId;
+    document.getElementById('inventory-impairment-scroll').hidden = isSummary;
+    document.getElementById('inventory-summary-scroll').hidden = !isSummary;
+    document.getElementById('inventory-report-title').textContent = isSummary ? '存货SKU汇总表' : '存货跌价准备明细表';
+    document.getElementById('inventory-report-scope').textContent = isSummary
+        ? '汇总与明细均包含全部已到货批次；各批逐日累计跌价后加总，保留自身入库成本与销售成本，售完后保留历史累计。'
+        : '批次明细和 SKU 汇总均包含全部已到货批次；售完批次保留售前累计。本月跌价为当月各天金额合计，上月值按相同口径重算。';
+    tfoot.innerHTML = '';
+    tbody.innerHTML = `<tr><td colspan="${columnCount}" class="empty">正在加载...</td></tr>`;
+    if (!reportDate) {
+        tbody.innerHTML = `<tr><td colspan="${columnCount}" class="empty">请选择报告截止日</td></tr>`;
+        return;
+    }
     try {
-        const rows = await api('GET', `/reports/inventory-impairment?report_date=${encodeURIComponent(reportDate)}`);
-        tbody.innerHTML = rows.length ? rows.map(row => `<tr>
+        const endpoint = isSummary ? '/reports/inventory-impairment/summary' : '/reports/inventory-impairment';
+        const rows = await api('GET', `${endpoint}?report_date=${encodeURIComponent(reportDate)}`);
+        if (requestId !== inventoryImpairmentRequestId) return;
+        tbody.innerHTML = rows.length ? rows.map(row => isSummary ? `<tr>
+            <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td>${row.batch_count}</td>
+            <td>${row.original_quantity}</td><td>${reportMoney(row.original_inventory_amount)}</td><td>${row.sold_quantity}</td><td>${reportMoney(row.sold_cost_amount)}</td><td>${row.quantity}</td><td>${row.provision_quantity}</td>
+            <td>${reportMoney(row.inventory_amount)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.book_value)}</td>${inventoryComparisonCell(row)}
+        </tr>` : `<tr>
             <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td class="text-left">${escapeHtml(row.batch_no)}</td>
-            <td>${row.arrived_at}</td><td>${row.age_days}天</td><td>${reportMoney(row.unit_cost)}</td><td>${row.quantity}</td><td>${row.provision_quantity}</td><td>${reportMoney(row.inventory_amount)}</td>
-            <td>${reportPercent(row.impairment_rate)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.book_value)}</td>
-            <td title="${escapeHtml(row.comparison_note || '')}">${row.book_value_difference == null ? escapeHtml(row.comparison_note || '缺少上月快照，无法比较') : reportMoney(row.book_value_difference)}</td><td class="text-left">${escapeHtml(row.status)}</td>
-        </tr>`).join('') : '<tr><td colspan="16" class="empty">当前截止日无库存记录</td></tr>';
-    } catch (e) { tbody.innerHTML = `<tr><td colspan="16" class="empty">${escapeHtml(e.message)}</td></tr>`; }
+            <td>${escapeHtml(row.arrived_at)}</td><td>${row.age_days}天</td><td>${reportMoney(row.unit_cost)}</td><td>${row.original_quantity}</td><td>${reportMoney(row.original_inventory_amount)}</td><td>${row.sold_quantity}</td><td>${reportMoney(row.sold_cost_amount)}</td>
+            <td>${row.quantity}</td><td>${row.provision_quantity}</td><td>${reportMoney(row.inventory_amount)}</td><td>${reportPercent(row.impairment_rate)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.book_value)}</td>
+            ${inventoryComparisonCell(row)}<td class="text-left">${escapeHtml(row.status)}</td>
+        </tr>`).join('') : `<tr><td colspan="${columnCount}" class="empty">当前截止日无${isSummary ? '入库批次' : '库存'}记录</td></tr>`;
+        tfoot.innerHTML = inventoryReportTotals(rows, view);
+    } catch (e) {
+        if (requestId === inventoryImpairmentRequestId) tbody.innerHTML = `<tr><td colspan="${columnCount}" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    }
 }
 
 async function loadProductLineProfit() {
