@@ -15,7 +15,7 @@
 ## 每次运行前检查
 
 1. 阅读本文件和项目根目录的 `.env`，不要把密码复制到日志、截图或文档。
-2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地测试库位于 Docker `mysql57` 容器，宿主机连接为 `127.0.0.1:3308`、用户 `fifo_local_app`、库名 `inventory_fifo`；本地 `.env` 中的密码为独立随机值，不使用服务器凭据。Web 容器不能直接使用此宿主机回环地址，Docker 部署须另配容器可达的数据库地址。
+2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地备份测试库位于 Docker `fifo-mysql8-test` 容器（MySQL 8.0.46），宿主机连接为 `127.0.0.1:3309`、用户 `fifo_local_app`、库名 `inventory_fifo_test`；本地 `.env` 使用已有的独立本地凭据。原 `mysql57` 与 `127.0.0.1:3308` 的 `inventory_fifo` 保留。Web 容器不能直接使用此宿主机回环地址，Docker 部署须另配容器可达的数据库地址。
 3. 店铺损益表的“房租+水电+网费”还需要 OA PostgreSQL 的只读配置：`OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。FIFO 不写入 OA；只从 `dingtalk_oa.ding_approval_instance` 读取已完成且同意的指定办公场地审批明细。
    如果 OA PostgreSQL 与服务器同机且 OA 项目的 `PGHOST=localhost`，Docker 部署时将 `OA_DB_HOST` 配为 `host.docker.internal`；Compose 已加入 Linux 所需的 host-gateway 映射。若 PostgreSQL 在内网主机，则填写该内网地址。
 4. 确认运行服务器能连接 MySQL，且数据库账号有建表和改表权限。应用启动会创建缺失表。
@@ -46,7 +46,35 @@ docker compose up -d --build
 python -m uvicorn main:app --host 127.0.0.1 --port 8010
 ```
 
-本机可在项目目录执行 `\.venv\Scripts\python.exe -m tests.mysql_fifo_concurrency`，对 `127.0.0.1:3308` 的 `inventory_fifo` 运行一次真实 MySQL 并发扣库验证。脚本仅接受此本地测试连接，测试商品、批次和销售会在结束时清理。普通单元测试命令为 `\.venv\Scripts\python.exe -m unittest discover -s tests -v`。本机端口 `8006` 当前已由其他项目占用，因此上面的直接运行示例使用 `8010`。
+`tests/mysql_fifo_concurrency.py` 的真实 MySQL 并发验证固定只接受 `127.0.0.1:3308` 的 `inventory_fifo`，会创建并清理测试业务记录；当前 `.env` 指向新的备份测试库，直接执行该脚本会被目标校验阻止。需要运行时，先核实并切换到旧的独立测试连接，不能取消保护后对备份副本执行。普通单元测试命令为 `\.venv\Scripts\python.exe -m unittest discover -s tests -v`。本机端口 `8006` 当前已由其他项目占用，因此上面的直接运行示例使用 `8010`。
+
+## 服务器备份的本地恢复
+
+2026-10-12 已将 `D:\inventory_fifo_20261010_115703.sql` 恢复到独立的本地测试库。备份约 3.4 MB，包含完成标记；其服务器版本为 MySQL 8.0.46，表排序规则为 `utf8mb4_0900_ai_ci`。没有修改备份文件内容，也没有连接生产数据库执行恢复。
+
+| 项目 | 本次核实的本地配置 |
+| --- | --- |
+| Docker 容器 / 镜像 | `fifo-mysql8-test` / `mysql:8.0.46` |
+| 连接地址 / 库名 | `127.0.0.1:3309` / `inventory_fifo_test` |
+| 本地账号 | `fifo_local_app`，凭据保存在 Git 忽略的 `.env` |
+| 数据卷 | `fifo-mysql8-test-data`，挂载 `/var/lib/mysql` |
+| 旧测试环境 | `mysql57` / `127.0.0.1:3308` / `inventory_fifo`，保留 |
+
+恢复后逐表核对 17 张表，共 5,631 条记录，与 SQL 备份中的插入数量一致；其中商品 48、入库批次 72、销售 1,396、销售成本明细 1,396、用户 12。17 张表均为 InnoDB；外键关联没有孤立记录，批次没有负库存或剩余数量超过入库数量的记录。当前 ORM 所需字段均存在，应用的 SQLAlchemy/aiomysql 异步连接已成功读取导入数据，旧测试库逐表数量保持不变。核验摘要保存在 Git 忽略的 `output/local-db-restore/verification.json` 与 `application-connection.json`，不包含凭据或业务原始行。
+
+恢复阶段仅导入 SQL 并切换本地 `.env`。随后于 2026-10-12 在 `http://127.0.0.1:8010` 成功启动应用，正常执行 `main.py` 的建表、兼容迁移、用户初始化和月末快照检查；首页及 `/openapi.json` 均返回 HTTP 200。启动后再次读取本地库，商品 48、入库批次 72、销售 1,396、用户 12、存货快照 105、会计期间 3、导入批次 5，数量与恢复时一致。
+
+后续对 `2026-09-30` 存货报表执行只读数据库计算核验、本地 HTTP 查询与 Excel 导出核对：68 行金额一致，相关 34 项回归测试通过，已有快照内容未改变。其中 15 行缺少对应的 8 月末批次快照，上月账面差额保留未知；规则历史及缺失原因仍待业务核实。独立核验范围与限制见[报表流程](docs/modules/reports/workflow.md#自动月末快照与比较值)，完整财务业务验收及生产更新仍待验证。
+
+OA 未配置，店铺损益中需要 OA 自动取数的字段不代表生产完整结果。SQL 只包含商品图片路径；本次检查的 48 个图片引用在本机均缺少对应文件，服务器 `uploads/` 图片文件需要单独备份和复制。
+
+重启本机后如测试库未运行，可以执行 `docker start fifo-mysql8-test`。在现有虚拟环境中，按上方 `8010` 端口命令启动本地项目即可使用导入的数据；使用前仍须核对实际 `.env` 和端口。
+
+Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执行以下一条命令。切换目录与启动命令应分别执行，不能拼接成同一条 `Set-Location` 命令：
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8010
+```
 
 ## 启动逻辑与配置
 
@@ -128,6 +156,14 @@ FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0`
 
 商品列表同样提供左侧复选框、表头全选、单条导出和批量导出；勾选商品后批量导出只导出所选商品，未勾选时导出当前商品列表全部商品。`GET /products/export?product_ids=1&product_ids=2` 返回带商品图片的 Excel，权限与商品查询一致。
 
+### 商品批量新增
+
+2026-10-12 新增商品列表“批量导入”入口。下载模板，填写 SKU、商品名称、商品类型、安全库存四列，选择 .xlsx 后校验预览，核对新增/跳过/错误行，确认导入并下载结果。有错误须修正后重新预览；已有 SKU 保留原资料。每次最多 2,000 条、5 MB，SKU 按文本填写以保留前导零；新品安全库存填 0，预览有效 15 分钟。导入不包含图片、批次库存、成本和历史日期。
+
+三种现有角色均可使用，商品与当日规则统一提交，失败整批回滚。无需新增依赖或数据库结构迁移；更新 Python 文件后需要重启应用，页面需刷新。具体契约与维护入口见[商品导入流程](docs/modules/products/workflow.md#商品-excel-批量新增)、[商品 API](docs/modules/products/api.md#批量新增契约)。
+
+真实 MySQL 手工验证脚本为 `python -m tests.mysql_product_import`，运行前显式设置专用 PRODUCT_IMPORT_TEST_* 变量并核实本机目标，不能复用 `inventory_fifo_test` 或生产数据库。脚本保留专用库测试记录，常规 unittest 不会执行它。
+
 ## 默认账号与敏感信息
 
 仅在 `users` 表为空时初始化：`admin/admin123`、`operator/op123`、`viewer/view123`。首次部署后必须立即改密码。`.env` 含数据库密码，`mysql-init/init.sql` 含 root 初始密码，`auth.py` 有 JWT 默认密钥，均不得用于长期生产配置。
@@ -192,3 +228,5 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 
 - 2026-10-08：FIFO 销售改为锁定可用库存批次后复查数量；销售文件导入在库存预检前锁定相关批次；批次编辑、删除及导入撤销读取批次时使用行锁。无需数据库结构迁移。
 - 2026-10-08：在本机 Docker `mysql57` 建立 `inventory_fifo` 和独立测试账号，项目本地 `.env` 指向 `127.0.0.1:3308`。已初始化 17 张表；真实 MySQL 并发验证确认两笔销售争用最后一件库存时仅一笔成功，测试业务记录已清理。
+- 2026-10-12：从下载的 MySQL 8.0.46 服务器备份恢复独立本地测试库 `inventory_fifo_test`（`127.0.0.1:3309`），逐表核对 17 张表、5,631 条记录及外键、库存边界，项目 `.env` 已切换，旧测试库保留；随后在本机 `8010` 端口成功启动应用，首页和接口定义检查通过。
+- 2026-10-12：增加商品 Excel 批量新增的模板、预览、确认及结果下载，已有 SKU 跳过，商品与规则统一提交；96 项单元测试通过，独立本地 MySQL 8.0.46 验证 2,000 条导入、重复/并发冲突和整批回滚。原业务测试库在验证期间数量和校验值未变化；服务器尚未更新，浏览器视觉验收因自动化工具启动失败待验证。

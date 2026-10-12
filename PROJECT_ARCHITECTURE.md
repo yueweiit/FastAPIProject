@@ -21,9 +21,9 @@
 
 ```text
 本机直接运行的 FastAPI / Uvicorn
-  -> 127.0.0.1:3308
-     -> Docker 容器 mysql57:3306
-        -> inventory_fifo 本地测试库
+  -> 127.0.0.1:3309
+     -> Docker 容器 fifo-mysql8-test:3306（MySQL 8.0.46）
+        -> inventory_fifo_test 本地备份测试库
 ```
 
 项目 Docker Compose 的 Web 服务配置为：
@@ -41,7 +41,7 @@
 数据库名：inventory_fifo
 ```
 
-服务器历史配置中的 `172.19.49.226` 是独立的远端 MySQL 地址。本地测试使用 `mysql57` 容器及独立账号。当前 `.env` 的 `127.0.0.1:3308` 适用于宿主机直接运行 Python；在 Web 容器内，`127.0.0.1` 指向 Web 容器自身，不能直接复用此地址。
+服务器历史配置中的 `172.19.49.226` 是独立的远端 MySQL 地址。2026-10-12 已将下载的服务器 SQL 备份恢复到本机 `fifo-mysql8-test` 容器，使用独立的本地账号；原 `mysql57` 容器及 `127.0.0.1:3308` 的旧测试库保留。当前 `.env` 的 `127.0.0.1:3309` 适用于宿主机直接运行 Python；在 Web 容器内，`127.0.0.1` 指向 Web 容器自身，不能直接复用此地址。恢复与验证记录见 [PROJECT_RUNBOOK.md](PROJECT_RUNBOOK.md#服务器备份的本地恢复)。
 
 ## 3. 数据和存储边界
 
@@ -61,14 +61,14 @@ MYSQL_PASSWORD（数据库密码）
 
 ```text
 主机：127.0.0.1
-端口：3308（映射到 mysql57 容器的 3306）
+端口：3309（映射到 fifo-mysql8-test 容器的 3306）
 用户：fifo_local_app
-数据库：inventory_fifo（2026-10-08 创建的本机测试库）
+数据库：inventory_fifo_test（2026-10-12 从服务器备份恢复）
 ```
 
 该数据库名是应用配置中的目标库。本机 `inventory_fifo` 仅供测试，不能与服务器数据库混用。本地 `.env` 保存随机生成的测试账号密码和 JWT 密钥，并被 Git 忽略。应用启动依次执行 `create_all` 和 `migrate()`；较复杂的结构变更仍需专门迁移。
 
-注意：当前 `.env` 适合直接在本机运行 FastAPI。若改用 Docker 运行 Web 服务，须配置该 Web 容器实际可访问的 MySQL 地址和端口；本机 `127.0.0.1:3308` 不能直接作为容器内的数据库地址。
+注意：当前 `.env` 适合直接在本机运行 FastAPI。若改用 Docker 运行 Web 服务，须配置该 Web 容器实际可访问的 MySQL 地址和端口；本机 `127.0.0.1:3309` 不能直接作为容器内的数据库地址。
 
 数据库真实数据不等同于 Docker 存储卷。必须通过 MySQL 工具或 DataGrip 进行数据库备份，例如 `mysqldump`。
 
@@ -246,9 +246,15 @@ DELETE /auth/users/{id}       管理员删除用户
 ```text
 POST   /products              新建商品和图片
 GET    /products              商品列表及库存汇总
+GET    /products/import-template 商品导入模板
+POST   /products/import/preview 商品 Excel 只读校验预览
+POST   /products/import       根据有效预览整批新增商品与当日规则
+POST   /products/import/result 校验/导入清单 Excel
 PUT    /products/{id}         修改商品和图片
 DELETE /products/{id}         删除商品
 ```
+
+商品批量新增复用 openpyxl，不新增表或依赖，已有 SKU 跳过且不更新。模板、预览和事务细节以[商品模块流程](docs/modules/products/workflow.md#商品-excel-批量新增)及[商品 API](docs/modules/products/api.md)为准；原有商品/批次列表契约和 FIFO 不改变。
 
 ### 8.3 入库接口
 
@@ -368,6 +374,7 @@ SELECT COUNT(*) FROM sale_cost_details;
 
 - 2026-10-08：FIFO 扣库、销售导入库存预检、批次编辑/删除使用事务行锁；增加并发回归测试，无数据库结构变更。
 - 2026-10-08：本机 `mysql57` 容器创建独立 `inventory_fifo` 测试库，初始化 17 张表，并在 MySQL 5.7.43/InnoDB 上通过真实并发扣库验证；测试销售和商品已清理。
+- 2026-10-12：为兼容服务器备份的 MySQL 8.0.46 与 `utf8mb4_0900_ai_ci`，新建本机 `fifo-mysql8-test` 容器及专用数据卷，恢复到 `127.0.0.1:3309` 的 `inventory_fifo_test`；17 张表、5,631 条记录逐表核对一致，项目 `.env` 已切换，原 MySQL 5.7 测试库保留。随后成功启动宿主机 FastAPI（`127.0.0.1:8010`），正常生命周期完成，首页和接口定义均返回 HTTP 200；关键表数量与恢复时一致，财务报表尚未执行业务验收。
 
 以下为 2026-08-19 的历史审阅记录，不代表当前环境状态：
 

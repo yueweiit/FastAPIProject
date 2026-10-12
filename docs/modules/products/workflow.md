@@ -6,6 +6,39 @@ createProduct 使用 multipart 提交 sku、name、product_type、safe_stock_qua
 
 图片可能在规则校验或数据库提交前写入，失败不自动回滚文件。当前未完整限制图片 MIME、内容和大小。静态图片由 [main.py](../../../main.py) 公开挂载。
 
+## 商品 Excel 批量新增
+
+入口为商品列表工具栏“批量导入”；`openProductImport` 打开原生 dialog，`previewProductImport` 上传文件，`confirmProductImport` 确认，`downloadProductImportResult` 下载校验或导入清单。商品列表、图册及商品下拉框显示 SKU/名称时做 HTML 转义。前端依据：[templates/index.html](../../../templates/index.html)；服务依据：[product_import.py](../../../services/product_import.py)。
+
+```mermaid
+flowchart TD
+    A[下载模板并填写四列] --> B[上传 .xlsx 校验预览]
+    B --> C[字段校验及按实库排序规则查重]
+    C --> D{有错误或全部已存在?}
+    D -->|有错误| E[下载校验清单、修正并重新预览]
+    E --> B
+    D -->|全部已存在| F[无需提交、不改已有资料]
+    D -->|有新增且无错误| G[核对新增与跳过行、确认导入]
+    G --> H[检查预览、重新解析文件并查重]
+    H --> I{文件或数据库变化?}
+    I -->|是| B
+    I -->|否| J[flush 新商品、添加当日规则]
+    J --> K{统一提交成功?}
+    K -->|否| L[整批回滚、重新预览]
+    L --> B
+    K -->|是| M[刷新商品列表、下载导入结果]
+```
+
+四列为 SKU、商品名称、商品类型、安全库存；表头首行，优先读“商品导入”工作表，兼容“商品数据”或首张表。SKU/名称需非空文本，去首尾空白后长度分别不超过 64/255；商品类型必填，允许“新品”/new、“稳健商品”/stable。安全库存留空为 0，必须是 0–2147483647 整数，新品必须为 0。模板将 SKU/名称设为文本，类型有下拉项，示例放在“填写说明”而非数据表。
+
+空数据行不计入 2,000 条上限，隐藏行仍读取；原始行号用于定位错误，超过 10,001 个物理行提示整理空白间隔。四个导入列中的公式和 Excel 错误单元格不接受；额外列（图片、库存、金额、日期、商品 ID 等）忽略，不能将商品导出文件中的库存当作入库。数字单元格 SKU 作为错误，不能凭格式猜测已丢失的前导零。宏、XML 实体声明、损坏/加密文件和解压后超过 20 MB 的文件拒绝；不保存上传文件。
+
+`preview_product_import` 只读 `products` 和列排序规则，不写商品、规则或快照；按实际 `products.sku` 的 MySQL 排序规则判断文件内重复及已存在 SKU，大小写/重音行为不由 Python 字符串近似。有效且无错误的预览绑定用户、原文件摘要及预览结果，15 分钟内可确认；数据已变化、文件替换或预览过期均需重新预览。已有行即使被跳过，也需先通过字段校验。
+
+`confirm_product_import` 只新增 Product，flush 取得 ID，写当日 ProductImpairmentRule，并一次 commit。数据库唯一键仍兜底并发冲突，失败 rollback 两张表；已有商品、图片、规则历史、批次及销售不修改。原生页面提交期间禁止再次提交/关闭，成功后刷新列表；超时或异常后重新预览，可识别已提交的 SKU，避免重复新增。
+
+不建立商品导入批次表或持久化预览记录；下载的结果由页面当前清单生成，含原始行号、状态、商品 ID 和错误，不能替代服务端审计台账。导入结果文本以及现有商品导出的 SKU/名称强制文本输出，保留前导零并防止以“=”开头的名称变成公式。真实事务验证见[mysql_product_import.py](../../../tests/mysql_product_import.py)，字段/接口测试见[test_product_import.py](../../../tests/test_product_import.py)。
+
 ## 修改规则
 
 ```mermaid

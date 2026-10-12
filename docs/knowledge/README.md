@@ -24,7 +24,7 @@
 | 模块 | 主要内容 | 入口 |
 | --- | --- | --- |
 | 认证与用户 | JWT、用户管理、店铺绑定 | [auth/overview.md](../modules/auth/overview.md) |
-| 商品 | SKU、图片、图册、安全库存与商品类型历史 | [products/overview.md](../modules/products/overview.md) |
+| 商品 | SKU、Excel 批量新增、图片、图册、安全库存与商品类型历史 | [products/overview.md](../modules/products/overview.md) |
 | 入库与库存 | 批次、采购和物流成本、库存编辑约束 | [inventory/overview.md](../modules/inventory/overview.md) |
 | 销售与导入 | FIFO、平台文件、组合 SKU、人民币金额、待确认和撤销 | [sales/overview.md](../modules/sales/overview.md) |
 | 财务主数据 | 店铺、产品线、店铺 SKU 和平台 SKU 映射 | [finance-masters/overview.md](../modules/finance-masters/overview.md) |
@@ -61,7 +61,7 @@
 | 历史报表 | 保存快照；报表比较值可按规则历史重算 | 重复导出与迟到数据、撤销、改绑用户后的审计口径 |
 | 平台对接 | 当前支持文件导入；未见授权和订单同步实现 | TikTok API 权限、订单/退款/结算确认规则，见目标文档 |
 | 并发 | FIFO 和撤销有行锁；订单号只有普通索引 | 真实 MySQL 并发、批量导入锁等待、跨店重复事件和幂等策略 |
-| 页面副本 | templates/index.html 与根目录 index.html 当前内容不完全一致 | 后续前端任务核对已有差异，按授权范围同步；本次未修改两份页面 |
+| 页面副本 | templates/index.html 与根目录 index.html 当前内容不完全一致；2026-10-12 已同步商品导入功能块 | 后续前端任务仍需核对平台 SKU 等已有差异，按授权范围同步 |
 
 ## 初始化验证记录
 

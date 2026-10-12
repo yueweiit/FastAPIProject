@@ -31,7 +31,7 @@ database.py / models.py  异步会话与 17 张 ORM 表
 schemas.py / auth.py     数据契约、认证和角色依赖
 migrate.py              启动兼容迁移和历史记录修复
 routers/                六组 HTTP 路由，含部分业务计算
-services/               FIFO、汇率、跌价准备、快照和 OA 服务
+services/               商品导入、FIFO、汇率、跌价准备、快照和 OA 服务
 templates/index.html    实际运行首页，内嵌 CSS/JavaScript
 index.html              页面副本；前端修改需核对两份文件
 tests/                  单元测试和本地 MySQL 并发验证脚本
@@ -46,7 +46,7 @@ docs/modules/           六个模块的业务、流程、代码、表和 API
 
 源码路径均以仓库根目录为基准。实际请求入口为 Uvicorn `main:app`：`/` 读取模板，`/uploads` 公开提供图片，默认 FastAPI `/docs`、`/redoc`、`/openapi.json` 提供接口说明；业务路由由 `main.py` 的六次 `include_router` 注册。
 
-当前两份 index.html 在归一化换行后仍有内容差异，以 templates/index.html 为运行依据。本次只记录差异，没有同步页面或覆盖任何已有代码。
+当前两份 index.html 在归一化换行后仍有内容差异，以 templates/index.html 为运行依据。2026-10-12 商品导入按功能块同步两份页面，保留平台 SKU 懒加载等原有差异。
 
 ## 当前实现边界
 

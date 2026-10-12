@@ -10,7 +10,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 [docker-compose.yml](../../docker-compose.yml) 只定义 web：容器名 fifo-inventory，restart 为 unless-stopped，宿主机 8006 映射容器 8000；./uploads 挂载 /app/uploads，host.docker.internal 映射 host-gateway。没有 MySQL、PostgreSQL、Redis 或代理服务定义。
 
-MySQL 必须单独提供；需要 OA 自动费用时再配置外部 PostgreSQL。容器中的 localhost 指容器自身，不能直接套用宿主机连接地址。当前实际运行拓扑、数据库版本、端口占用和生产代理配置均待验证；历史记录见 [PROJECT_RUNBOOK.md](../../PROJECT_RUNBOOK.md)，不能当作实时状态。
+MySQL 必须单独提供；需要 OA 自动费用时再配置外部 PostgreSQL。容器中的 localhost 指容器自身，不能直接套用宿主机连接地址。2026-10-12 已核实本机的备份测试环境：Docker Desktop `fifo-mysql8-test`（MySQL 8.0.46）通过 `127.0.0.1:3309` 提供 `inventory_fifo_test`，项目本地 `.env` 已切换并通过异步连接读取检查；宿主机 FastAPI 已在 `127.0.0.1:8010` 成功启动，首页检查通过，原 MySQL 5.7 测试库保留。恢复、启动验证、持久化与限制统一维护在 [PROJECT_RUNBOOK.md](../../PROJECT_RUNBOOK.md#服务器备份的本地恢复)。生产运行拓扑、端口占用和代理配置仍待验证，不能将历史记录当作实时状态。
 
 ## 配置变量
 
@@ -31,7 +31,7 @@ database.py 在加载时读取根目录 .env；现有 Dockerfile COPY . . 配合
 
 应用生命周期执行 create_all、migrate、默认用户初始化和月末快照。migrate 不只改结构，还会修复历史结算/导入记录。开发账号若只有业务 DML 权限，可能无法启动；生产启动权限及迁移流程需单独设计。依据：[main.py](../../main.py)、[migrate.py](../../migrate.py)。
 
-只做文档核验时不能运行 Uvicorn、迁移脚本或真实 MySQL 测试脚本。下列命令仅记录既有用法，本次没有执行：
+只做文档核验时不能运行 Uvicorn、迁移脚本或真实 MySQL 测试脚本。下列命令记录既有用法；实际本地启动验证见运行手册的恢复记录，不能据此推断部署命令也已执行：
 
 ```powershell
 # 环境与数据库已准备并获运行授权时
@@ -46,7 +46,7 @@ docker compose ps
 docker compose logs --tail=200 web
 ```
 
-本地 8010 是旧运行文档中的示例，不能推断当前端口空闲。完整部署及备份操作沿用 [DEPLOYMENT_HANDOFF.md](../../DEPLOYMENT_HANDOFF.md) 和 [PROJECT_RUNBOOK.md](../../PROJECT_RUNBOOK.md)，不在此重复服务器地址、凭据或历史 Git 初始化命令。
+本地 `8010` 已用于 2026-10-12 的运行验证；每次重新启动仍需检查端口占用。完整部署及备份操作沿用 [DEPLOYMENT_HANDOFF.md](../../DEPLOYMENT_HANDOFF.md) 和 [PROJECT_RUNBOOK.md](../../PROJECT_RUNBOOK.md)，不在此重复服务器地址、凭据或历史 Git 初始化命令。
 
 ## 持久化与安全限制
 

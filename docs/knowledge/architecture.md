@@ -12,7 +12,7 @@ flowchart LR
     A --> UP["/uploads 静态文件"]
     A --> R["routers：认证、商品、批次、销售、主数据、报表"]
     R --> AU["auth.py：当前用户及角色"]
-    R --> S["services：FIFO、汇率、跌价、快照、OA"]
+    R --> S["services：商品导入、FIFO、汇率、跌价、快照、OA"]
     R --> DB["database.py / AsyncSession"]
     S --> DB
     DB --> M["外置 MySQL：17 张 ORM 表"]
@@ -43,6 +43,7 @@ flowchart LR
 | 操作 | 边界和约束 | 代码 |
 | --- | --- | --- |
 | 手工销售 | 锁可用批次 → 复查库存 → 更新剩余数 → 创建销售/成本明细 → 一次提交 | [fifo.py](../../services/fifo.py) 的 lock_fifo_batches、fifo_sell |
+| 商品批量新增 | 只读预览 → 确认重新校验 → 新商品与当日规则统一提交；唯一键冲突整批回滚 | [product_import.py](../../services/product_import.py) 的 confirm_product_import |
 | 文件导入 | 校验/映射/汇率 → 按相同顺序锁全部涉及商品批次 → 逐行分配 → fifo_sell(commit=False) → 结算/分摊/导入批次一起提交 | [sales.py](../../routers/sales.py) 的 import_sales_file |
 | 导入撤销 | 锁导入批次及原库存批次 → 校验恢复数量 → 恢复库存 → 删除关联业务行 → 保留撤销批次状态 → 提交 | [sales.py](../../routers/sales.py) 的 rollback_sales_import |
 | 批次修改/删除 | 先锁目标批次，按创建人权限及是否消耗判断 | [batches.py](../../routers/batches.py) 的 _locked_batch |

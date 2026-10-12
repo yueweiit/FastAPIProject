@@ -30,6 +30,7 @@
 | 影响范围 | 优先验证 |
 | --- | --- |
 | 认证/商品权限/店铺隔离 | test_user_creation_permissions、test_product_feature_permissions、test_store_data_isolation |
+| 商品批量新增/模板/预览/结果 | test_product_import、test_product_feature_permissions；必要时授权的 mysql_product_import 专用本地库验证 |
 | FIFO/组合分摊/汇率/导入格式 | test_sales_rules、test_fifo_concurrency；必要时授权的本地 MySQL 验证 |
 | 商品规则/跌价/快照 | test_inventory_impairment_report、test_accounting_period_snapshots、test_accounting_period_removal |
 | 店铺损益/OA/财务附件 | test_store_profit_loss_report、test_oa_office_expenses、test_financial_attachments_export |
@@ -43,6 +44,8 @@
 ```
 
 [tests/mysql_fifo_concurrency.py](../../tests/mysql_fifo_concurrency.py) 会连接并写入特定本地测试库，虽有目标限制和清理逻辑，也不能当纯只读检查或默认执行。普通测试主要使用模拟数据，不等同于目标 MySQL/InnoDB 的集成验证。运行前确认依赖已存在，不为文档任务安装依赖或启动应用。
+
+[tests/mysql_product_import.py](../../tests/mysql_product_import.py) 独立读取 PRODUCT_IMPORT_TEST_HOST/PORT/DATABASE/USER/PASSWORD，不复用业务库配置；只允许 127.0.0.1 和以 inventory_fifo_product_import_validation_ 开头的显式专用库。需要事先创建该库并授权，运行后保留测试表/数据，不删除业务数据；不可自动纳入常规 unittest。使用进程环境传递凭据，不把密码写进命令或验证输出。
 
 ## 必须保持的业务约束
 

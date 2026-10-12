@@ -11,7 +11,7 @@
 | 任务 | 模块入口 |
 | --- | --- |
 | 登录、账号、角色、店铺绑定 | [认证](docs/modules/auth/overview.md) |
-| 商品、图片、图册、安全库存、类型规则 | [商品](docs/modules/products/overview.md) |
+| 商品、Excel 批量新增、图片、图册、安全库存、类型规则 | [商品](docs/modules/products/overview.md) |
 | 入库、批次、库存、成本、批次导出 | [库存](docs/modules/inventory/overview.md) |
 | 销售、文件导入、FIFO、结算、汇率、撤销 | [销售](docs/modules/sales/overview.md) |
 | 店铺、产品线、店铺/平台 SKU 映射 | [财务主数据](docs/modules/finance-masters/overview.md) |

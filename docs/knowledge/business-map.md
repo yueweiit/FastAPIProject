@@ -5,7 +5,7 @@
 | 模块 | 当前功能 | 角色/范围 | 代码与文档 |
 | --- | --- | --- | --- |
 | 认证与用户 | 登录、当前用户、管理员建号、角色修改、密码管理、用户删除、店铺绑定 | 账号管理 admin；自助改密已登录用户 | [routers/auth.py](../../routers/auth.py)；[认证模块](../modules/auth/overview.md) |
-| 商品 | SKU/名称/图片维护、图册、搜索分页、图片 Excel 导出、商品类型/安全库存和生效历史 | 三种角色均可读写，共享商品 | [routers/products.py](../../routers/products.py)；[商品模块](../modules/products/overview.md) |
+| 商品 | SKU/名称/图片维护、Excel 模板/预览/批量新增、图册、搜索分页、图片 Excel 导出、商品类型/安全库存和生效历史 | 三种角色均可读写，共享商品；导入已有 SKU 跳过 | [routers/products.py](../../routers/products.py)；[商品模块](../modules/products/overview.md) |
 | 入库与库存 | 批次、钉钉单号留档、采购/头尾程/其他成本、剩余库存、搜索和图文导出 | 写入 admin/operator；operator 编辑/删除仅自己的未消耗批次；读取共享 | [routers/batches.py](../../routers/batches.py)；[库存模块](../modules/inventory/overview.md) |
 | 销售与导入 | 指定店铺手工销售、FIFO、成本来源、CSV/Excel 导入、组合组件成本分摊、待确认查询/导出、导入记录及撤销、人民币月度汇总 | 写入 admin/operator；非 admin 的敏感数据按绑定店铺 | [routers/sales.py](../../routers/sales.py)；[销售模块](../modules/sales/overview.md) |
 | 财务主数据 | 店铺、产品线、店铺 SKU 生效映射、平台 SKU 及组件倍数 | 店铺/产品线/店铺 SKU 写入仅 admin；平台 SKU 三种角色均可写 | [routers/finance_masters.py](../../routers/finance_masters.py)；[主数据模块](../modules/finance-masters/overview.md) |
