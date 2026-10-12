@@ -203,6 +203,24 @@
         #inventory-impairment-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
         @media (max-width:900px) { .reports-layout { grid-template-columns:1fr; } .reports-sidebar { position:static; display:flex; overflow-x:auto; } .reports-sidebar button { width:auto; min-width:max-content; border-left:0; border-bottom:3px solid transparent; } .reports-sidebar button.active { border-bottom-color:var(--accent); } }
         .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
+        .product-import-dialog { width:min(1080px,94vw); max-height:88vh; margin:auto; padding:24px; border:0; border-radius:12px; color:var(--ink); box-shadow:0 20px 70px rgba(17,30,50,.25); }
+        .product-import-dialog::backdrop { background:rgba(17,30,50,.45); }
+        .product-import-heading, .product-import-toolbar, .product-import-actions, .product-import-summary { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+        .product-import-heading { justify-content:space-between; margin-bottom:10px; }
+        .product-import-hint { color:var(--muted); font-size:13px; margin:0 0 18px; }
+        .product-import-toolbar input { min-width:210px; flex:1; }
+        .product-import-status { margin:16px 0; font-size:13px; overflow-wrap:anywhere; }
+        .product-import-status[data-kind="error"] { color:#b4233d; }
+        .product-import-status[data-kind="success"] { color:#087f5b; }
+        .product-import-summary { padding:12px 16px; background:#f4f6f8; border-radius:8px; font-size:13px; margin-bottom:12px; }
+        .product-import-summary[hidden], .product-import-preview[hidden] { display:none; }
+        .product-import-preview { max-height:43vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+        .product-import-preview table { margin:0; min-width:800px; }
+        .product-import-preview th { position:sticky; top:0; z-index:1; }
+        .product-import-preview td { vertical-align:top; white-space:normal; overflow-wrap:anywhere; }
+        .product-import-preview td:nth-child(3), .product-import-preview td:last-child { min-width:160px; max-width:300px; }
+        .product-import-actions { justify-content:flex-end; margin-top:18px; }
+        .product-import-dialog button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
     </style>
 </head>
 <body>
@@ -255,6 +273,30 @@
                 <div id="p-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
+        <dialog id="product-import-dialog" class="product-import-dialog" aria-labelledby="product-import-title">
+            <div class="product-import-heading">
+                <h3 id="product-import-title">批量导入商品</h3>
+                <button type="button" class="btn btn-secondary" data-product-import-control onclick="closeProductImport()">关闭</button>
+            </div>
+            <p class="product-import-hint">新增商品基础资料，已有 SKU 自动跳过。库存、成本和图片通过对应功能单独维护；新品安全库存填 0。</p>
+            <div class="product-import-toolbar">
+                <button type="button" class="btn btn-secondary" data-product-import-control onclick="downloadProductImportTemplate()">下载模板</button>
+                <input type="file" id="product-import-file" accept=".xlsx" aria-label="选择商品 Excel 文件" data-product-import-control onchange="resetProductImportPreview()">
+                <button type="button" id="product-import-preview-button" class="btn btn-primary" data-product-import-control onclick="previewProductImport()" disabled>校验预览</button>
+            </div>
+            <p id="product-import-status" class="product-import-status" role="status" aria-live="polite">支持 .xlsx，每次最多 2,000 条、5 MB。先填写模板，再上传预览。</p>
+            <div id="product-import-summary" class="product-import-summary" hidden></div>
+            <div id="product-import-preview" class="product-import-preview" hidden>
+                <table>
+                    <thead><tr><th>原行号</th><th>SKU</th><th>商品名称</th><th>商品类型</th><th>安全库存</th><th>处理结果</th><th>说明</th></tr></thead>
+                    <tbody id="product-import-tbody"></tbody>
+                </table>
+            </div>
+            <div class="product-import-actions">
+                <button type="button" id="product-import-result-button" class="btn btn-secondary" onclick="downloadProductImportResult()" disabled>下载校验清单</button>
+                <button type="button" id="product-import-confirm-button" class="btn btn-primary" onclick="confirmProductImport()" disabled>确认导入</button>
+            </div>
+        </dialog>
         <!-- 编辑弹窗 -->
         <div id="edit-product-modal" class="card edit-modal" style="display:none;border:2px solid #1a73e8">
             <div class="flex-between"><h3>✏️ 编辑商品</h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditProduct()">× 取消</button></div>
@@ -314,6 +356,7 @@
                     <button type="button" class="btn btn-secondary" onclick="clearProductSearch()" title="清空搜索条件">清空</button>
                 </form>
                 <div class="batch-list-actions">
+                    <button class="btn btn-primary" type="button" onclick="openProductImport()">批量导入</button>
                     <button class="btn btn-primary" onclick="exportAllProducts()" title="导出当前商品列表">批量导出</button>
                     <button class="btn btn-secondary" onclick="loadProducts()">刷新</button>
                 </div>
@@ -694,6 +737,10 @@ async function doLogin() {
 }
 
 function doLogout() {
+    if (document.getElementById('product-import-dialog').open) {
+        document.getElementById('product-import-dialog').close();
+    }
+    resetProductImportPreview();
     localStorage.clear();
     AUTH_TOKEN = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
     document.getElementById('login-overlay').style.display = 'flex';
@@ -952,6 +999,194 @@ async function deleteProduct(id) {
     } catch (e) { showMsg(e.message, false); }
 }
 
+let productImportReport = null;
+let productImportFile = null;
+let productImportToken = '';
+let productImportBusy = false;
+
+function productImportStatus(message, kind = '') {
+    const status = document.getElementById('product-import-status');
+    status.textContent = message;
+    status.dataset.kind = kind;
+}
+
+function setProductImportBusy(busy) {
+    productImportBusy = busy;
+    document.querySelectorAll('[data-product-import-control]').forEach(control => { control.disabled = busy; });
+    document.getElementById('product-import-preview-button').disabled = busy || !document.getElementById('product-import-file').files.length;
+    document.getElementById('product-import-result-button').disabled = busy || !productImportReport;
+    document.getElementById('product-import-confirm-button').disabled = busy || !productImportReport?.can_import || !productImportToken;
+}
+
+function resetProductImportPreview() {
+    productImportReport = null;
+    productImportFile = null;
+    productImportToken = '';
+    document.getElementById('product-import-summary').hidden = true;
+    document.getElementById('product-import-preview').hidden = true;
+    document.getElementById('product-import-tbody').replaceChildren();
+    document.getElementById('product-import-result-button').textContent = '下载校验清单';
+    document.getElementById('product-import-confirm-button').textContent = '确认导入';
+    productImportStatus('支持 .xlsx，每次最多 2,000 条、5 MB。先填写模板，再上传预览。');
+    setProductImportBusy(productImportBusy);
+}
+
+function openProductImport() {
+    document.getElementById('product-import-file').value = '';
+    resetProductImportPreview();
+    document.getElementById('product-import-dialog').showModal();
+}
+
+function closeProductImport() {
+    if (!productImportBusy) document.getElementById('product-import-dialog').close();
+}
+
+document.getElementById('product-import-dialog').addEventListener('cancel', event => {
+    if (productImportBusy) event.preventDefault();
+});
+
+async function productImportRequest(url, body = null, download = false) {
+    const headers = AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {};
+    const options = {method: body ? 'POST' : 'GET', headers};
+    if (body instanceof FormData) {
+        options.body = body;
+    } else if (body !== null) {
+        headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(body);
+    }
+    const response = await fetch(API + url, options);
+    if (response.status === 401) {
+        doLogout();
+        throw new Error('登录已过期，请重新登录后预览');
+    }
+    if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(formatApiError(data?.detail, `请求失败 (${response.status})`));
+    }
+    return download ? response.blob() : response.json();
+}
+
+function downloadProductImportBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadProductImportTemplate() {
+    if (productImportBusy) return;
+    setProductImportBusy(true);
+    try {
+        const blob = await productImportRequest('/products/import-template', null, true);
+        downloadProductImportBlob(blob, '商品导入模板.xlsx');
+        productImportStatus('模板已下载。填写“商品导入”工作表后，选择文件并校验预览。');
+    } catch (error) {
+        productImportStatus(error.message, 'error');
+    } finally {
+        setProductImportBusy(false);
+    }
+}
+
+function renderProductImportReport(report) {
+    productImportReport = report;
+    const summary = document.getElementById('product-import-summary');
+    summary.hidden = false;
+    summary.innerHTML = `<span>共 <strong>${report.total_rows}</strong> 条</span>
+        <span>可新增 <strong>${report.new_count}</strong></span>
+        <span>跳过 <strong>${report.skipped_count}</strong></span>
+        <span>错误 <strong>${report.error_count}</strong></span>
+        <span>已新增 <strong>${report.created_count}</strong></span>`;
+    const statuses = {
+        new: ['可新增', 'tag-blue'], skipped: ['跳过', 'tag-orange'],
+        error: ['错误', 'tag-red'], created: ['已新增', 'tag-green']
+    };
+    document.getElementById('product-import-preview').hidden = false;
+    document.getElementById('product-import-tbody').innerHTML = report.rows.map(row => {
+        const [label, css] = statuses[row.status] || ['未知', 'tag-red'];
+        const type = row.product_type === 'new' ? '新品' : row.product_type === 'stable' ? '稳健商品' : row.product_type;
+        const errors = row.errors.map(error => `${error.field}：${error.message}`).join('；');
+        const existing = row.existing_product_name ? `已有商品：${row.existing_product_name}；` : '';
+        return `<tr><td>${row.row_number}</td><td>${escapeHtml(row.sku)}</td>
+            <td>${escapeHtml(row.name)}</td><td>${escapeHtml(type || '-')}</td>
+            <td>${row.safe_stock_quantity ?? '-'}</td><td><span class="tag ${css}">${label}</span></td>
+            <td>${escapeHtml(existing + (errors || row.message))}</td></tr>`;
+    }).join('');
+    document.getElementById('product-import-result-button').textContent = report.created_count ? '下载导入结果' : '下载校验清单';
+    document.getElementById('product-import-confirm-button').textContent = report.can_import ? `确认导入 ${report.new_count} 个商品` : '确认导入';
+}
+
+async function previewProductImport() {
+    if (productImportBusy) return;
+    const file = document.getElementById('product-import-file').files[0];
+    resetProductImportPreview();
+    if (!file) {
+        productImportStatus('请先选择填写好的 Excel 文件。', 'error');
+        return;
+    }
+    if (!/\.xlsx$/i.test(file.name) || file.size > 5 * 1024 * 1024) {
+        productImportStatus('请选择不超过 5 MB 的 .xlsx 文件。', 'error');
+        return;
+    }
+    setProductImportBusy(true);
+    productImportStatus('正在校验文件和已有 SKU，预览不会创建商品……');
+    try {
+        const body = new FormData();
+        body.append('file', file);
+        const report = await productImportRequest('/products/import/preview', body);
+        productImportFile = file;
+        productImportToken = report.preview_token || '';
+        renderProductImportReport(report);
+        productImportStatus(report.message, report.error_count ? 'error' : '');
+    } catch (error) {
+        productImportStatus(error.message, 'error');
+    } finally {
+        setProductImportBusy(false);
+    }
+}
+
+async function confirmProductImport() {
+    if (productImportBusy || !productImportReport?.can_import || !productImportToken || !productImportFile) return;
+    setProductImportBusy(true);
+    productImportStatus('正在导入，请等待处理结果……');
+    try {
+        const body = new FormData();
+        body.append('file', productImportFile);
+        body.append('preview_token', productImportToken);
+        const report = await productImportRequest('/products/import', body);
+        productImportToken = '';
+        renderProductImportReport(report);
+        productImportStatus(report.message, 'success');
+        invalidateProductOptions();
+        try {
+            await loadProducts();
+        } catch {
+            productImportStatus(report.message + '；商品列表刷新失败，请稍后刷新列表。', 'success');
+        }
+    } catch (error) {
+        productImportToken = '';
+        productImportStatus(error.message + '。请重新校验预览后再导入。', 'error');
+    } finally {
+        setProductImportBusy(false);
+    }
+}
+
+async function downloadProductImportResult() {
+    if (productImportBusy || !productImportReport) return;
+    setProductImportBusy(true);
+    try {
+        const blob = await productImportRequest('/products/import/result', {rows: productImportReport.rows}, true);
+        downloadProductImportBlob(blob, '商品导入结果.xlsx');
+    } catch (error) {
+        productImportStatus(error.message, 'error');
+    } finally {
+        setProductImportBusy(false);
+    }
+}
+
 let editingProductId = null;
 let currentProductList = [];
 const selectedProductIds = new Set();
@@ -964,10 +1199,10 @@ function renderProductPage() {
     const tbody = document.getElementById('products-tbody');
     const pageCount = Math.max(1, Math.ceil(productTotal / productPageSize));
     tbody.innerHTML = currentProductList.length ? currentProductList.map(p => `<tr>
-        <td><input type="checkbox" data-product-select="${p.id}" ${selectedProductIds.has(Number(p.id)) ? 'checked' : ''} onchange="toggleProductSelection(${p.id}, this.checked)" aria-label="选择商品 ${p.sku}"></td>
+        <td><input type="checkbox" data-product-select="${p.id}" ${selectedProductIds.has(Number(p.id)) ? 'checked' : ''} onchange="toggleProductSelection(${p.id}, this.checked)" aria-label="选择商品 ${escapeHtml(p.sku)}"></td>
         <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
-        <td><strong>${p.sku}</strong></td>
-        <td>${p.name}</td>
+        <td><strong>${escapeHtml(p.sku)}</strong></td>
+        <td>${escapeHtml(p.name)}</td>
         <td><span class="tag ${p.product_type === 'new' ? 'tag-orange' : 'tag-blue'}">${p.product_type === 'new' ? '新品' : '稳健商品'}</span></td>
         <td>${p.product_type === 'new' ? '-' : `${p.safe_stock_quantity}件`}</td>
         <td><span class="tag ${p.stock_quantity > 0 ? 'tag-green' : 'tag-red'}">${p.stock_quantity}件</span></td>
@@ -1338,8 +1573,8 @@ async function loadGallery() {
                 ${p.image ? `<a class="btn btn-secondary gallery-download" href="${p.image}" download title="下载图片">下载</a>` : ''}
             </div>
             <div style="padding:12px">
-                <div style="font-weight:600;font-size:14px">${p.name}</div>
-                <div style="font-size:12px;color:#888;margin-top:4px">${p.sku} · 库存${p.stock_quantity}件</div>
+                <div style="font-weight:600;font-size:14px">${escapeHtml(p.name)}</div>
+                <div style="font-size:12px;color:#888;margin-top:4px">${escapeHtml(p.sku)} · 库存${p.stock_quantity}件</div>
             </div>
         </div>
     `).join('');
@@ -1393,7 +1628,7 @@ async function createBatch() {
 async function loadBatchSkuOptions() {
     await loadProductOptions();
     const sel = document.getElementById('b-pid');
-    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.id}">${p.sku} - ${p.name}</option>`).join('');
+    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.id}">${escapeHtml(p.sku)} - ${escapeHtml(p.name)}</option>`).join('');
 }
 
 let editingBatchId = null;
@@ -1679,7 +1914,7 @@ function invalidateProductOptions() {
 async function loadSkuOptions() {
     await loadProductOptions();
     const sel = document.getElementById('s-sku');
-    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${p.sku}">${p.sku} - ${p.name}</option>`).join('');
+    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${escapeHtml(p.sku)}">${escapeHtml(p.sku)} - ${escapeHtml(p.name)}</option>`).join('');
     await loadManualSaleStores();
 }
 
