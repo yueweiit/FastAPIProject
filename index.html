@@ -602,7 +602,7 @@
                 <div id="report-pane-inventory" class="report-pane active card">
                     <div class="flex-between"><h3>存货跌价准备明细表</h3><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div>
                     <p style="font-size:12px;color:#64748b;margin:8px 0">累计准备按报告日仍在库商品计算；本月计提为这些库存本月新增的准备。账面价值较上月变化包含销售出库等库存数量变化。</p>
-                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU</th><th>产品名称</th><th>批次</th><th>入库日期</th><th>库龄</th><th>单件成本</th><th>库存</th><th>计提数量</th><th>库存金额</th><th>累计计提比例</th><th>累计跌价准备</th><th>本月计提（现存库存）</th><th>账面价值</th><th>账面价值较上月变化</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody></table></div>
+                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>库存数量</th><th>计提数量</th><th>库存总金额(元)</th><th>累计计提比例</th><th>累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody></table></div>
                 </div>
                 <div id="report-pane-profit-loss" class="report-pane card">
                     <div class="flex-between"><h3>店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
@@ -611,7 +611,7 @@
                 </div>
                 <div id="report-pane-product-line" class="report-pane card">
                     <div class="flex-between"><h3>各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
-                    <div class="table-scroll"><table class="report-data-table"><thead><tr><th>产品线/品类</th><th>SKU数量</th><th>本月收入</th><th>本月成本</th><th>本月毛利</th><th>本月毛利率</th><th>上月毛利率</th><th>环比变化</th><th>累计收入</th><th>累计毛利</th><th>累计毛利率</th><th>备注</th></tr></thead><tbody id="product-line-profit-tbody"></tbody></table></div>
+                    <div class="table-scroll"><table class="report-data-table"><thead><tr><th>产品线/品类</th><th>SKU数量</th><th>本月营业收入</th><th>本月营业成本</th><th>本月毛利</th><th>本月毛利率</th><th>上月毛利率</th><th>环比变化</th><th>本年累计收入</th><th>本年累计毛利</th><th>累计毛利率</th><th>备注</th></tr></thead><tbody id="product-line-profit-tbody"></tbody></table></div>
                 </div>
             </div>
         </div>
