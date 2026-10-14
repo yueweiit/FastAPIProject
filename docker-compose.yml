@@ -10,6 +10,13 @@ services:
     volumes:
       - ./uploads:/app/uploads
     environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      FIFO_AUTH_MODE: ${FIFO_AUTH_MODE:-hybrid}
+      FIFO_PUBLIC_BASE_URL: ${FIFO_PUBLIC_BASE_URL:-}
+      EIMS_ISSUER: ${EIMS_ISSUER:-https://eims.yueweiportal.com}
+      EIMS_CLIENT_ID: ${EIMS_CLIENT_ID:-}
+      EIMS_CLIENT_SECRET: ${EIMS_CLIENT_SECRET:-}
+      SSO_TOKEN_ENCRYPTION_KEY: ${SSO_TOKEN_ENCRYPTION_KEY:-}
       MYSQL_HOST: ${MYSQL_HOST:?MYSQL_HOST is required}
       MYSQL_PORT: ${MYSQL_PORT:-3306}
       MYSQL_USER: ${MYSQL_USER:?MYSQL_USER is required}
