@@ -23,6 +23,7 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: str
+    is_active: bool = True
     store_id: int | None = None
     store_name: str | None = None
     created_at: datetime

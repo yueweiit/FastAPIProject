@@ -1,9 +1,9 @@
 """JWT 认证与权限控制"""
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, engine, async_session, Base
 from models import User
+from services.auth_sessions import cookie_name, store
+from services.eims_sso import get_settings
 
 # JWT 配置
 SECRET_KEY = os.getenv("JWT_SECRET", "latingo-jwt-secret-key-2024")
@@ -19,7 +21,7 @@ ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def hash_password(password: str) -> str:
@@ -31,7 +33,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def create_token(user_id: int, role: str) -> str:
-    expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRE_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=TOKEN_EXPIRE_HOURS)
     payload = {"sub": str(user_id), "role": role, "exp": expire}
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
@@ -43,17 +45,27 @@ def decode_token(token: str) -> dict:
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: AsyncSession = Depends(get_db),
+    request: Request = None,
 ) -> User:
-    """从JWT解析当前用户"""
-    try:
-        payload = decode_token(credentials.credentials)
-        user_id = int(payload["sub"])
-    except (JWTError, KeyError, ValueError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的认证令牌")
+    """Browser sessions first; legacy Bearer is only accepted in local/hybrid."""
+    settings = get_settings()
+    session_cookie = cookie_name(request, settings) if request is not None else None
+    if request is not None and session_cookie in request.cookies:
+        session = await store.authenticate(request.cookies[session_cookie], request, settings)
+        request.state.auth_session = session
+        user_id = session.user_id
+    else:
+        if not settings.local_enabled or credentials is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
+        try:
+            payload = decode_token(credentials.credentials)
+            user_id = int(payload["sub"])
+        except (JWTError, KeyError, ValueError, TypeError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的认证令牌")
 
     user = await db.get(User, user_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在")
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不存在或已停用")
     return user
 
 
@@ -88,4 +100,4 @@ async def seed_users():
         ]
         session.add_all(users)
         await session.commit()
-        print("已创建默认用户: admin/admin123, operator/op123, viewer/view123")
+        print("已创建初始用户，请按运行手册立即设置安全密码")

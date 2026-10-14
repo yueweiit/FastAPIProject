@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +10,8 @@ from database import get_db
 from models import Store, User
 from schemas import LoginRequest, LoginResponse, UserResponse
 from auth import hash_password, verify_password, create_token, get_current_user, RequireAdmin
+from services.auth_sessions import check_origin, cookie_name, revoke_user_sessions, set_cookie, store
+from services.eims_sso import get_settings
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -31,15 +35,27 @@ class CreateUserRequest(BaseModel):
     role: str = "operator"
 
 
+class UpdateUserStatusRequest(BaseModel):
+    is_active: bool
+
+
 @router.post("/login", response_model=LoginResponse)
-async def login(data: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(data: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """用户登录"""
+    settings = get_settings()
+    if not settings.local_enabled:
+        raise HTTPException(status_code=403, detail="当前系统使用EIMS登录")
+    check_origin(request, settings)
     result = await db.execute(select(User).where(User.username == data.username))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(data.password, user.password_hash):
+    if not user or not user.is_active or not await asyncio.to_thread(verify_password, data.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
 
     token = create_token(user.id, user.role)
+    cookie, _ = await store.create_session(user.id, settings, expected_password_hash=user.password_hash)
+    await store.revoke(request.cookies.get(cookie_name(request, settings)), settings)
+    set_cookie(response, request, settings, cookie)
+    response.headers["Cache-Control"] = "no-store"
     return LoginResponse(token=token, user_id=user.id, username=user.username, role=user.role)
 
 
@@ -67,6 +83,7 @@ async def create_user(
         username=username,
         password_hash=hash_password(data.password),
         role=data.role,
+        is_active=True,
     )
     db.add(user)
     await db.commit()
@@ -88,6 +105,7 @@ async def list_users(
             id=item.id,
             username=item.username,
             role=item.role,
+            is_active=item.is_active,
             store_id=item.store_id,
             store_name=item.store.name if item.store else None,
             created_at=item.created_at,
@@ -127,6 +145,25 @@ async def update_user_store(
     }
 
 
+@router.put("/users/{user_id}/status")
+async def update_user_status(
+    user_id: int,
+    data: UpdateUserStatusRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireAdmin),
+):
+    if user_id == current_user.id and not data.is_active:
+        raise HTTPException(status_code=400, detail="不能停用自己的账号")
+    user = await db.get(User, user_id, with_for_update=True, populate_existing=True)
+    if user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    user.is_active = data.is_active
+    if not data.is_active:
+        await revoke_user_sessions(db, user_id)
+    await db.commit()
+    return {"ok": True, "is_active": user.is_active}
+
+
 @router.put("/users/{user_id}/role")
 async def update_user_role(
     user_id: int,
@@ -162,11 +199,12 @@ async def reset_user_password(
     if len(data.new_password) < 3:
         raise HTTPException(status_code=400, detail="密码至少3位")
 
-    user = await db.get(User, user_id)
+    user = await db.get(User, user_id, with_for_update=True, populate_existing=True)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
     user.password_hash = hash_password(data.new_password)
+    await revoke_user_sessions(db, user_id)
     await db.commit()
     return {"ok": True}
 
@@ -178,12 +216,16 @@ async def change_my_password(
     user: User = Depends(get_current_user),
 ):
     """修改自己的密码"""
+    user = await db.get(User, user.id, with_for_update=True, populate_existing=True)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="账号不存在或已停用")
     if not verify_password(data.old_password, user.password_hash):
         raise HTTPException(status_code=400, detail="原密码错误")
     if len(data.new_password) < 3:
         raise HTTPException(status_code=400, detail="密码至少3位")
 
     user.password_hash = hash_password(data.new_password)
+    await revoke_user_sessions(db, user.id)
     await db.commit()
     return {"ok": True}
 
@@ -208,11 +250,16 @@ async def delete_user(
 
 
 @router.get("/me")
-async def me(user: User = Depends(get_current_user)):
+async def me(request: Request, response: Response, user: User = Depends(get_current_user)):
     """获取当前用户信息"""
+    session = getattr(request.state, "auth_session", None)
+    response.headers["Cache-Control"] = "no-store"
     return {
         "id": user.id,
         "username": user.username,
         "role": user.role,
         "store_id": user.store_id,
+        "is_active": user.is_active,
+        "csrf_token": session.csrf_token if session is not None else None,
+        "auth_source": session.source if session is not None else "bearer",
     }

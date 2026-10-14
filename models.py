@@ -11,6 +11,7 @@ from sqlalchemy import (
     Integer,
     JSON,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -26,6 +27,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(16), default="operator")  # admin / operator / viewer
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     store_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("stores.id"), index=True, nullable=True
     )
@@ -37,6 +39,42 @@ class User(Base):
     closed_accounting_periods: Mapped[list["AccountingPeriod"]] = relationship(
         back_populates="closed_by_user"
     )
+
+
+class AuthLoginTransaction(Base):
+    """Only hashes of browser/state credentials and encrypted temporary data."""
+    __tablename__ = "auth_login_transactions"
+    __table_args__ = {"mysql_engine": "InnoDB"}
+
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    flow: Mapped[str] = mapped_column(String(16))
+    browser_hash: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+    __table_args__ = {"mysql_engine": "InnoDB"}
+
+    session_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source: Mapped[str] = mapped_column(String(16))
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    issuer: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    oidc_nonce: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    token_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    validated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class Product(Base):

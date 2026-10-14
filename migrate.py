@@ -15,6 +15,7 @@ MIGRATIONS = (
     ("inventory_batches", "last_mile_cost_no", "VARCHAR(64) NULL"),
     ("inventory_batches", "other_cost_no", "VARCHAR(64) NULL"),
     ("users", "store_id", "INT NULL"),
+    ("users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("sales", "user_id", "INT NULL"),
     ("sales", "store_id", "INT NULL"),
     ("products", "image", "VARCHAR(500) NULL"),
