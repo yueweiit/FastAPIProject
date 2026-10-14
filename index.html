@@ -232,9 +232,13 @@
 <div id="login-overlay" class="login-overlay">
     <div class="login-box" id="login-box" style="display:none">
         <h2>LatinGo 库存系统</h2>
-        <input id="l-user" placeholder="用户名" autocomplete="username">
-        <input id="l-pass" type="password" placeholder="密码" autocomplete="current-password">
-        <button class="btn btn-primary" onclick="doLogin()">登 录</button>
+        <div id="local-login-fields">
+            <input id="l-user" placeholder="用户名" autocomplete="username">
+            <input id="l-pass" type="password" placeholder="密码" autocomplete="current-password">
+            <button class="btn btn-primary" onclick="doLogin()">本地登录</button>
+        </div>
+        <button id="eims-login-button" class="btn btn-secondary" style="margin-top:12px" onclick="startEimsLogin()" disabled>通过 EIMS 登录</button>
+        <p id="eims-login-hint" style="font-size:12px;color:#64748b;margin:12px 0 0"></p>
         <div id="l-err" style="color:#e94560;font-size:13px;text-align:center;margin-top:12px;display:none"></div>
     </div>
 </div>
@@ -655,7 +659,7 @@
             <div class="flex-between"><h3>用户列表</h3><button class="btn btn-secondary" onclick="loadUsers()">刷新</button></div>
             <div class="table-scroll">
             <table>
-                <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>绑定店铺</th><th>创建时间</th><th>操作</th></tr></thead>
+                <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>绑定店铺</th><th>创建时间</th><th>操作</th></tr></thead>
                 <tbody id="users-tbody"></tbody>
             </table>
             </div>
@@ -665,10 +669,18 @@
 
 <script>
 const API = '';
-let AUTH_TOKEN = localStorage.getItem('latingo_token') || '';
-let CURRENT_ROLE = localStorage.getItem('latingo_role') || '';
-let CURRENT_USER = localStorage.getItem('latingo_user') || '';
-let CURRENT_USER_ID = Number(localStorage.getItem('latingo_user_id') || 0);
+let CURRENT_ROLE = '';
+let CURRENT_USER = '';
+let CURRENT_USER_ID = 0;
+let AUTH_CSRF = '';
+let AUTH_CONFIG = {local_enabled: false, sso_available: false};
+function clearLegacyAuth() {
+    ['latingo_token', 'latingo_role', 'latingo_user', 'latingo_user_id'].forEach(key => localStorage.removeItem(key));
+}
+function authHeaders() {
+    return AUTH_CSRF ? {'X-CSRF-Token': AUTH_CSRF} : {};
+}
+clearLegacyAuth();
 
 // ========== 认证 ==========
 function formatApiError(detail, fallback) {
@@ -687,14 +699,13 @@ function formatApiError(detail, fallback) {
 }
 
 async function api(method, url, body) {
-    const opts = { method, headers: {} };
-    if (AUTH_TOKEN) opts.headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+    const opts = {method, headers: authHeaders(), credentials: 'same-origin'};
     if (body) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(body);
     }
     const res = await fetch(API + url, opts);
-    if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+    if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
     if (res.status === 403) throw new Error('权限不足');
     const raw = await res.text();
     let data = null;
@@ -712,42 +723,108 @@ async function api(method, url, body) {
     return data;
 }
 
+async function loadCurrentUser() {
+    const response = await fetch('/auth/me', {credentials: 'same-origin'});
+    if (response.status === 401) { handleSessionExpired(); return false; }
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(formatApiError(error?.detail, '无法读取登录状态'));
+    }
+    const user = await response.json();
+    CURRENT_ROLE = user.role; CURRENT_USER = user.username; CURRENT_USER_ID = user.id;
+    AUTH_CSRF = user.csrf_token || '';
+    document.getElementById('login-overlay').style.display = 'none';
+    updateUserBar();
+    document.querySelectorAll('.section').forEach(section => section.classList.remove('active'));
+    document.getElementById('sec-products').classList.add('active');
+    document.querySelectorAll('.nav button').forEach(button => button.classList.remove('active'));
+    document.querySelector('.nav button').classList.add('active');
+    await loadProducts();
+    return true;
+}
+
+async function initializeAuth() {
+    handleSessionExpired();
+    try {
+        const response = await fetch('/auth/config', {credentials: 'same-origin'});
+        if (!response.ok) throw new Error('无法读取登录配置，请刷新后重试。');
+        AUTH_CONFIG = await response.json();
+        document.getElementById('local-login-fields').style.display = AUTH_CONFIG.local_enabled ? '' : 'none';
+        document.getElementById('eims-login-button').disabled = !AUTH_CONFIG.sso_available;
+        document.getElementById('eims-login-hint').textContent = AUTH_CONFIG.sso_available
+            ? '使用已绑定的 EIMS 账号登录，权限由本系统管理。'
+            : (AUTH_CONFIG.local_enabled ? 'EIMS登录暂不可用，可使用本地账号登录。' : '统一登录暂不可用，请联系管理员。');
+        const parameters = new URLSearchParams(location.search);
+        const reason = parameters.get('auth_error');
+        if (reason) {
+            const messages = {
+                account_unbound: '该EIMS账号尚未绑定FIFO账号，请联系管理员。',
+                account_unavailable: 'FIFO账号不存在或已停用，请联系管理员。',
+                sso_unavailable: 'EIMS登录尚未配置，请联系管理员。',
+                provider_unavailable: '统一登录服务暂不可用，请稍后重试。',
+                identity_rejected: '登录授权已失效，请重新登录。',
+            };
+            const error = document.getElementById('l-err');
+            error.textContent = messages[reason] || 'EIMS登录未成功，请重新尝试。';
+            error.style.display = 'block';
+            parameters.delete('auth_error');
+            history.replaceState(null, '', location.pathname + (parameters.size ? '?' + parameters.toString() : ''));
+            return;
+        }
+        await loadCurrentUser();
+    } catch (error) {
+        const node = document.getElementById('l-err');
+        node.textContent = error.message; node.style.display = 'block';
+    }
+}
+
+function startEimsLogin() {
+    if (AUTH_CONFIG.sso_available) location.assign('/auth/eims/start');
+}
+
 async function doLogin() {
+    if (!AUTH_CONFIG.local_enabled) return;
     const username = document.getElementById('l-user').value;
     const password = document.getElementById('l-pass').value;
     const errEl = document.getElementById('l-err');
     try {
         const res = await fetch('/auth/login', {
-            method: 'POST',
+            method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({username, password})
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail);
-        AUTH_TOKEN = data.token;
-        CURRENT_ROLE = data.role;
-        CURRENT_USER = data.username;
-        CURRENT_USER_ID = data.user_id;
-        localStorage.setItem('latingo_token', AUTH_TOKEN);
-        localStorage.setItem('latingo_role', CURRENT_ROLE);
-        localStorage.setItem('latingo_user', CURRENT_USER);
-        localStorage.setItem('latingo_user_id', String(CURRENT_USER_ID));
-        document.getElementById('login-overlay').style.display = 'none';
-        updateUserBar();
-        loadProducts();
-    } catch (e) {
-        errEl.textContent = e.message;
-        errEl.style.display = 'block';
+        if (!res.ok) throw new Error(formatApiError(data.detail, '登录失败'));
+        document.getElementById('l-pass').value = '';
+        await loadCurrentUser();
+    } catch (error) {
+        errEl.textContent = error.message; errEl.style.display = 'block';
     }
 }
 
-function doLogout() {
+async function doLogout() {
+    try {
+        const response = await fetch('/auth/logout', {method: 'POST', headers: authHeaders(), credentials: 'same-origin'});
+        if (!response.ok) {
+            const error = await response.json().catch(() => null);
+            throw new Error(formatApiError(error?.detail, '退出失败，请刷新后重试。'));
+        }
+        const data = await response.json();
+        handleSessionExpired();
+        const destination = new URL(data.redirect_url || '/', location.origin);
+        if (destination.origin !== location.origin) throw new Error('退出地址无效。');
+        location.assign(destination.pathname + destination.search);
+    } catch (error) { showMsg(error.message, false); }
+}
+
+function handleSessionExpired() {
     if (document.getElementById('product-import-dialog').open) {
         document.getElementById('product-import-dialog').close();
     }
     resetProductImportPreview();
-    localStorage.clear();
-    AUTH_TOKEN = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
+    clearLegacyAuth();
+    AUTH_CSRF = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
+    document.querySelectorAll('#sec-sales tbody, #sec-reports tbody, #sec-reports tfoot, #users-tbody').forEach(node => node.innerHTML = '');
     document.getElementById('login-overlay').style.display = 'flex';
     showLogin();
     document.getElementById('user-bar').style.display = 'none';
@@ -820,7 +897,7 @@ async function loadUsers() {
         </tr>`).join('')
         : '<tr><td colspan="2" class="empty">暂无店铺</td></tr>';
     const tbody = document.getElementById('users-tbody');
-    if (!list.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无用户</td></tr>'; return; }
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无用户</td></tr>'; return; }
     tbody.innerHTML = list.map(u => {
         const roleLabel = u.role==='admin'?'管理员':u.role==='operator'?'运营':'查看者';
         const tagClass = u.role==='admin'?'tag-red':u.role==='operator'?'tag-blue':'tag-green';
@@ -834,6 +911,7 @@ async function loadUsers() {
         return `<tr>
             <td>${u.id}</td><td><strong>${escapeHtml(u.username)}</strong></td>
             <td><span class="tag ${tagClass}" id="role-${u.id}">${roleLabel}</span></td>
+            <td><span class="tag ${u.is_active ? 'tag-blue' : 'tag-red'}">${u.is_active ? '启用' : '已停用'}</span></td>
             <td>${storeControl}</td>
             <td>${u.created_at?.slice(0,16)}</td>
             <td style="display:flex;gap:4px;flex-wrap:wrap">
@@ -844,12 +922,21 @@ async function loadUsers() {
                     <option value="operator">运营</option>
                     <option value="viewer">查看者</option>
                 </select>
+                <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="setUserActive(${u.id}, ${!u.is_active})">${u.is_active ? '停用' : '启用'}</button>
                 <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="resetPwd(${u.id})" title="重置密码">🔑</button>
                 <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:#e94560" onclick="deleteUser(${u.id})">删除</button>
                 ` : '<span style="font-size:12px;color:#888">当前用户</span>'}
             </td>
         </tr>`;
     }).join('');
+}
+
+async function setUserActive(userId, active) {
+    try {
+        await api('PUT', `/auth/users/${userId}/status`, {is_active: active});
+        showMsg(active ? '账号已启用' : '账号已停用，原会话已撤销');
+        await loadUsers();
+    } catch (error) { showMsg(error.message, false); }
 }
 
 async function bindUserStore(userId, value) {
@@ -903,20 +990,7 @@ function showLogin() {
     document.getElementById('login-box').style.display = '';
 }
 
-// 初始检查登录状态
-if (AUTH_TOKEN) {
-    document.getElementById('login-overlay').style.display = 'none';
-    updateUserBar();
-    if (!CURRENT_USER_ID) {
-        api('GET', '/auth/me').then(data => {
-            CURRENT_USER_ID = data.id;
-            localStorage.setItem('latingo_user_id', String(CURRENT_USER_ID));
-        }).catch(doLogout);
-    }
-} else {
-    document.getElementById('user-bar').style.display = 'none';
-    showLogin();
-}
+// 登录状态在页面初始化完成后由服务端会话恢复。
 
 // ========== Tab切换 ==========
 function switchTab(name) {
@@ -977,7 +1051,7 @@ async function createProduct() {
         formData.append('safe_stock_quantity', document.getElementById('p-safe-stock-quantity').value || 0);
         const imageFile = document.getElementById('p-image').files[0];
         if (imageFile) formData.append('image', imageFile);
-        const res = await fetch('/products', { method: 'POST', body: formData, headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {} });
+        const res = await fetch('/products', { method: 'POST', body: formData, headers: authHeaders() });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
         showMsg(`商品创建成功: ${data.sku} (ID: ${data.id})`);
@@ -1051,7 +1125,7 @@ document.getElementById('product-import-dialog').addEventListener('cancel', even
 });
 
 async function productImportRequest(url, body = null, download = false) {
-    const headers = AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {};
+    const headers = authHeaders();
     const options = {method: body ? 'POST' : 'GET', headers};
     if (body instanceof FormData) {
         options.body = body;
@@ -1061,7 +1135,7 @@ async function productImportRequest(url, body = null, download = false) {
     }
     const response = await fetch(API + url, options);
     if (response.status === 401) {
-        doLogout();
+        handleSessionExpired();
         throw new Error('登录已过期，请重新登录后预览');
     }
     if (!response.ok) {
@@ -1492,7 +1566,7 @@ async function saveEditProduct() {
         const res = await fetch(`/products/${editingProductId}`, {
             method: 'PUT',
             body: formData,
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {}
+            headers: authHeaders()
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
@@ -1508,9 +1582,9 @@ async function downloadProductExport(ids) {
     const query = selectedIds.map(id => `product_ids=${encodeURIComponent(id)}`).join('&');
     try {
         const res = await fetch(`/products/export?${query}`, {
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            headers: authHeaders(),
         });
-        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
@@ -1846,9 +1920,9 @@ async function downloadBatchExport(ids, extraParams = new URLSearchParams()) {
     selectedIds.forEach(id => query.append('batch_ids', id));
     try {
         const res = await fetch(`/batches/export?${query.toString()}`, {
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            headers: authHeaders(),
         });
-        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
@@ -1978,7 +2052,7 @@ async function importSalesFile(input) {
     try {
         const res = await fetch('/sales/import', {
             method: 'POST',
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            headers: authHeaders(),
             body: formData,
         });
         const data = await res.json();
@@ -2227,9 +2301,9 @@ function changePendingConfirmationsPageSize(size) { pendingConfirmationsPageSize
 async function exportPendingConfirmations() {
     try {
         const res = await fetch('/sales/pending-confirmations/export', {
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            headers: authHeaders(),
         });
-        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
@@ -2259,9 +2333,9 @@ async function exportInventoryImpairmentReport() {
         const view = document.getElementById('inventory-report-view').value;
         const params = new URLSearchParams({report_date: reportDate, view});
         const res = await fetch(`/reports/inventory-impairment/export?${params.toString()}`, {
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            headers: authHeaders(),
         });
-        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
@@ -2295,9 +2369,9 @@ async function exportFinancialAttachments() {
     }
     try {
         const res = await fetch(`/reports/financial-attachments/export?${params.toString()}`, {
-            headers: AUTH_TOKEN ? {'Authorization': `Bearer ${AUTH_TOKEN}`} : {},
+            headers: authHeaders(),
         });
-        if (res.status === 401) { doLogout(); throw new Error('登录已过期'); }
+        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
@@ -2532,7 +2606,7 @@ async function loadProductLineProfit() {
 
 // 初始加载
 document.getElementById('inventory-impairment-date').value = new Date().toLocaleDateString('sv-SE');
-if (AUTH_TOKEN) loadProducts();
+initializeAuth();
 </script>
 </body>
 </html>
