@@ -13,7 +13,7 @@
 - 按 FIFO（先进先出）规则处理销售出库；
 - 记录销售成本明细和利润；
 - 提供月度销售与库存报表；
-- 提供用户登录、角色权限和密码管理。
+- 提供本地/EIMS登录、可撤销会话、CSRF、角色/店铺权限、账号启停与密码管理。
 
 本项目与钉钉审批、`dingtalk-oa`、`dingtalk-expense-sync`、`dingtalk-budget` 没有代码级依赖。当前数据库是本项目独立使用的 MySQL 库 `inventory_fifo`。
 
@@ -101,7 +101,8 @@ Docker 存储卷可能保存其他项目的 PostgreSQL、Kafka、Redis 或应用
 2. `migrate()` 检查并添加缺失的兼容字段；
 3. `auth.seed_users()` 检查 `users` 表；
 4. 只有用户表为空时，才创建默认用户；
-5. 应用开始提供 HTTP 接口。
+5. 检查上一自然月快照，启动每小时快照和过期认证记录清理任务；
+6. 提供HTTP接口，停止时取消后台任务、关闭EIMS HTTP客户端。EIMS请求在登录/复核时按需发起。
 
 当前不是完整的版本化数据库迁移系统。`create_all` 不会安全地自动补齐已有表的字段变更；启动时会自动执行 `migrate.py` 中的兼容迁移。`migrations/20260820_add_batch_dingtalk_fields.py` 是批次钉钉单号、总金额和三个成本单号字段的历史独立脚本，仅在核对目标库确有需要时执行。
 
@@ -112,9 +113,12 @@ main.py                 FastAPI 应用入口、生命周期、首页和 uploads 
 database.py             .env 加载、异步 MySQL 引擎、数据库会话、建表
 models.py               SQLAlchemy ORM（对象关系映射）模型
 schemas.py              Pydantic 请求和响应模型
-auth.py                 JWT（JSON Web Token，JSON 网络令牌）、密码哈希、认证依赖
+auth.py                 Cookie/Bearer 认证、密码和角色依赖
 migrate.py              启动时执行的兼容迁移脚本
-routers/auth.py         登录、管理员创建用户和角色管理
+routers/auth.py         本地登录、用户启停、角色/店铺和密码管理
+routers/eims_auth.py    EIMS 登录、回调与退出
+services/auth_sessions.py  独立认证事务、Cookie/CSRF、刷新和撤销
+services/eims_sso.py    PKCE、RS256、Discovery/JWKS与提供方协议
 routers/products.py     商品增删改查和图片上传
 routers/batches.py      入库批次增删改查
 routers/sales.py        销售记录、出库和 FIFO 成本明细
@@ -139,7 +143,7 @@ test_main.http          手工请求示例
 
 ## 6. 数据库表和业务关系
 
-当前 ORM 定义了 17 张表；以下是 FIFO 核心的五张表，其余用于店铺、平台 SKU、销售导入、结算和财务报表：
+当前 ORM 定义19张表；以下为FIFO核心的五张，其余为店铺、平台SKU、导入、结算、财务及两张认证状态表，完整字典见[数据库总览](docs/knowledge/database.md)：
 
 ```text
 users
@@ -161,6 +165,7 @@ sales
 
 - `username`（用户名）唯一；
 - `password_hash`（密码哈希）不保存明文密码；
+- `is_active` 控制所有认证方式，旧用户迁移默认启用；EIMS app_user_id 精确匹配本地 id；
 - `role`（角色）包括 `admin`（管理员）、`operator`（运营）、`viewer`（查看者）。
 
 ### 6.2 `products`（商品表）
@@ -226,9 +231,11 @@ profit（利润）
 
 ## 8. 接口和权限
 
-除登录外，业务接口通过 `Authorization: Bearer <JWT>`（Bearer 令牌认证）保护。
+业务接口使用可撤销 Cookie 与写请求 CSRF；local/hybrid 下无 Cookie 的传统 Bearer 保持兼容，eims模式服务端禁用本地认证。SSO用独立MySQL事务，不延长到FIFO锁。
 
 ### 8.1 认证接口
+
+完整16个端点、模式和CSRF要求见[认证API](docs/modules/auth/api.md)。账号/角色/店铺权限仍从本地读取；EIMS注册和实际联调见[接入说明](docs/modules/auth/eims-sso-setup.md)。以下为本地管理入口节选：
 
 ```text
 POST /auth/login              登录

@@ -2,15 +2,17 @@
 
 ## 存储边界
 
-主业务数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的 17 张 ORM 表；未连接实库，因此表是否已建、字段类型、外键、索引、引擎和数据量均待验证。
+主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的 19 张 ORM 表；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
 
-OA PostgreSQL 是外部只读数据源，不属于这 17 张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)。
+OA PostgreSQL 是外部只读数据源，不属于这 19 张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
 
 ## 表清单与唯一维护入口
 
 | 表 | ORM 类 | 用途 | 字段字典 |
 | --- | --- | --- | --- |
 | users | User | 用户、角色及当前店铺绑定 | [认证数据库](../modules/auth/database.md) |
+| auth_login_transactions | AuthLoginTransaction | 一次性授权/退出、浏览器绑定和加密临时数据 | [认证数据库](../modules/auth/database.md) |
+| auth_sessions | AuthSession | 可撤销 Cookie、加密提供方 Token 和刷新复核 | [认证数据库](../modules/auth/database.md) |
 | products | Product | 共享商品、类型、安全库存 | [商品数据库](../modules/products/database.md) |
 | product_impairment_rules | ProductImpairmentRule | 商品跌价规则生效历史 | [商品数据库](../modules/products/database.md) |
 | inventory_batches | InventoryBatch | 数量、剩余数、成本、创建人 | [库存数据库](../modules/inventory/database.md) |
@@ -35,6 +37,7 @@ OA PostgreSQL 是外部只读数据源，不属于这 17 张表；实际表名�
 ```mermaid
 erDiagram
     stores |o--o{ users : 当前绑定
+    users ||--o{ auth_sessions : 登录会话
     users |o--o{ inventory_batches : 创建
     products ||--o{ inventory_batches : 入库
     products ||--o{ product_impairment_rules : 规则历史
@@ -70,6 +73,7 @@ erDiagram
 - 当前库存从 inventory_batches.remaining_quantity 汇总；历史库存按入库 quantity 减截止日前 SaleCostDetail 数量重建，不直接使用当前剩余数。后者不是完整库存流水，撤销会删除销售明细。依据：[reports.py](../../routers/reports.py)。
 - users.store_id 可改变；新销售/导入/结算保存独立 store_id，批次没有 store_id，库存报表从批次创建人当前绑定推导店铺。平台 SKU 映射也没有店铺外键。依据：[models.py](../../models.py)。
 - 大多数时间列为无时区 DATETIME；月末自动任务使用 Asia/Shanghai，导入解析会移除时区信息；数据库/服务器统一时区仍需确认。依据：[accounting_periods.py](../../services/accounting_periods.py)、[sales.py](../../routers/sales.py)。
+- 两张认证表显式使用 UTC 无时区 DATETIME，与财务日期口径分开；auth_login_transactions 为独立临时状态表，关系图不虚构其用户外键。每小时只清理过期认证记录，详见[认证字典](../modules/auth/database.md)。
 
 ## 约束与迁移
 
@@ -81,4 +85,4 @@ SKU、用户名、批次号、source_key 具有唯一约束；销售 order_no �
 
 商品规则使用 delete-orphan 及 ON DELETE CASCADE；平台映射组件有 ORM 级联。其他历史关联不能默认安全级联。商品/用户删除可能被外键或 ORM 关联阻止，图片文件还可能先删除，修改此类行为必须核查上下游。依据：[models.py](../../models.py)、[products.py](../../routers/products.py)、[finance_masters.py](../../routers/finance_masters.py)。
 
-migrations/ 中的历史字段脚本和批次创建人转移脚本均有数据库写入；mysql-init/init.sql 不由当前 Compose web 服务执行。维护前需读[运行文档](../../PROJECT_RUNBOOK.md)，核实目标环境并取得对应操作授权，本次没有运行任何脚本。
+migrations/ 中的历史字段脚本和批次创建人转移脚本均有数据库写入；mysql-init/init.sql 不由当前 Compose web 服务执行。维护前需读[运行文档](../../PROJECT_RUNBOOK.md)，核实目标环境并取得对应授权。认证加法型结构通过 create_all 和 users.is_active 兼容迁移创建；已验证独立本地库，不代表执行过生产迁移。

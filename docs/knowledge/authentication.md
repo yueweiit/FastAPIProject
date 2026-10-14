@@ -1,12 +1,16 @@
 # 登录、权限和店铺隔离
 
-## 登录和令牌
+## 登录、会话与 EIMS
 
-[auth.py](../../auth.py) 使用 bcrypt 哈希，HS256 JWT 有效期 24 小时，载荷含 sub、role、exp。get_current_user 解码令牌后按 sub 重新读取 User；RoleChecker 使用数据库中的当前角色，因此改角色后原令牌的角色声明不是权限依据。
+[auth.py](../../auth.py) 使用 bcrypt 哈希；浏览器改为服务端可撤销的 24 小时不透明 Cookie 会话，页面不持久化 JWT，`/auth/me` 恢复当前身份并提供独立 CSRF。Cookie 写请求校验 CSRF 和来源，生产使用 HttpOnly/Secure/SameSite=Lax、Path=/、无 Domain 的 `__Host-` Cookie。每次鉴权读取当前启用 User 与本地角色/店铺。
 
-[routers/auth.py](../../routers/auth.py) 只开放登录给未认证用户；建号和用户管理依赖 RequireAdmin，无公开注册。页面将 token、角色、用户标识保存到 localStorage，logout 清理本地存储。服务端未发现刷新令牌、注销黑名单、密码修改后令牌版本失效或统一审计机制。
+`FIFO_AUTH_MODE` 支持 local/hybrid/eims，缺省 hybrid 保留本地登录；eims 在服务端禁用本地密码及传统 Bearer。local/hybrid 下无 Cookie 的既有客户端仍可用 HS256 JWT（sub、role、exp，24 小时），角色载荷不替代数据库角色；有 Cookie 时拒绝失败后回退另一 Bearer 身份。建号和账号管理仍依赖 RequireAdmin，无公开注册。改密/停用撤销 Cookie 会话；传统 JWT 无吊销版本，改密/主动 Cookie 退出不吊销已签发 JWT。
 
-首页、静态图片和默认接口文档未配置 JWT 保护。缺失 Bearer 请求的具体状态码需按安装版本验证。
+EIMS 采用授权码 + PKCE S256，RS256 ID Token 验签并校验 issuer/audience/nonce/时间；UserInfo sub 必须一致，app_user_id 严格对应本地 users.id，不推定远端角色、不自动开户。提供方 Token 加密保存后端，读复核最多缓存 60 秒、写即时复核，行锁串行刷新。主动退出撤销本地会话再走提供方退出；API 401 只清页面状态。源码：[eims_sso.py](../../services/eims_sso.py)、[auth_sessions.py](../../services/auth_sessions.py)、[eims_auth.py](../../routers/eims_auth.py)。
+
+2026-10-14 并发修复：登录签发会话与密码/启停更新统一 User → AuthSession 锁序，并复查校验过的密码；已收到的轮换 Token 在临时故障时保留待复核状态，不恢复成旧 Refresh Token，也不跳过验签/绑定；延迟退出回调只清流程状态，不删除新登录 Cookie。原角色/店铺和传统 JWT 兼容边界保留，详见[认证流程](../modules/auth/workflow.md)。
+
+首页、静态图片和默认接口文档仍公开；缺失/无效认证由 get_current_user 返回 401，CSRF 拒绝为 403，提供方暂不可达为 503。EIMS 账号停用、门户撤权/解绑的实际提供方生效行为待真实联调。配置与验收见[接入说明](../modules/auth/eims-sso-setup.md)。
 
 ## 实际权限矩阵
 
@@ -14,7 +18,7 @@
 
 | 功能 | admin | operator | viewer |
 | --- | --- | --- | --- |
-| 用户管理、角色、店铺绑定 | 可 | 不可 | 不可 |
+| 用户管理、启停、角色、店铺绑定 | 可 | 不可 | 不可 |
 | 修改自己的密码 | 可 | 可 | 可 |
 | 商品创建/修改/删除/导出 | 可 | 可 | 可 |
 | 平台 SKU 映射创建/修改/删除 | 可 | 可 | 可 |
@@ -48,7 +52,8 @@
 - 独立存货接口未应用店铺过滤；月度报表销售受店铺过滤，但附带的是全局当前库存；不能宣称全部报表隔离。
 - 管理员文件导入的 store_id 可为空；手工销售则必须选择店铺，两条路径不能混为同一规则。
 - 导入撤销按当前店铺授权，operator 可撤销同店其他人的文件；旧文档“只能撤销自己的文件”已滞后。
-- JWT 和数据库配置存在代码默认值、空用户表自动初始化账号、密码最低长度仅三位。文档不记录默认值；生产必须确认强配置和账号策略。Compose 没有显式传 JWT_SECRET。
-- 文件类型/大小校验不完整，localStorage 保存令牌及公开图片的风险应在相关开发任务中核实。
+- JWT 和数据库配置仍存在代码默认值、空用户表自动初始化账号、密码最低长度仅三位。文档不记录默认值；生产必须确认强配置和账号策略。Compose 已要求 JWT_SECRET 并显式传认证配置。
+- 文件类型/大小校验不完整、公开图片风险仍需按模块核实。前端已删除旧登录缓存、不再持久化 JWT；Cookie 写请求新增 CSRF 不替代输入/上传校验。
+- 新认证表有写入和过期清理，启动会补 users.is_active；生产需先备份并核实结构。提供方退出/回调 URL 不得进入代理、CDN 或 APM 的完整查询日志。
 
-这些是实现说明和后续需核实的事项，本次未改变权限或安全行为。模块维护入口见[认证模块](../modules/auth/overview.md)。
+2026-10-13 增加统一登录、启停和会话保护，原业务角色/店铺矩阵保留。模块维护入口见[认证模块](../modules/auth/overview.md)，生产身份接入仍待验收。

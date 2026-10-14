@@ -5,7 +5,7 @@
 [Dockerfile](../../Dockerfile) 使用 python:3.13-slim，工作目录 /app，安装 requirements.txt、复制项目、建立 uploads，然后运行：
 
 ```text
-uvicorn main:app --host 0.0.0.0 --port 8000
+uvicorn main:app --host 0.0.0.0 --port 8000 --no-access-log
 ```
 
 [docker-compose.yml](../../docker-compose.yml) 只定义 web：容器名 fifo-inventory，restart 为 unless-stopped，宿主机 8006 映射容器 8000；./uploads 挂载 /app/uploads，host.docker.internal 映射 host-gateway。没有 MySQL、PostgreSQL、Redis 或代理服务定义。
@@ -21,15 +21,22 @@ MySQL 必须单独提供；需要 OA 自动费用时再配置外部 PostgreSQL�
 | MYSQL_HOST、MYSQL_PORT | 主库地址和端口 | Compose 要求主机；端口缺省 3306 |
 | MYSQL_DATABASE | 业务库 | 默认 inventory_fifo |
 | MYSQL_USER、MYSQL_PASSWORD | 主库账号 | Compose 要求账号和密码；启动会建表/迁移 |
-| JWT_SECRET | JWT 签名 | auth.py 可读取；当前 Compose environment 未显式传入 |
+| JWT_SECRET | 兼容本地 JWT 签名 | Compose 必填；生产强随机，不采用源码默认值 |
+| FIFO_AUTH_MODE | local/hybrid/eims | 缺省 hybrid；eims 服务端禁用本地密码/Bearer |
+| FIFO_PUBLIC_BASE_URL | 固定公开来源、回调、Cookie/CSRF | 生产 https://fifo.yueweiportal.com；本地单独配置 |
+| EIMS_ISSUER | 固定 OIDC 提供方 | https://eims.yueweiportal.com，无末尾斜杠 |
+| EIMS_CLIENT_ID、EIMS_CLIENT_SECRET | FIFO OAuth 客户端 | 注册后通过安全渠道后端配置；不发聊天/Git |
+| SSO_TOKEN_ENCRYPTION_KEY | 后端临时数据/Token 的 Fernet 密钥 | 独立密钥；变更使旧 SSO 加密会话失效 |
 | OA_DB_HOST、OA_DB_PORT | OA PostgreSQL 地址和端口 | 可选，端口缺省 5432 |
 | OA_DB_DATABASE、OA_DB_USER、OA_DB_PASSWORD | OA 查询数据库及账号 | 应用只查表，账号实际只读权限待验证 |
 
-database.py 在加载时读取根目录 .env；现有 Dockerfile COPY . . 配合 [.dockerignore](../../.dockerignore) 排除了 .env，因此不能假定宿主机 .env 中 JWT_SECRET 会自动进入容器。OA 必需配置缺失或不完整时服务视为未配置；完整配置但查询失败时抛错。
+database.py 在加载时读取根目录 .env；Dockerfile COPY . . 配合 [.dockerignore](../../.dockerignore) 排除了 .env，当前 Compose 已显式注入 MySQL/OA/JWT/SSO 变量，环境变更需重新创建容器。OA 必需配置缺失或不完整时服务视为未配置；完整配置但查询失败时抛错。EIMS 配置不全仅关闭 SSO，hybrid 保留本地登录；配置完整不代表真实客户端登录已验收。
 
 ## 启动前的数据影响
 
 应用生命周期执行 create_all、migrate、默认用户初始化和月末快照。migrate 不只改结构，还会修复历史结算/导入记录。开发账号若只有业务 DML 权限，可能无法启动；生产启动权限及迁移流程需单独设计。依据：[main.py](../../main.py)、[migrate.py](../../migrate.py)。
+
+2026-10-13 认证新增 users.is_active（既有用户默认启用）及 auth_login_transactions/auth_sessions 两张 InnoDB 表；使用既有启动迁移链，另有每小时过期认证记录清理。已在独立本地 MySQL 验证，未执行生产迁移。发布前核实备份、CREATE/ALTER/外键及实际用户状态；详情与回调登记见[接入说明](../modules/auth/eims-sso-setup.md)。
 
 只做文档核验时不能运行 Uvicorn、迁移脚本或真实 MySQL 测试脚本。下列命令记录既有用法；实际本地启动验证见运行手册的恢复记录，不能据此推断部署命令也已执行：
 
@@ -54,4 +61,6 @@ MySQL 数据和 uploads 图片分别备份；上传目录不是数据库备份�
 
 .gitignore 排除了 .env、uploads、虚拟环境及发布产物；.dockerignore 未排除 uploads，因此构建上下文是否夹带运行数据需发布前核对。源码有默认安全配置和首次种子账号，禁止将默认值作为长期生产配置。HTTPS/反向代理是部署需落实的条件，仓库未提供完整代理或证书配置。
 
-任何安装依赖、启动/重建服务、生产迁移、数据库写入、代码提交或发布都不是本次知识库初始化的执行范围。
+容器禁用 Uvicorn 访问日志，默认 access logger 也有认证查询脱敏；仍须核验实际 Nginx、CDN/WAF/APM 不记录授权/退出参数。生产 Cookie 使用 Secure/HttpOnly、无跨域 Domain，本地 HTTP 例外只允许 loopback；不要将生产公开来源配置复制到 8010。
+
+知识库初始化未执行运行操作；2026-10-13 SSO 实施在后续授权范围内已验证本地库并更新 8010，未安装依赖、操作生产迁移/部署或提交推送。

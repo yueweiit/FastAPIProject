@@ -35,10 +35,20 @@
 - 页面模板：`templates/index.html`
 - 数据持久化目录：`uploads/`
 - 生产环境配置：项目根目录 `.env`
-- 页面地址：`http://<SERVER_HOST>:<PUBLIC_PORT>/`
+- 正式HTTPS页面：`https://fifo.yueweiportal.com/`；宿主机端口只用于核验代理上游，SSO需HTTPS
 - API 文档：`http://<SERVER_HOST>:<PUBLIC_PORT>/docs`
 
 Docker 容器中的 `localhost` 指向容器自身，不等于数据库服务器。服务器部署前必须确认 `.env` 中的 `MYSQL_HOST` 是容器可以访问的地址。
+
+### 2.1 EIMS 认证版本发布要求（2026-10-13）
+
+接入资料、回调和账号绑定统一见[接入说明](docs/modules/auth/eims-sso-setup.md)。新版Compose要求JWT_SECRET，并显式注入FIFO_AUTH_MODE、FIFO_PUBLIC_BASE_URL、EIMS_ISSUER、EIMS_CLIENT_ID、EIMS_CLIENT_SECRET、SSO_TOKEN_ENCRYPTION_KEY；真实值在服务器原 .env 补充，经安全渠道管理，不能进入发布包/Git/聊天。首次发布hybrid，原本地登录可恢复；未配置客户端时SSO不可用。
+
+发布前备份数据库和uploads，核实CREATE/ALTER/外键权限。启动新增users.is_active（旧用户默认启用）、auth_login_transactions和auth_sessions两张InnoDB表，且仍执行原兼容修复/快照；禁止把启动当只读检查。MySQL DDL不能假定整体回滚，不删除认证表/业务数据恢复版本。认证测试脚本只允许独立本地库，不在生产执行。
+
+requirements.txt新增httpx依赖，Dockerfile禁用Uvicorn访问日志；镜像需重新构建，环境变更需重新创建web。宝塔/Nginx、CDN/WAF/APM另核实认证路径不记录query；不要在日志或工单复制code/state/票据/ID Token hint。实际代理配置归属及容器出站HTTPS待现场核验。
+
+本地150项unittest、页面48项检查、真实本地MySQL并发和8010查询/CSRF/退出已通过；不代表生产登录验收。发布授权后依次验证本地恢复、EIMS普通用户/管理员、绑定错误/停用、刷新轮换、门户撤权、主动退出及日志保护。客户端注册/真实浏览器联调和生产发布尚未执行。
 
 ## 3. 发布包准备
 

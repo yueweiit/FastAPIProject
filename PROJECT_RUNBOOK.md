@@ -80,7 +80,7 @@ Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执�
 
 `main.py` 启动时先执行 `database.init_db()`，用 SQLAlchemy `create_all` 创建缺失表；再执行 `migrate()` 添加缺失的兼容字段；最后执行 `auth.seed_users()`，仅在 `users` 表为空时创建默认用户。这不是完整的版本化迁移。
 
-`database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `127.0.0.1` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。JWT 使用 HS256、有效期 24 小时。`JWT_SECRET` 可用环境变量覆盖，但当前 Compose 未传入该变量，生产部署必须补充强随机值。
+`database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `127.0.0.1` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。浏览器使用可撤销的24小时Cookie会话；local/hybrid兼容无Cookie的HS256 Bearer。Compose 已要求 JWT_SECRET 并传入认证配置，生产显式使用强随机值。EIMS 参数与回调注册见[接入说明](docs/modules/auth/eims-sso-setup.md)。
 
 `services/oa_office_expenses.py` 使用独立的 `OA_DB_*` 配置以只读方式连接 OA PostgreSQL。它只统计流程 `PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B` 中申请日期落在报表期间、状态为已完成且同意的记录。管理支出为“办公场地总费用”时，仅取 `LatínGo拉丁购`（部门 ID `1089990115`）的租金和电费明细，合计后均分给当前有效店铺；管理支出为“工资中国Salario en China”时，按明细中的部门名称与系统店铺名称精确匹配并带入“人员薪资”，该值仍可人工修改并保存，已保存人工值优先；顶层组件“平摊人事+财务管理费用”非零时，按当前有效店铺数均分并带入报表同名行，该字段只允许自动取数，不允许人工修改。OA 配置缺失时，本地开发报表对应自动值为 0；配置存在但读取失败时接口必须报错，不能以 0 掩盖生产连接故障。
 
@@ -89,11 +89,13 @@ Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执�
 ```text
 main.py                 应用入口、生命周期、首页、静态 uploads
 database.py             .env、异步 MySQL 引擎、会话、建表
-auth.py                 JWT、密码哈希、认证依赖、默认用户
-models.py               17 张业务数据表的 ORM 模型
+auth.py                 Cookie/Bearer 认证、密码、角色与初始用户
+models.py               19 张 ORM 表，含两张认证状态表
 schemas.py              Pydantic 请求和响应模型
 migrate.py              启动时自动执行的兼容迁移
-routers/auth.py         登录、管理员创建用户、角色和密码管理
+routers/auth.py         本地登录、建号、启停、角色/店铺和密码管理
+routers/eims_auth.py    EIMS 登录、回调、退出和登录配置
+services/auth_sessions.py  Cookie/CSRF、独立认证事务、刷新和撤销
 routers/products.py     商品和图片上传
 routers/batches.py      入库批次与单件成本
 routers/sales.py        销售记录和 FIFO 出库
@@ -108,7 +110,7 @@ docker-compose.yml      web 服务、8006:8000、uploads 挂载、MySQL 环境�
 
 ## 数据模型与业务规则
 
-数据库 ORM 定义了 17 张表。以下五张是 FIFO 核心表，其余用于店铺、销售导入、结算和财务报表：
+数据库 ORM 定义了 19 张表。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
 
 - `users`：用户名唯一、密码哈希、角色 `admin`、`operator`、`viewer`，非管理员可绑定一个店铺。
 - `products`：SKU 唯一、名称、图片路径。
@@ -134,11 +136,11 @@ FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0`
 
 ## API 与角色
 
-除 `/auth/login` 外，业务接口要求 `Authorization: Bearer <JWT>`；用户由管理员通过 `/auth/users` 创建。
+业务接口按 Cookie 会话（写请求带 CSRF）或允许模式下的传统 Bearer 鉴权；用户仍由管理员创建，EIMS 不自动建号。模式和16个认证接口见[认证 API](docs/modules/auth/api.md)。
 
 - `admin`：全部功能和用户管理。
-- `operator`：创建、编辑、删除商品和批次，记录销售；可查看和导出全部批次，但只能编辑、删除自己创建且未被销售消耗的批次；只能看到自己创建的销售。
-- `viewer`：只读商品、批次、销售和报表。
+- `operator`：共享商品读写，批次写入受创建人/消耗状态约束，敏感销售和损益按当前店铺限制。
+- `viewer`：可写共享商品/平台SKU；批次、销售及损益只读。完整权限和隔离例外以[权限矩阵](docs/knowledge/authentication.md)为准。
 
 主要接口：`/auth/*` 登录和用户管理；`/products` 商品和图片；`/products/options` 商品下拉框轻量数据；`/batches` 入库批次；`/batches/export?batch_ids=1&batch_ids=2` 导出一个或多个批次为带图片 Excel；`/sales` 销售和成本明细；`/reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` 月度报表。
 
@@ -190,11 +192,11 @@ FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0`
 
 ## 默认账号与敏感信息
 
-仅在 `users` 表为空时初始化：`admin/admin123`、`operator/op123`、`viewer/view123`。首次部署后必须立即改密码。`.env` 含数据库密码，`mysql-init/init.sql` 含 root 初始密码，`auth.py` 有 JWT 默认密钥，均不得用于长期生产配置。
+仅 users 为空时初始化 admin/operator/viewer 三种角色；首次部署立即设置安全密码，文档和初始化日志不记录密码。源码的初始账号、数据库及 JWT 默认配置不能用于长期生产；部署密钥仅在受控后端配置保存，禁止复制到聊天/Git。EIMS 客户端和 Token 加密密钥与数据库/JWT 密钥分别维护。
 
 ## 已知问题与维护风险
 
-1. Compose 未传 `JWT_SECRET`，生产部署必须加入。
+1. Compose 已要求 JWT_SECRET；源码仍有默认配置和初始账号，生产需显式设置并改密。SSO 真实客户端/日志/撤权行为待联调。
 2. `viewer` 当前可修改商品和平台 SKU 映射；若该角色应只读，需调整服务端权限。
 3. 月度报表会过滤 operator 的销售，但库存汇总未按用户过滤，可能泄露全局库存。
 4. 删除商品或用户没有显式级联策略；有批次或销售关联时，删除前必须备份并确认外键影响。
@@ -240,6 +242,14 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 
 容器无法启动时，依次检查 `.env` 是否完整、MySQL 是否可达、用户是否允许该来源和具备权限、端口 `8006` 是否被占用。不要为了重置问题直接删除容器、数据卷或数据库。
 
+## EIMS 统一登录运行配置
+
+缺省 hybrid；客户端未配置时本地登录仍可用，SSO 按钮不可用。生产域名为 https://fifo.yueweiportal.com，issuer 为 https://eims.yueweiportal.com。配置/注册/账号绑定/验收统一见[接入说明](docs/modules/auth/eims-sso-setup.md)。不要在本地 .env 使用生产公开来源；8010 开发使用空来源或 loopback。
+
+新增 users.is_active 和两张认证表会随启动创建/兼容迁移，旧用户默认启用；启动仍有原修复/快照副作用，发布前先备份。每小时清过期认证记录，提供方网络请求按需发生，不在启动时认证真实用户。环境或加密密钥变更后重启应用；密钥更换需重新登录。改密/停用撤销 Cookie，传统 Bearer 吊销限制见[认证概览](docs/modules/auth/overview.md)。
+
+2026-10-13 本地验证：150项 unittest、两份页面48项认证检查通过；真实本地InnoDB验证单次消费/并发一次刷新/撤销，校验既有业务记录一致。8010已更新，Cookie me、商品/72条存货、CSRF和退出通过；旧登录缓存已清理，浏览器需重新登录一次。未安装依赖、修改生产配置/数据库或发布；真实 EIMS 授权、绑定及退出尚未验收。
+
 ## GitHub 代码发布与服务器更新
 
 当前 GitHub 公有仓库为 `https://github.com/yueweiit/FastAPIProject`，默认分支为 `main`。服务器通过 `git pull --ff-only` 获取新版本，公有仓库无需在服务器配置 GitHub Token 或 Deploy Key。`.gitignore` 排除了 `.env`、`uploads/`、`output/`、`.deploy/`、虚拟环境和压缩包；仓库只保存代码、Docker 配置和文档。首次发布可参考 `DEPLOYMENT_HANDOFF.md` 第 13 节。服务器更新前必须先确认 `.env` 和 `uploads/` 仍在项目目录，并备份数据库；更新后执行 `docker compose build web` 和 `docker compose up -d --force-recreate web`，再检查容器、日志和 `curl` 页面状态。禁止将个人 Token、数据库密码或服务器密码提交到 GitHub。
@@ -250,6 +260,7 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 
 ## 变更记录
 
+- 2026-10-14：修复认证的改密/会话竞态、轮换Token后临时故障恢复、延迟退出回调；未新增表/字段，未改变库存/财务口径。160项单元测试、两份页面48项检查及真实本地InnoDB双向用户锁/刷新恢复通过，8010已加载修复版并通过商品、存货、Cookie、CSRF和退出检查。正式EIMS仍待配置和联调；详细逻辑及边界维护于[认证流程](docs/modules/auth/workflow.md)和[方案修复记录](docs/plans/2026-10-13-eims-sso-integration.md#9-2026-10-14-审查问题修复)，未生产部署或提交推送。
 - 2026-10-08：FIFO 销售改为锁定可用库存批次后复查数量；销售文件导入在库存预检前锁定相关批次；批次编辑、删除及导入撤销读取批次时使用行锁。无需数据库结构迁移。
 - 2026-10-08：在本机 Docker `mysql57` 建立 `inventory_fifo` 和独立测试账号，项目本地 `.env` 指向 `127.0.0.1:3308`。已初始化 17 张表；真实 MySQL 并发验证确认两笔销售争用最后一件库存时仅一笔成功，测试业务记录已清理。
 - 2026-10-12：从下载的 MySQL 8.0.46 服务器备份恢复独立本地测试库 `inventory_fifo_test`（`127.0.0.1:3309`），逐表核对 17 张表、5,631 条记录及外键、库存边界，项目 `.env` 已切换，旧测试库保留；随后在本机 `8010` 端口成功启动应用，首页和接口定义检查通过。

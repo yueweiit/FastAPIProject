@@ -11,7 +11,7 @@
 | [project-overview.md](project-overview.md) | 项目定位、技术栈、入口、目录 |
 | [architecture.md](architecture.md) | 系统关系、启动生命周期、事务与外部依赖 |
 | [business-map.md](business-map.md) | 功能清单、模块依赖、尚未实现的目标 |
-| [database.md](database.md) | 17 张 ORM 表、关系图、迁移与数据边界 |
+| [database.md](database.md) | 19 张 ORM 表、关系图、迁移与数据边界 |
 | [api-overview.md](api-overview.md) | 路由、调用关系、分页、错误与导出 |
 | [authentication.md](authentication.md) | 登录、角色矩阵、店铺隔离和例外 |
 | [deployment.md](deployment.md) | 源码定义的运行环境、配置和部署边界 |
@@ -23,7 +23,7 @@
 
 | 模块 | 主要内容 | 入口 |
 | --- | --- | --- |
-| 认证与用户 | JWT、用户管理、店铺绑定 | [auth/overview.md](../modules/auth/overview.md) |
+| 认证与用户 | EIMS/本地登录、Cookie/CSRF、用户启停/管理、店铺绑定 | [auth/overview.md](../modules/auth/overview.md) |
 | 商品 | SKU、Excel 批量新增、图片、图册、安全库存与商品类型历史 | [products/overview.md](../modules/products/overview.md) |
 | 入库与库存 | 批次、采购和物流成本、库存编辑约束 | [inventory/overview.md](../modules/inventory/overview.md) |
 | 销售与导入 | FIFO、平台文件、组合 SKU、人民币金额、待确认和撤销 | [sales/overview.md](../modules/sales/overview.md) |
@@ -54,7 +54,8 @@
 | 项目 | 已知源码事实 | 待验证内容 |
 | --- | --- | --- |
 | 实际环境 | Docker 声明 Python 3.13；MySQL 为主库 | 本机/服务器 Python、数据库版本、InnoDB、字符集、时区、实际端口和可达性 |
-| 数据库 | ORM 定义 17 表；启动迁移同时含 DDL 和历史数据更新 | 实库字段、索引、外键及历史数据是否与模型一致 |
+| 数据库 | ORM 定义 19 表；本地新增两张 InnoDB 认证表和 users.is_active；启动迁移同时含 DDL 和历史修复 | 正式库字段、索引、外键、启动权限和历史数据 |
+| EIMS 接入 | 已实现 PKCE/RS256、后端加密 Token、Cookie/CSRF、绑定/启停、刷新与退出；本地验证通过 | 客户端注册/安全配置、正式用户绑定、门户 start 配合、真实撤权/刷新/退出及日志保护，见[接入说明](../modules/auth/eims-sso-setup.md) |
 | 权限 | 商品和平台 SKU 为共享数据；独立存货接口未按店铺过滤 | 这些权限是否符合业务；库存归属是否需要独立店铺字段 |
 | 财务口径 | 07表已按2026-10-12用户确认逐日累计，原始成本减累计金额且允许负值；单日比例沿用新品0.5%/稳健1%增量，差额本期减上期 | 真实历史规则/流水完整性、生产更新及其他成本分类；快照/店铺损益仍为准备余额口径 |
 | 汇率与 OA | 汇率使用 Frankfurter；OA 只执行 SELECT | 外网可用性、汇率来源批准、OA 只读账号权限及表结构/表单组件 |
@@ -63,7 +64,7 @@
 | 并发 | FIFO 和撤销有行锁；订单号只有普通索引 | 真实 MySQL 并发、批量导入锁等待、跨店重复事件和幂等策略 |
 | 页面副本 | templates/index.html 与根目录 index.html 当前内容不完全一致；2026-10-12 已同步商品导入功能块 | 后续前端任务仍需核对平台 SKU 等已有差异，按授权范围同步 |
 
-## 初始化验证记录
+## 初始化验证记录（历史静态检查）
 
 - 新建40份文档：全局9份、六个模块各5份、根目录AGENTS.md；未覆盖已有根目录文档。
 - 检查441个本地链接、模块代码映射符号和Markdown结构；17张ORM表的194个字段、52个业务API均有对应记录，无缺漏或重复字段字典。
@@ -71,3 +72,9 @@
 - 对任务开始时记录的48个原有文件复核SHA256，内容全部保持不变；原有未提交修改保留，新增文件均为本知识库和AGENTS.md。
 
 本次仅静态分析与文档检查；未读取实际 `.env` 内容，未连接数据库，未执行业务测试、依赖安装、服务启动、迁移或部署。已有测试的存在不代表本次执行通过。
+
+## 2026-10-13 认证接入更新
+
+按用户批准的[接入方案](../plans/2026-10-13-eims-sso-integration.md)完成代码和相关文档，同步认证模块、当前表/API 数量及配置约束。已执行离线协议/权限回归、两份页面辅助函数与真实本地 MySQL 并发验证；8010 商品和存货查询、CSRF 拒绝、Cookie 退出验证通过。正式 EIMS 仍待注册配置及端到端验收；详细结果在方案实施记录维护，不将初始化时的静态检查当作本次运行验证。
+
+2026-10-14 修复审查发现的改密竞态、轮换后故障恢复及延迟退出回调三项问题；全量160项测试及真实本地InnoDB双向用户锁验证通过。详细逻辑、验证和未完成的正式联调继续由[方案修复记录](../plans/2026-10-13-eims-sso-integration.md#9-2026-10-14-审查问题修复)及[认证流程](../modules/auth/workflow.md)维护；未新增表/字段或生产迁移。

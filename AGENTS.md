@@ -5,7 +5,7 @@
 ## 项目与上下文入口
 
 - 系统是跨境电商 FIFO 库存及财务核算单体：FastAPI/Uvicorn、SQLAlchemy 2 异步 ORM、MySQL、Pydantic 2；前端为原生 HTML/CSS/JavaScript，没有独立前端构建项目。
-- `main.py` 注册六组路由；业务部分位于 `routers/`，算法及外部数据服务位于 `services/`，表和契约为 `models.py`、`schemas.py`。OA PostgreSQL 只读取数与 Frankfurter 汇率是外部依赖。
+- `main.py` 注册七组路由（本地认证与 EIMS 各一组）；业务位于 `routers/`，算法/外部服务位于 `services/`，表/契约为 `models.py`、`schemas.py`。MySQL 含 19 张 ORM 表；EIMS 认证、OA PostgreSQL 只读取数与 Frankfurter 汇率是外部依赖。
 - 先读 [知识库索引](docs/knowledge/README.md)，再按任务读取对应模块的 `overview.md`、`workflow.md`、`code-map.md`，按需补读 `database.md`、`api.md`，不要每次加载全部模块。
 
 | 任务 | 模块入口 |
@@ -30,11 +30,13 @@
 7. 启动会建表、兼容迁移、修复历史数据、初始化用户和生成快照，不可当只读检查。07存货查询/导出改为财务自定义逐日累计，不再补建快照；原快照/店铺损益余额口径与之不同，修改前读报表模块，其他入口仍需核实副作用。
 8. 不输出或保存密码、Token、JWT 密钥、私钥、完整连接串；保护 `.env`、`uploads/` 和实际数据库。代码存在默认安全配置，不能视为生产可用配置。
 9. 未经明确授权，不提交/推送/发布，不操作生产部署/迁移，不删除业务数据、上传文件或 Docker 卷，不执行危险 Git 清理。重要不可逆操作须先说明影响、确认授权和备份/回滚条件。
+10. 认证为 local/hybrid/eims，浏览器使用可撤销 Cookie 和 CSRF；EIMS app_user_id 只绑定本地 users.id，角色/店铺仍从本地读取。密码/启停与会话创建统一 User → AuthSession 锁序；刷新临时失败保留已收到的新 Token 为待复核状态，不能跳过验签/绑定。认证锁须在进入库存业务前释放，不记录认证查询。改密/停用撤销 Cookie，传统 Bearer 吊销限制见[认证模块](docs/modules/auth/overview.md)，配置/发布见[接入说明](docs/modules/auth/eims-sso-setup.md)。
 
 ## 验证与知识库维护
 
 - 使用现有 unittest/IsolatedAsyncioTestCase，优先受影响测试；测试映射见 [conventions.md](docs/knowledge/conventions.md)。常用命令为 `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`，运行前确认已有环境，不在纯分析/文档任务中安装依赖或启动服务。
 - `tests/mysql_fifo_concurrency.py` 会建表、迁移并写本地测试库，只在对应运行任务已授权且目标核实后执行；模拟锁测试不等于真实 MySQL/InnoDB 集成验证。
+- SSO 优先 `test_eims_sso` 与 `node tests/auth_page_checks.cjs`。`tests/mysql_auth_sessions.py --apply-local-auth-schema` 会补认证结构及写临时记录，只允许核实的 `127.0.0.1:3309 / inventory_fifo_test / fifo_local_app`，有相应本地运行授权后执行；不得用于生产。
 - 纯文档任务验证链接、源码路径/符号、表/接口覆盖和变更范围，不调用有写入副作用的入口。不能执行的检查如实说明。
 - 业务、API、表、权限、核心算法或部署方式实质变化后，按需更新相关现有模块文档、全局索引及根目录维护文档；不因格式/注释小改动批量建文档。
 - 字段字典维护于各模块 `database.md`，接口清单维护于 `api.md`，全局文档通过链接引用。重要决策按需放 `docs/development/`，大型方案按需放 `docs/plans/`；不重复维护或保存敏感信息。

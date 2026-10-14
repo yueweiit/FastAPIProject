@@ -15,7 +15,7 @@
 | 数据访问 | SQLAlchemy 2.x 异步 ORM、aiomysql；[database.py](../../database.py) |
 | 校验 | Pydantic 2.x 请求/响应模型和 FastAPI Form/File/Query；[schemas.py](../../schemas.py) |
 | 主库 | MySQL，默认库名 inventory_fifo；金额以 DECIMAL、原始结算行及人工报表值以 JSON 保存；[models.py](../../models.py) |
-| 登录 | python-jose 的 HS256 JWT，passlib/bcrypt 哈希；[auth.py](../../auth.py) |
+| 登录 | 本地 bcrypt 与可撤销 Cookie；EIMS 授权码/PKCE、RS256、Fernet 加密后端 Token、httpx；保留 local/hybrid 的传统 HS256 Bearer；[认证模块](../modules/auth/overview.md) |
 | 文件 | openpyxl、Pillow，Excel 读取/导出和图片嵌入；[商品路由](../../routers/products.py)、[报表路由](../../routers/reports.py) |
 | 外部来源 | asyncpg 只读 OA PostgreSQL；urllib 请求 Frankfurter 历史汇率；[OA 服务](../../services/oa_office_expenses.py)、[汇率服务](../../services/exchange_rates.py) |
 | 验证 | unittest/IsolatedAsyncioTestCase，模拟数据库、网络和锁；另有写入本地测试库的真实并发脚本；[tests/](../../tests/) |
@@ -27,11 +27,11 @@
 
 ```text
 main.py                 应用组装、生命周期、首页、静态图片
-database.py / models.py  异步会话与 17 张 ORM 表
+database.py / models.py  异步会话与 19 张 ORM 表（含两张认证状态表）
 schemas.py / auth.py     数据契约、认证和角色依赖
 migrate.py              启动兼容迁移和历史记录修复
-routers/                六组 HTTP 路由，含部分业务计算
-services/               商品导入、FIFO、汇率、跌价准备、快照和 OA 服务
+routers/                七组 HTTP 路由，认证含本地与 EIMS 两组
+services/               认证会话、EIMS、商品导入、FIFO、汇率、跌价、快照和 OA
 templates/index.html    实际运行首页，内嵌 CSS/JavaScript
 index.html              页面副本；前端修改需核对两份文件
 tests/                  单元测试和本地 MySQL 并发验证脚本
@@ -44,14 +44,14 @@ docs/knowledge/         全局知识库
 docs/modules/           六个模块的业务、流程、代码、表和 API
 ```
 
-源码路径均以仓库根目录为基准。实际请求入口为 Uvicorn `main:app`：`/` 读取模板，`/uploads` 公开提供图片，默认 FastAPI `/docs`、`/redoc`、`/openapi.json` 提供接口说明；业务路由由 `main.py` 的六次 `include_router` 注册。
+源码路径均以仓库根目录为基准。实际请求入口为 Uvicorn `main:app`：`/` 读取模板，`/uploads` 公开提供图片，默认 FastAPI `/docs`、`/redoc`、`/openapi.json` 提供接口说明；路由由 `main.py` 的七次 `include_router` 注册。
 
 当前两份 index.html 在归一化换行后仍有内容差异，以 templates/index.html 为运行依据。2026-10-12 商品导入按功能块同步两份页面，保留平台 SKU 懒加载等原有差异。
 
 ## 当前实现边界
 
-系统为一个进程内单体应用，未发现独立 Controller、消息队列、Redis、定时任务平台或独立前端服务。月末快照检查是 FastAPI 生命周期创建的 asyncio 任务。店铺隔离通过具体查询实现，没有统一 tenant_id 或数据库行级隔离。
+系统为进程内单体，未发现独立 Controller、消息队列、Redis、定时任务平台或独立前端服务。月末快照及认证过期清理是 FastAPI 生命周期的 asyncio 任务。店铺隔离通过具体查询实现，没有统一 tenant_id 或数据库行级隔离；EIMS 不改变这条业务边界。
 
-本仓库有 Git，初始化知识库前工作区已有代码、文档和测试改动；本次保留。没有根目录 README，也没有现成 docs/knowledge 或项目级 AGENTS.md；已有根目录架构、运行维护、交接和财务目标文档通过[总索引](README.md)复用。
+本仓库有 Git，没有根目录 README；知识库与项目 AGENTS.md 已建立。初始化时复用了已有根目录架构、运行维护、交接及财务目标文档，后续从[总索引](README.md)恢复相关上下文。
 
 数据库版本、服务运行状态、真实店铺和库存数据不由源码推断，见[待验证清单](README.md#待验证清单)。
