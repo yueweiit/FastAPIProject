@@ -92,15 +92,14 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             }, {})
 
         impairment_totals = AsyncMock(return_value={
-            datetime(2026, 9, 1): Decimal("40"),
-            datetime(2026, 8, 1): Decimal("30"),
-            datetime(2026, 7, 1): Decimal("25"),
-            datetime(2026, 1, 1): Decimal("10"),
+            "inventory_impairment": {"current": Decimal("10"), "previous": Decimal("5"), "ytd": Decimal("30")},
+            "inventory_writeoff": {period: Decimal("0") for period in ("current", "previous", "ytd")},
+            "_warnings": [],
         })
         with (
             patch("routers.sales._sale_import_context", new=AsyncMock(side_effect=import_context)),
             patch(
-                "routers.reports._store_inventory_impairment_totals",
+                "routers.reports._store_provision_financial_values",
                 new=impairment_totals,
             ),
             patch(
@@ -171,15 +170,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "previous": Decimal("5"),
             "ytd": Decimal("20"),
         })
-        self.assertEqual(
-            impairment_totals.await_args.args[2],
-            [
-                datetime(2026, 9, 1),
-                datetime(2026, 8, 1),
-                datetime(2026, 7, 1),
-                datetime(2026, 1, 1),
-            ],
-        )
+        self.assertEqual(impairment_totals.await_args.args[2], _month_periods(date(2026, 8, 1)))
 
     def test_template_formulas_use_manual_and_generated_cells(self):
         auto_values = {

@@ -1,4 +1,4 @@
-"""准备余额算法回归：继续用于自动快照和店铺损益，不是07表逐日累计。"""
+"""原静态准备余额及快照历史回归；现行报表使用持有期间回放。"""
 import unittest
 from datetime import date
 from decimal import Decimal

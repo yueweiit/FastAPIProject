@@ -338,6 +338,7 @@ class StoreProfitLossResponse(BaseModel):
     can_edit: bool
     updated_at: datetime | None = None
     rows: list[StoreProfitLossRowResponse]
+    warnings: list[str] = Field(default_factory=list)
 
 
 # ========== 财务主数据 ==========

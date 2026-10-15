@@ -23,7 +23,7 @@ REPORT_DATE = date(2026, 9, 30)
 
 
 class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
-    async def _rows(self, *, sold_cost="200", store_id=None):
+    async def _rows(self, *, sold_cost="400", store_id=None):
         batches = [
             SimpleNamespace(id=1, product_id=10, quantity=100, unit_cost=Decimal("10"),
                             arrived_at=datetime(2026, 8, 21), batch_no="A"),
@@ -36,9 +36,12 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         rule = SimpleNamespace(product_id=10, product_type="new", safe_stock_quantity=0,
                                effective_date=date(2026, 7, 1))
         deductions = [
-            SimpleNamespace(batch_id=1, sold_on=date(2026, 8, 22), report_quantity=10, report_cost=Decimal(sold_cost) / 2),
-            SimpleNamespace(batch_id=1, sold_on="2026-08-23", report_quantity=10, report_cost=Decimal(sold_cost) / 2),
-            SimpleNamespace(batch_id=3, sold_on=date(2026, 7, 3), report_quantity=50, report_cost=Decimal("400")),
+            SimpleNamespace(detail_id=1, sale_id=1, batch_id=1, sold_at=datetime(2026, 8, 22),
+                            report_quantity=20, saved_unit_cost=Decimal(sold_cost) / 40, sale_store_id=7),
+            SimpleNamespace(detail_id=2, sale_id=2, batch_id=1, sold_at=datetime(2026, 8, 23),
+                            report_quantity=20, saved_unit_cost=Decimal(sold_cost) / 40, sale_store_id=7),
+            SimpleNamespace(detail_id=3, sale_id=3, batch_id=3, sold_at=datetime(2026, 7, 3),
+                            report_quantity=50, saved_unit_cost=Decimal("8"), sale_store_id=7),
         ]
         db = SimpleNamespace(execute=AsyncMock(side_effect=[
             SimpleNamespace(all=lambda: batch_rows),
@@ -49,24 +52,24 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         db.commit.assert_not_awaited()
         return rows, db
 
-    async def test_finance_accepted_result_preserves_saved_outgoing_cost(self):
+    async def test_confirmed_balance_preserves_saved_outgoing_cost(self):
         rows, db = await self._rows(sold_cost="360.1234")
         with patch("routers.reports._load_inventory_impairment_report_rows", new_callable=AsyncMock, return_value=rows):
             response = await inventory_impairment_report(REPORT_DATE, None, None)
         first = response[0]
         self.assertEqual(first["original_quantity"], 100)
         self.assertEqual(first["original_inventory_amount"], Decimal("1000"))
-        self.assertEqual(first["sold_quantity"], 20)
+        self.assertEqual(first["sold_quantity"], 40)
         self.assertEqual(first["sold_cost_amount"], Decimal("360.1234"))
-        self.assertEqual(first["quantity"], 80)
-        self.assertEqual(first["inventory_amount"], Decimal("800"))
-        self.assertEqual(first["impairment_amount"], Decimal("3280.50"))
-        self.assertEqual(first["book_value"], Decimal("-2280.50"))
-        self.assertEqual(first["monthly_impairment_amount"], Decimal("3060"))
-        self.assertEqual(first["book_value_difference"], Decimal("-3060"))
+        self.assertEqual(first["quantity"], 60)
+        self.assertEqual(first["inventory_amount"], Decimal("600"))
+        self.assertEqual(first["impairment_amount"], Decimal("120"))
+        self.assertEqual(first["book_value"], Decimal("480"))
+        self.assertEqual(first["monthly_impairment_amount"], Decimal("90"))
+        self.assertEqual(first["book_value_difference"], Decimal("-90"))
         statement = db.execute.call_args_list[2].args[0]
-        self.assertIn("sale_cost_details.quantity * sale_cost_details.unit_cost", str(statement))
-        self.assertIn("GROUP BY sale_cost_details.batch_id, date(sales.sold_at)", str(statement))
+        self.assertIn("sale_cost_details.unit_cost AS saved_unit_cost", str(statement))
+        self.assertIn("ORDER BY sales.sold_at, sales.id, sale_cost_details.id", str(statement))
         dates = [v for v in statement.compile().params.values() if isinstance(v, datetime)]
         self.assertEqual(dates, [datetime(2026, 10, 1)])
         self.assertIn(datetime(2026, 10, 1), db.execute.call_args_list[0].args[0].compile().params.values())
@@ -78,19 +81,19 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([row["unit_cost"] for row in rows], [Decimal("10"), Decimal("12"), Decimal("8")])
         self.assertEqual([row["impairment_rate"] for row in rows], [Decimal("0.20"), Decimal("0.05"), Decimal("0")])
         self.assertEqual(rows[2]["quantity"], 0)
-        self.assertEqual(rows[2]["impairment_amount"], Decimal("2"))
+        self.assertEqual(rows[2]["impairment_amount"], Decimal("0"))
         summary = _summarize_inventory_impairment_rows(rows)[0]
         self.assertEqual(summary["batch_count"], 3)
         self.assertEqual(summary["original_quantity"], 350)
         self.assertEqual(summary["original_inventory_amount"], Decimal("3800"))
-        self.assertEqual(summary["sold_quantity"], 70)
-        self.assertEqual(summary["sold_cost_amount"], Decimal("600"))
-        self.assertEqual(summary["quantity"], 280)
-        self.assertEqual(summary["inventory_amount"], Decimal("3200"))
-        self.assertEqual(summary["impairment_amount"], Decimal("3942.50"))
-        self.assertEqual(summary["monthly_impairment_amount"], Decimal("3720"))
-        self.assertEqual(summary["book_value"], Decimal("-142.50"))
-        self.assertEqual(summary["book_value_difference"], Decimal("-1320"))
+        self.assertEqual(summary["sold_quantity"], 90)
+        self.assertEqual(summary["sold_cost_amount"], Decimal("800"))
+        self.assertEqual(summary["quantity"], 260)
+        self.assertEqual(summary["inventory_amount"], Decimal("3000"))
+        self.assertEqual(summary["impairment_amount"], Decimal("240"))
+        self.assertEqual(summary["monthly_impairment_amount"], Decimal("210"))
+        self.assertEqual(summary["book_value"], Decimal("2760"))
+        self.assertEqual(summary["book_value_difference"], Decimal("2190"))
         self.assertEqual(summary["original_inventory_amount"] - summary["sold_cost_amount"], summary["inventory_amount"])
         self.assertEqual(_summarize_inventory_impairment_rows([]), [])
 
@@ -105,7 +108,7 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         sheet = load_workbook(_workbook_bytes_with_formula_cache(workbook, {}), data_only=True).active
         self.assertIsNone(sheet["O2"].value)
         self.assertIsNone(sheet["O3"].value)
-        self.assertEqual(sheet["N3"].value, -142.5)
+        self.assertEqual(sheet["N3"].value, 2760)
 
     async def test_sku_grouping_does_not_merge_names_or_replace_batch_prices(self):
         rows, _ = await self._rows()
@@ -114,10 +117,10 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         summaries = _summarize_inventory_impairment_rows(rows + [other])
         self.assertEqual([row["sku"] for row in summaries], ["SKU-1", "SKU-2"])
         self.assertEqual(summaries[0]["store_name"], "店铺A / 店铺B")
-        self.assertEqual(summaries[0]["book_value"], Decimal("-142.50"))
-        self.assertEqual(summaries[1]["book_value"], Decimal("1740"))
+        self.assertEqual(summaries[0]["book_value"], Decimal("2760"))
+        self.assertEqual(summaries[1]["book_value"], Decimal("2280"))
 
-    async def test_excel_formulas_cached_negatives_headers_and_literal_text(self):
+    async def test_excel_remaining_cost_formula_cache_headers_and_literal_text(self):
         rows, _ = await self._rows()
         rows[0]["sku"] = '=HYPERLINK("https://example.invalid")'
         workbook, cache = _build_inventory_impairment_workbook(rows, REPORT_DATE)
@@ -125,15 +128,15 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         sheet = load_workbook(output, data_only=True)[INVENTORY_IMPAIRMENT_SHEET]
         self.assertEqual(sheet["G2"].value, 100)
         self.assertEqual(sheet["H2"].value, 1000)
-        self.assertEqual(sheet["I2"].value, 20)
-        self.assertEqual(sheet["J2"].value, 200)
-        self.assertEqual(sheet["O2"].value, 3280.5)
-        self.assertEqual(sheet["P2"].value, -2280.5)
-        self.assertEqual(sheet["R2"].value, 3060)
+        self.assertEqual(sheet["I2"].value, 40)
+        self.assertEqual(sheet["J2"].value, 400)
+        self.assertEqual(sheet["O2"].value, 120)
+        self.assertEqual(sheet["P2"].value, 480)
+        self.assertEqual(sheet["R2"].value, 90)
         self.assertEqual(sheet["S4"].value, "已售完")
-        self.assertEqual(sheet["O4"].value, 2)
-        self.assertEqual(sheet["M5"].value, 3200)
-        self.assertEqual(sheet["P5"].value, -142.5)
+        self.assertEqual(sheet["O4"].value, 0)
+        self.assertEqual(sheet["M5"].value, 3000)
+        self.assertEqual(sheet["P5"].value, 2760)
         self.assertEqual(sheet["N2"].number_format, "0.00%")
         self.assertEqual(sheet["T2"].data_type, "s")
         for cell in ("E5", "F5", "N5"):
@@ -141,21 +144,21 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         output.seek(0)
         formulas = load_workbook(output)[INVENTORY_IMPAIRMENT_SHEET]
         self.assertEqual(formulas["B2"].data_type, "s")
-        self.assertEqual(formulas["P2"].value, '=IF(OR(H2="",O2=""),"",H2-O2)')
+        self.assertEqual(formulas["P2"].value, '=IF(OR(M2="",O2=""),"",M2-O2)')
         self.assertEqual(formulas["P5"].value, '=SUM(P2:P4)')
         self.assertEqual([cell.value for cell in formulas[1]], INVENTORY_IMPAIRMENT_HEADERS)
         self.assertEqual(formulas["P1"].value, "账面价值(元)")
         _build_inventory_impairment_summary_sheet(workbook, _summarize_inventory_impairment_rows(rows), REPORT_DATE)
         saved = load_workbook(_workbook_bytes_with_formula_cache(workbook, cache), data_only=True)
-        self.assertEqual(saved[INVENTORY_IMPAIRMENT_SHEET]["P5"].value, -142.5)
-        self.assertEqual(saved[INVENTORY_IMPAIRMENT_SUMMARY_SHEET]["N3"].value, -142.5)
+        self.assertEqual(saved[INVENTORY_IMPAIRMENT_SHEET]["P5"].value, 2760)
+        self.assertEqual(saved[INVENTORY_IMPAIRMENT_SUMMARY_SHEET]["N3"].value, 2760)
 
     async def test_new_batch_previous_zero_and_historical_comparison_without_snapshot(self):
         rows, _ = await self._rows()
-        self.assertEqual(rows[0]["previous_book_value"], Decimal("779.5"))
+        self.assertEqual(rows[0]["previous_book_value"], Decimal("570"))
         self.assertEqual(rows[1]["previous_book_value"], Decimal("0"))
         self.assertIn("本月新增批次", rows[1]["comparison_note"])
-        self.assertEqual(rows[2]["previous_book_value"], Decimal("398"))
+        self.assertEqual(rows[2]["previous_book_value"], Decimal("0"))
 
     async def test_empty_reports_have_numeric_totals_without_circular_formulas(self):
         workbook, cache = _build_inventory_impairment_workbook([], REPORT_DATE)
@@ -169,10 +172,10 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(workbook.active.cell(2, column).value, 0)
 
     async def test_local_store_scope_is_preserved(self):
-        _, db = await self._rows(store_id=7)
+        rows, db = await self._rows(store_id=7)
         stmt = db.execute.call_args_list[0].args[0]
-        self.assertIn("users.store_id =", str(stmt))
-        self.assertIn(7, stmt.compile().params.values())
+        self.assertNotIn("WHERE users.store_id =", str(stmt))
+        self.assertTrue(all(row["store_id"] == 7 for row in rows))
 
     def _client(self, role="viewer", db=None):
         app = FastAPI()
@@ -188,10 +191,10 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                 detail = await client.get("/reports/inventory-impairment?report_date=2026-09-30")
                 self.assertEqual(detail.status_code, 200)
                 self.assertEqual(len(detail.json()), 3)
-                self.assertEqual(detail.json()[0]["book_value"], -2280.5)
+                self.assertEqual(detail.json()[0]["book_value"], 480)
                 response = await client.get("/reports/inventory-impairment/summary?report_date=2026-09-30")
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.json()[0]["book_value"], -142.5)
+                self.assertEqual(response.json()[0]["book_value"], 2760)
                 load.assert_awaited_with(None, REPORT_DATE)
                 for view, title, cell in (("batch", INVENTORY_IMPAIRMENT_SHEET, "P5"),
                                           ("sku", INVENTORY_IMPAIRMENT_SUMMARY_SHEET, "N2")):
@@ -199,7 +202,7 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(exported.status_code, 200)
                     sheet = load_workbook(BytesIO(exported.content), data_only=True).active
                     self.assertEqual(sheet.title, title)
-                    self.assertEqual(sheet[cell].value, -142.5)
+                    self.assertEqual(sheet[cell].value, 2760)
                 self.assertEqual((await client.get("/reports/inventory-impairment/export?report_date=2026-09-30&view=other")).status_code, 422)
                 load.reset_mock()
                 future = (date.today() + timedelta(days=1)).isoformat()
@@ -225,8 +228,8 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(len(workbook.sheetnames), 5 if role == "admin" else 4)
                     self.assertEqual(workbook.sheetnames[-1], INVENTORY_IMPAIRMENT_SUMMARY_SHEET)
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["G5"].value, 350)
-                    self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["P5"].value, -142.5)
-                    self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SUMMARY_SHEET]["N2"].value, -142.5)
+                    self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["P5"].value, 2760)
+                    self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SUMMARY_SHEET]["N2"].value, 2760)
 
 
 if __name__ == "__main__":

@@ -41,7 +41,7 @@ from services.oa_office_expenses import (
     office_space_totals_by_application_date,
     shared_admin_totals_by_application_date,
 )
-from services.inventory_daily_impairment import daily_accumulated_impairments
+from services.inventory_provision_movements import ProvisionSale, replay_inventory_provisions
 from services.inventory_impairment import (
     InventoryLayer,
     ImpairmentRule,
@@ -64,15 +64,18 @@ INVENTORY_IMPAIRMENT_HEADERS = [
     "累计销售出库数量",
     "累计销售出库成本(元)",
     "现存库存数量",
-    "当日计提数量",
+    "期末计提数量",
     "现存库存成本金额(元)",
-    "当日累计比例",
-    "累计跌价（逐日累计）(元)",
+    "累计跌价比例",
+    "期末累计跌价准备(元)",
     "账面价值(元)",
     "与上月末账面价值差额(元)",
-    "本月跌价（逐日累计）(元)",
+    "本月计提（现存库存）(元)",
     "状态",
     "备注",
+    "期初跌价准备余额(元)",
+    "本月计提总额(元)",
+    "本月销售转销(元)",
 ]
 INVENTORY_IMPAIRMENT_SUMMARY_SHEET = "07-存货SKU汇总表"
 INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
@@ -85,13 +88,16 @@ INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
     ("sold_quantity", "累计销售出库数量"),
     ("sold_cost_amount", "累计销售出库成本(元)"),
     ("quantity", "现存库存数量"),
-    ("provision_quantity", "当日计提数量"),
+    ("provision_quantity", "期末计提数量"),
     ("inventory_amount", "现存库存成本金额(元)"),
-    ("impairment_amount", "累计跌价（逐日累计）(元)"),
-    ("monthly_impairment_amount", "本月跌价（逐日累计）(元)"),
+    ("impairment_amount", "期末累计跌价准备(元)"),
+    ("monthly_impairment_amount", "本月计提（现存库存）(元)"),
     ("book_value", "账面价值(元)"),
     ("book_value_difference", "与上月末账面价值差额(元)"),
     ("comparison_note", "比较说明"),
+    ("opening_impairment_amount", "期初跌价准备余额(元)"),
+    ("monthly_total_impairment_amount", "本月计提总额(元)"),
+    ("monthly_writeoff_amount", "本月销售转销(元)"),
 )
 
 STORE_PROFIT_LOSS_ROWS = (
@@ -106,6 +112,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("local_logistics_cost", "  本地物流配送成本", "manual", None),
     ("fulfillment_cost", "  代发成本", "manual", None),
     ("other_direct_cost", "  其他直接成本", "auto", "销售记录中的其他费用"),
+    ("inventory_writeoff", "  减：销售转销跌价准备", "auto", "已售商品对应准备抵减营业成本；不修改保存的FIFO成本"),
     ("gross_profit", "毛利", "formula", None),
     ("gross_margin", "毛利率", "formula", None),
     ("tax_surcharge", "减：税金及附加", "manual", None),
@@ -122,7 +129,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("research_development", "减：研发费用", "manual", None),
     ("finance_expenses", "减：财务费用", "manual", None),
     ("asset_impairment_loss", "减：资产减值损失", "formula", None),
-    ("inventory_impairment", "    存货跌价准备", "auto", "本月末计提额减上月末计提额"),
+    ("inventory_impairment", "    存货跌价准备", "auto", "期间每天实际持有库存的新增准备，含期间已售商品售出前增提"),
     ("credit_impairment_loss", "减：信用减值损失", "manual", None),
     ("operating_profit", "二、营业利润", "formula", None),
     ("non_operating_income", "加：营业外收入", "manual", None),
@@ -175,6 +182,35 @@ def _decimal_or_zero(value) -> Decimal:
     return Decimal(str(value))
 
 
+def _sum_known(values):
+    items = list(values)
+    return None if any(value is None for value in items) else sum(items, Decimal("0"))
+
+
+def _subtract_known(left, right):
+    return None if left is None or right is None else left - right
+
+
+def _cost_units(unit_cost, units):
+    return None if units is None else unit_cost * units
+
+
+def _margin_known(gross, revenue):
+    return None if gross is None or not revenue else gross / revenue
+
+
+def _inventory_status(item):
+    if item["impairment_amount"] is None or item.get("monthly_total_impairment_amount") is None:
+        return "历史流水待核对"
+    if not item["quantity"]:
+        return "已售完"
+    if not item["provision_quantity"]:
+        return "安全库存内"
+    if item["impairment_rate"] >= Decimal("0.9"):
+        return "比例达到上限"
+    return "比例接近上限" if item["impairment_rate"] >= Decimal("0.6") else "正常计提"
+
+
 def _blank_profit_loss_cells() -> dict[str, dict[str, Decimal | None]]:
     return {
         key: {period: None for period in STORE_PROFIT_LOSS_PERIODS}
@@ -212,7 +248,7 @@ def _build_store_profit_loss_values(
                 "local_logistics_cost", "fulfillment_cost", "other_direct_cost",
             )),
             Decimal("0"),
-        )
+        ) - get("inventory_writeoff")
         values["gross_profit"][period] = (
             get("operating_revenue") - get("operating_cost")
         )
@@ -245,6 +281,14 @@ def _build_store_profit_loss_values(
             - get("non_operating_expense")
             - get("income_tax_expense")
         )
+        if values["inventory_writeoff"][period] is None:
+            for key in ("operating_cost", "gross_profit", "gross_margin"):
+                values[key][period] = None
+        if values["inventory_writeoff"][period] is None or values["inventory_impairment"][period] is None:
+            values["asset_impairment_loss"][period] = values["inventory_impairment"][period]
+            values["operating_profit"][period] = None
+            values["net_profit"][period] = None
+    values["_warnings"] = auto_values.get("_warnings", [])
     return values
 
 
@@ -269,12 +313,13 @@ async def _store_profit_loss_auto_values(
 ) -> dict[str, dict[str, Decimal]]:
     periods = _month_periods(report_month)
     ytd_start, ytd_end = periods["ytd"]
+    read_start = min(start for start, _end in periods.values())
     sales = list((await db.execute(
         select(Sale)
         .outerjoin(User, User.id == Sale.user_id)
         .where(
             _store_sale_scope(store_id),
-            Sale.sold_at >= datetime.combine(ytd_start, time.min),
+            Sale.sold_at >= datetime.combine(read_start, time.min),
             Sale.sold_at < datetime.combine(ytd_end, time.min),
         )
     )).scalars().all())
@@ -336,34 +381,12 @@ async def _store_profit_loss_auto_values(
                 periods,
             )
 
-    previous_month_end = _previous_month_end(report_month.replace(day=1))
-    month_before_end = _previous_month_end(previous_month_end.replace(day=1))
-    current_cutoff = datetime.combine(
-        _next_month_start(report_month.replace(day=1)), time.min
-    )
-    previous_cutoff = month_start_cutoff(previous_month_end)
-    month_before_cutoff = month_start_cutoff(month_before_end)
-    year_end_previous = date(report_month.year - 1, 12, 31)
-    year_end_cutoff = month_start_cutoff(year_end_previous)
-    impairment_totals = await _store_inventory_impairment_totals(
-        db,
-        store_id,
-        [current_cutoff, previous_cutoff, month_before_cutoff, year_end_cutoff],
-    )
-    current_impairment = impairment_totals[current_cutoff]
-    previous_impairment = impairment_totals[previous_cutoff]
-    month_before_impairment = impairment_totals[month_before_cutoff]
-    year_end_impairment = impairment_totals[year_end_cutoff]
-    auto_values["inventory_impairment"] = {
-        "current": current_impairment - previous_impairment,
-        "previous": previous_impairment - month_before_impairment,
-        "ytd": current_impairment - year_end_impairment,
-    }
+    auto_values.update(await _store_provision_financial_values(db, store_id, periods))
     active_store_count = await db.scalar(
         select(func.count()).select_from(Store).where(Store.is_active.is_(True))
     )
     if active_store_count:
-        office_totals = await office_space_totals_by_application_date(ytd_start, ytd_end)
+        office_totals = await office_space_totals_by_application_date(read_start, ytd_end)
         for application_date, total in office_totals.items():
             _add_period_value(
                 auto_values["rent_utilities"],
@@ -372,7 +395,7 @@ async def _store_profit_loss_auto_values(
                 periods,
             )
         shared_admin_totals = await shared_admin_totals_by_application_date(
-            ytd_start, ytd_end
+            read_start, ytd_end
         )
         for application_date, total in shared_admin_totals.items():
             _add_period_value(
@@ -383,7 +406,7 @@ async def _store_profit_loss_auto_values(
             )
     if store_name:
         salary_totals = await china_salary_totals_by_store_and_application_date(
-            ytd_start, ytd_end
+            read_start, ytd_end
         )
         auto_values["salary"] = {
             period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS
@@ -408,6 +431,7 @@ async def _store_inventory_impairment_total(
 async def _store_inventory_impairment_totals(
     db: AsyncSession, store_id: int, cutoffs: list[datetime]
 ) -> dict[datetime, Decimal]:
+    """历史静态余额辅助；现行损益使用_store_provision_financial_values。"""
     unique_cutoffs = list(dict.fromkeys(cutoffs))
     if not unique_cutoffs:
         return {}
@@ -538,6 +562,7 @@ async def _store_profit_loss_response(
         can_edit=user.role in ("admin", "operator"),
         updated_at=report.updated_at if report else None,
         rows=rows,
+        warnings=values.get("_warnings", []),
     )
 
 
@@ -612,175 +637,90 @@ async def update_store_profit_loss(
     return await _store_profit_loss_response(db, user, store, data.report_month, report)
 
 
-def _build_inventory_impairment_workbook(
-    rows: list[dict], report_date: date
-) -> tuple[Workbook, dict[str, int | Decimal | str]]:
-    previous_month_end = _previous_month_end(report_date)
-    report_date_formula = _excel_date(report_date)
-
+def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) -> tuple[Workbook, dict]:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = INVENTORY_IMPAIRMENT_SHEET
-    sheet.freeze_panes = "A2"
-    sheet.sheet_view.showGridLines = False
     sheet.append(INVENTORY_IMPAIRMENT_HEADERS)
-
-    header_fill = PatternFill("solid", fgColor="C00000")
-    thin_gray = Side(style="thin", color="BFBFBF")
-    table_border = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
-    for cell in sheet[1]:
-        cell.fill = header_fill
-        cell.font = Font(name="等线", size=10, bold=True, color="FFFFFF")
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.border = table_border
-    sheet.row_dimensions[1].height = 32
-    formula_cache: dict[str, int | Decimal | str] = {}
-
-    for row_number, item in enumerate(rows, start=2):
-        age_days = max((report_date - item["arrived_at"]).days, 0)
-        product_type = item["product_type"]
-        provision_quantity = item["provision_quantity"]
-        current_rate = item["impairment_rate"]
-        inventory_amount = item["unit_cost"] * item["quantity"]
-        original_quantity = item["original_quantity"]
-        original_inventory_amount = item["original_inventory_amount"]
-        impairment_amount = item["impairment_amount"]
-        book_value = original_inventory_amount - impairment_amount
-        previous_book_value = item["previous_book_value"]
-        book_value_difference = (
-            book_value - previous_book_value if previous_book_value is not None else None
-        )
-        status = (
-            "已售完" if item["quantity"] == 0
-            else "安全库存内" if provision_quantity == 0
-            else "比例达到上限" if current_rate >= Decimal("0.9")
-            else "比例接近上限" if current_rate >= Decimal("0.6")
-            else "正常计提"
-        )
-        formula_cache.update({
-            f"E{row_number}": age_days,
-            f"G{row_number}": original_quantity,
-            f"H{row_number}": original_inventory_amount,
-            f"I{row_number}": item["sold_quantity"],
-            f"J{row_number}": item["sold_cost_amount"],
-            f"K{row_number}": item["quantity"],
-            f"L{row_number}": provision_quantity,
-            f"M{row_number}": inventory_amount,
-            f"N{row_number}": current_rate,
-            f"O{row_number}": impairment_amount,
-            f"P{row_number}": book_value,
-            f"R{row_number}": item["monthly_impairment_amount"],
-            f"S{row_number}": status,
-        })
-        if book_value_difference is not None:
-            formula_cache[f"Q{row_number}"] = book_value_difference
-        previous_book_value_note = (
-            f"{previous_book_value:.4f}" if previous_book_value is not None else "待核实"
-        )
-        sheet.append([
-            item["store_name"], item["sku"], item["product_name"], item["arrived_at"],
-            f'=IF(D{row_number}="","",{report_date_formula}-D{row_number})',
-            item["unit_cost"], original_quantity,
-            f'=IF(OR(F{row_number}="",G{row_number}=""),"",F{row_number}*G{row_number})',
-            item["sold_quantity"], item["sold_cost_amount"], item["quantity"], provision_quantity,
-            f'=IF(OR(F{row_number}="",K{row_number}=""),"",F{row_number}*K{row_number})',
-            current_rate, impairment_amount,
-            f'=IF(OR(H{row_number}="",O{row_number}=""),"",H{row_number}-O{row_number})',
-            book_value_difference, item["monthly_impairment_amount"], status,
-            (
-                f"批次号：{item['batch_no']}；商品类型："
-                f"{'新品' if product_type == PRODUCT_TYPE_NEW else '稳健商品'}；"
-                f"上月末库存：{item['previous_month_quantity']}；"
-                f"上月末自定义账面价值：{previous_book_value_note}；"
-                f"{item['comparison_note'] + '；' if item.get('comparison_note') else ''}"
-                "单件成本含采购、头程、尾程及其他成本，未单列关税"
-            ),
-        ])
+    cache = {}
+    records = []
+    for number, item in enumerate(rows, 2):
+        inventory = item["unit_cost"] * item["quantity"]
+        book = _subtract_known(inventory, item["impairment_amount"])
+        difference = _subtract_known(book, item["previous_book_value"])
+        previous_note = "待核对" if item["previous_book_value"] is None else f"{item['previous_book_value']:.4f}"
+        record = [item["store_name"], item["sku"], item["product_name"], item["arrived_at"],
+                  max(0, (report_date - item["arrived_at"]).days), item["unit_cost"], item["original_quantity"],
+                  item["original_inventory_amount"], item["sold_quantity"], item["sold_cost_amount"], item["quantity"],
+                  item["provision_quantity"], inventory, item["impairment_rate"], item["impairment_amount"], book,
+                  difference, item["monthly_impairment_amount"], _inventory_status(item),
+                  f"批次号：{item['batch_no']}；上月末库存：{item['previous_month_quantity']}；上月末账面价值：{previous_note}；{item['comparison_note']}",
+                  item["opening_impairment_amount"], item["monthly_total_impairment_amount"], item["monthly_writeoff_amount"]]
+        records.append(record)
+        sheet.append(record)
+        formulas = {
+            5: f'=IF(D{number}="","",{_excel_date(report_date)}-D{number})',
+            8: f'=IF(OR(F{number}="",G{number}=""),"",F{number}*G{number})',
+            13: f'=IF(OR(F{number}="",K{number}=""),"",F{number}*K{number})',
+            16: f'=IF(OR(M{number}="",O{number}=""),"",M{number}-O{number})',
+        }
+        for column, formula in formulas.items():
+            cell = sheet.cell(number, column, formula)
+            if record[column - 1] is not None:
+                cache[cell.coordinate] = record[column - 1]
         for column in (1, 2, 3, 19, 20):
-            sheet.cell(row_number, column).data_type = "s"
-        for cell in sheet[row_number]:
-            cell.font = Font(name="等线", size=10)
-            cell.alignment = Alignment(vertical="center", wrap_text=True)
-            cell.border = table_border
-        sheet.cell(row_number, 4).number_format = "yyyy-mm-dd"
-        sheet.cell(row_number, 5).number_format = "0"
-        for column in (6, 8, 10, 13, 15, 16, 17, 18):
-            sheet.cell(row_number, column).number_format = '¥#,##0.00'
-        for column in (7, 9, 11, 12):
-            sheet.cell(row_number, column).number_format = "#,##0"
-        sheet.cell(row_number, 14).number_format = "0.00%"
-
-    first_data_row = 2
-    last_data_row = len(rows) + 1
-    total_row = last_data_row + 1
+            sheet.cell(number, column).data_type = "s"
+        sheet.cell(number, 4).number_format = "yyyy-mm-dd"
+    total_row = len(rows) + 2
     sheet.cell(total_row, 1, "合计")
-    missing_comparison = any(
-        "previous_book_value" in item and item["previous_book_value"] is None
-        for item in rows
-    )
-    sum_columns = (7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18)
+    sum_columns = (7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 21, 22, 23)
     for column in sum_columns:
-        if column == 17 and missing_comparison:
+        total = _sum_known(record[column - 1] for record in records)
+        if total is None:
             continue
-        if rows:
-            letter = sheet.cell(1, column).column_letter
-            sheet.cell(total_row, column, f"=SUM({letter}{first_data_row}:{letter}{last_data_row})")
-            formula_cache[f"{letter}{total_row}"] = sum(
-                formula_cache[f"{letter}{row_number}"]
-                for row_number in range(first_data_row, last_data_row + 1)
-            )
+        cell = sheet.cell(total_row, column)
+        if records:
+            letter = cell.column_letter
+            cell.value = f"=SUM({letter}2:{letter}{total_row - 1})"
+            cache[cell.coordinate] = total
         else:
-            sheet.cell(total_row, column, 0)
+            cell.value = 0
+    _style_financial_sheet(sheet, INVENTORY_IMPAIRMENT_HEADERS, "C00000")
+    for row in sheet.iter_rows(min_row=2, max_row=total_row):
+        for column in (6, 8, 10, 13, 15, 16, 17, 18, 21, 22, 23):
+            row[column - 1].number_format = '¥#,##0.00'
+        for column in (7, 9, 11, 12):
+            row[column - 1].number_format = '#,##0'
+        row[13].number_format = '0.00%'
     for cell in sheet[total_row]:
         cell.fill = PatternFill("solid", fgColor="F2F2F2")
         cell.font = Font(name="等线", size=10, bold=True)
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = table_border
-    for column in (8, 10, 13, 15, 16, 17, 18):
-        sheet.cell(total_row, column).number_format = '¥#,##0.00'
-    for column in (7, 9, 11, 12):
-        sheet.cell(total_row, column).number_format = "#,##0"
-
-    notes_row = total_row + 2
     notes = [
-        f"报告截止日：{report_date.isoformat()}；上月末：{previous_month_end.isoformat()}。",
-        "计算口径：每日先扣除当天已确认销售，再用当天剩余库存按当天累计比例计算跌价金额；从入库次日起逐日相加。",
-        "比例规则：新品每日增加0.5%，稳健商品安全库存以外每日增加1%；沿用规则生效历史及每部分90%的比例上限。逐日合计金额不按成本封顶。",
-        "安全库存按每天已到货且仍在库的同商品批次分配，优先保护最新批次；当天比例沿用现有规则历史算法。",
-        "账面价值=原始入库成本金额−累计跌价（逐日累计）；不再扣除销售出库成本，保留负值。",
-        "本月跌价为本月1日至截止日各天金额之和，包含本月已售商品在销售前的金额；售完后停止新增，历史累计保留。",
-        "明细和SKU汇总均包含截止日前全部批次；同SKU新批次独立按自身日期、单价和每日库存计算后汇总。",
-        "上月比较按相同每日口径重建，不读取或补建准备余额快照；差额为当前自定义账面价值−上月自定义账面价值。本月新增批次上月为0。",
-        "历史结果依据目前保存的入库、FIFO销售明细和规则记录；缺失或已撤销的原始历史不能凭当前库存自动恢复。",
-        "本表不用于替代现存库存准备余额；店铺损益和自动月末快照继续使用原有口径。",
-        "单件到仓成本含采购、头程、尾程及其他成本，未单列关税；店铺按批次创建人当前绑定，无法确认时为未关联店铺。",
+        f"报告截止日：{report_date.isoformat()}；上月末：{_previous_month_end(report_date).isoformat()}。",
+        "入库当天0天；销售当天先计提，再出库转销；仅累加每天新增准备，累计比例最多90%。",
+        "期初准备+本月计提总额−本月销售转销=期末准备；销售转销可能含以前月份计提。",
+        "账面价值=现存库存成本−期末准备；售完期末余额为0，本月总计提及销售转销仍可能非0。",
+        "本月计提（现存库存）仅为期末仍在库部分本月形成的准备，不等于本月计提总额。",
+        "安全库存按当天销售前实际数量保护最新批次/批内靠后数量层；已形成准备保留。",
+        "原始入库及保存销售成本独立保留；多批按自身成本/日期计算后加总，批次号在备注列。",
+        "历史时序或数量异常的相关准备留空且不作不完整合计；推定规则及成本差异见备注。",
+        "本表按现有流水重算，不读写或补建快照；缺失、撤销的真实历史不能自动恢复。",
+        "单件成本包含采购、头程、尾程及其他成本，未单列关税；店铺为批次创建人当前绑定。",
     ]
-
-    for offset, note in enumerate(notes):
-        row_number = notes_row + offset
-        sheet.merge_cells(start_row=row_number, start_column=1, end_row=row_number, end_column=20)
-        cell = sheet.cell(row_number, 1, note)
-        cell.font = Font(name="等线", size=9, color="666666")
-        cell.alignment = Alignment(vertical="center", wrap_text=True)
-
-    widths = {
-        "A": 18, "B": 18, "C": 28, "D": 13, "E": 12, "F": 18,
-        "G": 14, "H": 22, "I": 18, "J": 24, "K": 15, "L": 12, "M": 23,
-        "N": 16, "O": 25, "P": 23, "Q": 25, "R": 24, "S": 13, "T": 62,
-    }
-    for column, width in widths.items():
-        sheet.column_dimensions[column].width = width
-    sheet.auto_filter.ref = f"A1:T{max(1, last_data_row)}"
+    for number, note in enumerate(notes, total_row + 2):
+        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=23)
+        sheet.cell(number, 1, note).alignment = Alignment(wrap_text=True, vertical="center")
+        sheet.row_dimensions[number].height = 30
+    widths = [18,18,28,13,12,18,14,22,18,24,15,12,23,16,25,23,25,24,18,62,24,24,24]
+    for column, width in enumerate(widths, 1):
+        sheet.column_dimensions[sheet.cell(1,column).column_letter].width = width
+    sheet.auto_filter.ref = f"A1:W{max(1,total_row - 1)}"
     sheet.print_title_rows = "1:1"
-    sheet.print_area = f"A1:T{notes_row + len(notes) - 1}"
+    sheet.print_area = f"A1:W{sheet.max_row}"
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1
-    sheet.page_setup.fitToHeight = 0
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
-    workbook.calculation.calcMode = "auto"
-    workbook.calculation.fullCalcOnLoad = True
-    workbook.calculation.forceFullCalc = True
-    return workbook, formula_cache
+    return workbook, cache
 
 
 def _workbook_bytes_with_formula_cache(
@@ -860,66 +800,49 @@ def _style_financial_sheet(sheet, headers: list[str], fill_color: str = "1F4E78"
 
 
 def _build_inventory_impairment_summary_sheet(
-    workbook: Workbook, rows: list[dict], report_date: date, *, use_active_sheet: bool = False
+    workbook: Workbook, rows: list[dict], report_date: date, *, use_active_sheet: bool = False,
 ) -> None:
     sheet = workbook.active if use_active_sheet else workbook.create_sheet()
     sheet.title = INVENTORY_IMPAIRMENT_SUMMARY_SHEET
-    sheet.append([label for _key, label in INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS])
+    columns = INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS
+    sheet.append([label for _key, label in columns])
     for item in rows:
-        sheet.append([item[key] for key, _label in INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS])
-        for column in (1, 2, 3, 16):
-            sheet.cell(sheet.max_row, column).data_type = "s"
-    missing_comparison = any(item["book_value_difference"] is None for item in rows)
-    sheet.append([
-        "合计", "", "",
-        *[
-            None if key == "book_value_difference" and missing_comparison
-            else sum(item[key] for item in rows)
-            for key, _label in INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS[3:15]
-        ],
-        "部分批次缺少比较基准，差额合计无法比较" if missing_comparison else "",
-    ])
-    total_row = sheet.max_row
-    _style_financial_sheet(
-        sheet, [label for _key, label in INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS], "C00000"
-    )
-    for row in sheet.iter_rows(min_row=2, max_row=total_row):
-        for column, cell in enumerate(row, start=1):
-            key = INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS[column - 1][0]
-            cell.font = Font(name="等线", size=10, bold=cell.row == total_row)
-            cell.alignment = Alignment(vertical="center", wrap_text=True)
-            if 4 <= column <= 15:
-                cell.number_format = (
-                    "#,##0" if key in {"batch_count", "original_quantity", "sold_quantity", "quantity", "provision_quantity"}
-                    else '¥#,##0.00'
-                )
-            if cell.row == total_row:
-                cell.fill = PatternFill("solid", fgColor="F2F2F2")
+        sheet.append([item[key] for key, _label in columns])
+    total = ["合计", "", ""]
+    for key, _label in columns[3:]:
+        total.append("" if key == "comparison_note" else _sum_known(item[key] for item in rows))
+    sheet.append(total)
+    _style_financial_sheet(sheet, [label for _key, label in columns], "C00000")
+    quantity_keys = {"batch_count", "original_quantity", "sold_quantity", "quantity", "provision_quantity"}
+    for row in sheet.iter_rows(min_row=2):
+        for column, (key, _label) in enumerate(columns, 1):
+            cell = row[column - 1]
+            if key in {"store_name", "sku", "product_name", "comparison_note"}:
+                cell.data_type = "s"
+            elif column >= 4:
+                cell.number_format = '#,##0' if key in quantity_keys else '¥#,##0.00'
+    total_row = len(rows) + 2
+    for cell in sheet[total_row]:
+        cell.fill = PatternFill("solid", fgColor="F2F2F2")
+        cell.font = Font(name="等线", size=10, bold=True)
     notes = [
-        f"报告截止日：{report_date.isoformat()}；包含全部已到货批次及已售完旧批次，与批次明细范围一致。",
-        "计算口径：各批次每日销售后剩余数量按当天累计比例计算金额，逐日累计；账面价值=原始入库成本−逐日累计跌价，保留负值。",
-        "各批次保留自身日期、单价和规则；逐批加总数量/金额，不以最新入库单价重算旧批次，不加总单价、库龄和比例。",
-        "本月跌价加总本月各日金额；已售完批次保留售前累计金额，上月自定义账面价值由相同历史数据重算，不读取准备余额快照。",
-        "店铺为各批次创建人当前绑定店铺，跨店同SKU合并展示名称；历史缺失需核实，本口径不替代快照或店铺损益的准备余额。",
+        f"报告截止日：{report_date.isoformat()}；与批次明细范围一致，包含全部已到货批次和售完批次。",
+        "各批按自身单价、规则和实际持有期间增提、转销后加总；不合计单价、库龄和比例。",
+        "期初准备+本月计提总额−本月销售转销=期末准备；账面=现存成本−期末准备。",
+        "售完余额0但本月总计提/转销可能非0；未知金额及不完整合计留空，原因见比较说明。",
+        "本月计提（现存库存）不包含本月已售部分的增提；销售转销可能包含前月准备。",
     ]
-
-    for offset, note in enumerate(notes, start=total_row + 2):
-        sheet.merge_cells(start_row=offset, start_column=1, end_row=offset, end_column=16)
-        cell = sheet.cell(offset, 1, note)
-        cell.font = Font(name="等线", size=9, color="666666")
-        cell.alignment = Alignment(wrap_text=True)
-    for column, (key, _label) in enumerate(INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS, start=1):
-        letter = sheet.cell(1, column).column_letter
-        sheet.column_dimensions[letter].width = (
-            46 if key in {"store_name", "comparison_note"}
-            else 28 if key == "product_name" else 23
-        )
-    sheet.auto_filter.ref = f"A1:P{max(1, len(rows) + 1)}"
+    for number, note in enumerate(notes, total_row + 2):
+        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=19)
+        sheet.cell(number, 1, note).alignment = Alignment(wrap_text=True, vertical="center")
+        sheet.row_dimensions[number].height = 28
+    for number in range(1,20):
+        sheet.column_dimensions[sheet.cell(1,number).column_letter].width = 36 if number in (3,16) else 23
+    sheet.auto_filter.ref = f"A1:S{max(1,total_row - 1)}"
     sheet.print_title_rows = "1:1"
-    sheet.print_area = f"A1:P{sheet.max_row}"
+    sheet.print_area = f"A1:S{sheet.max_row}"
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1
-    sheet.page_setup.fitToHeight = 0
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
 
 
@@ -966,6 +889,7 @@ def _build_store_profit_loss_sheet(
         ["核算期间", f"{report_month.year}年{report_month.month}月", None, None, None],
         ["数据来源", "与系统中的店铺损益表查询结果一致；人工项目保留已保存值。", None, None, None],
     ]
+    metadata.extend([["待核对", note, None, None, None] for note in values.get("_warnings", [])])
     for row in metadata:
         sheet.append(row)
     for row_number in range(last_data_row + 1, sheet.max_row + 1):
@@ -999,19 +923,15 @@ def _build_store_profit_loss_summary_sheet(
     )
     for key, label, _kind, _source in STORE_PROFIT_LOSS_ROWS:
         store_values = [
-            _decimal_or_zero(values[key].get("current"))
-            for _store, values in store_reports
+            (values[key].get("current") if key in {"inventory_writeoff", "inventory_impairment", "operating_cost", "gross_profit", "gross_margin", "asset_impairment_loss", "operating_profit", "net_profit"}
+             else _decimal_or_zero(values[key].get("current"))) for _store, values in store_reports
         ]
         if key == "gross_margin":
-            total = (
-                sum((_decimal_or_zero(values["gross_profit"].get("current")) for _store, values in store_reports), Decimal("0"))
-                / revenue_total
-                if revenue_total else None
-            )
+            total = _margin_known(_sum_known(values["gross_profit"].get("current") for _store, values in store_reports), revenue_total)
             ratio = None
         else:
-            total = sum(store_values, Decimal("0"))
-            ratio = total / revenue_total if revenue_total else None
+            total = _sum_known(store_values)
+            ratio = _margin_known(total, revenue_total)
         sheet.append([
             label,
             *[_excel_number(value) for value in store_values],
@@ -1034,6 +954,9 @@ def _build_store_profit_loss_summary_sheet(
     sheet.append(["店铺数量", len(store_reports)] + [None] * (len(headers) - 2))
     sheet.append(["核算期间", f"{report_month.year}年{report_month.month}月"] + [None] * (len(headers) - 2))
     sheet.append(["占比口径", "各项目合计 ÷ 合计营业收入；毛利率按合计毛利 ÷ 合计营业收入计算。", *([None] * (len(headers) - 2))])
+    for store, values in store_reports:
+        for note in values.get("_warnings", []):
+            sheet.append(["待核对", f"{store.name}：{note}"] + [None] * (len(headers) - 2))
     for row_number in range(last_data_row + 1, sheet.max_row + 1):
         for column in range(1, len(headers) + 1):
             sheet.cell(row_number, column).alignment = Alignment(vertical="center", wrap_text=True)
@@ -1134,6 +1057,7 @@ async def _product_line_profit_data(
 ) -> list[dict]:
     periods = _month_periods(report_month)
     ytd_start, ytd_end = periods["ytd"]
+    read_start = min(start for start, _end in periods.values())
     mapping_rows = (await db.execute(
         select(StoreProduct, ProductLine, Product)
         .join(ProductLine, ProductLine.id == StoreProduct.product_line_id)
@@ -1164,7 +1088,7 @@ async def _product_line_profit_data(
         select(Sale, User.store_id)
         .outerjoin(User, User.id == Sale.user_id)
         .where(
-            Sale.sold_at >= datetime.combine(ytd_start, time.min),
+            Sale.sold_at >= datetime.combine(read_start, time.min),
             Sale.sold_at < datetime.combine(ytd_end, time.min),
             or_(
                 Sale.store_id.in_(store_ids),
@@ -1251,6 +1175,7 @@ async def _product_line_profit_data(
             .join(InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id)
             .where(SaleCostDetail.sale_id.in_([sale.id for sale, _user_store_id in sales]))
         )).all()
+        adjustments = await _sale_provision_adjustments(db, ytd_end - timedelta(days=1))
         for detail, batch, sale in cost_rows:
             line_id = sale_line_by_id.get(sale.id)
             if line_id not in line_data:
@@ -1263,6 +1188,13 @@ async def _product_line_profit_data(
                 start, end = periods[period]
                 if start <= sale.sold_at.date() < end:
                     line_data[line_id][period]["cost"] += batch_cost
+                    adjustment, note = adjustments.get(detail.id, (None, "销售转销明细缺失，相关期间成本和毛利待核对"))
+                    if adjustment is None:
+                        line_data[line_id].setdefault("_unknown_cost_periods", set()).add(period)
+                        if note not in line_data[line_id]["note"]:
+                            line_data[line_id]["note"] = f"{line_data[line_id]['note']}；{note}".strip("；")
+                    else:
+                        line_data[line_id][period]["cost"] -= adjustment
 
     reports = list((await db.execute(
         select(StoreProfitLossReport).where(
@@ -1278,6 +1210,8 @@ async def _product_line_profit_data(
 
     rows = []
     for item in sorted(line_data.values(), key=lambda value: value["name"]):
+        for period in item.get("_unknown_cost_periods", set()):
+            item[period]["cost"] = None
         rows.append({
             "name": item["name"],
             "sku_count": len(item["sku_ids"]),
@@ -1299,28 +1233,28 @@ def _build_product_line_profit_sheet(
     headers = ["产品线/品类", "SKU数量", "本月营业收入", "本月营业成本", "本月毛利", "本月毛利率", "上月毛利率", "环比变化", "本年累计收入", "本年累计毛利", "累计毛利率", "备注"]
     sheet.append(headers)
     totals = {
-        period: {"revenue": sum((row[period]["revenue"] for row in rows), Decimal("0")), "cost": sum((row[period]["cost"] for row in rows), Decimal("0"))}
+        period: {"revenue": sum((row[period]["revenue"] for row in rows), Decimal("0")), "cost": _sum_known(row[period]["cost"] for row in rows)}
         for period in ("current", "previous", "ytd")
     }
     for row in rows:
-        current_gross = row["current"]["revenue"] - row["current"]["cost"]
-        previous_gross = row["previous"]["revenue"] - row["previous"]["cost"]
-        ytd_gross = row["ytd"]["revenue"] - row["ytd"]["cost"]
-        current_margin = current_gross / row["current"]["revenue"] if row["current"]["revenue"] else None
-        previous_margin = previous_gross / row["previous"]["revenue"] if row["previous"]["revenue"] else None
-        ytd_margin = ytd_gross / row["ytd"]["revenue"] if row["ytd"]["revenue"] else None
+        current_gross = _subtract_known(row["current"]["revenue"], row["current"]["cost"])
+        previous_gross = _subtract_known(row["previous"]["revenue"], row["previous"]["cost"])
+        ytd_gross = _subtract_known(row["ytd"]["revenue"], row["ytd"]["cost"])
+        current_margin = _margin_known(current_gross, row["current"]["revenue"])
+        previous_margin = _margin_known(previous_gross, row["previous"]["revenue"])
+        ytd_margin = _margin_known(ytd_gross, row["ytd"]["revenue"])
         sheet.append([
             row["name"], row["sku_count"], _excel_number(row["current"]["revenue"]), _excel_number(row["current"]["cost"]),
             _excel_number(current_gross), _excel_number(current_margin), _excel_number(previous_margin),
             _excel_number(current_margin - previous_margin if current_margin is not None and previous_margin is not None else None),
             _excel_number(row["ytd"]["revenue"]), _excel_number(ytd_gross), _excel_number(ytd_margin), row["note"],
         ])
-    total_current_gross = totals["current"]["revenue"] - totals["current"]["cost"]
-    total_previous_gross = totals["previous"]["revenue"] - totals["previous"]["cost"]
-    total_ytd_gross = totals["ytd"]["revenue"] - totals["ytd"]["cost"]
-    total_current_margin = total_current_gross / totals["current"]["revenue"] if totals["current"]["revenue"] else None
-    total_previous_margin = total_previous_gross / totals["previous"]["revenue"] if totals["previous"]["revenue"] else None
-    total_ytd_margin = total_ytd_gross / totals["ytd"]["revenue"] if totals["ytd"]["revenue"] else None
+    total_current_gross = _subtract_known(totals["current"]["revenue"], totals["current"]["cost"])
+    total_previous_gross = _subtract_known(totals["previous"]["revenue"], totals["previous"]["cost"])
+    total_ytd_gross = _subtract_known(totals["ytd"]["revenue"], totals["ytd"]["cost"])
+    total_current_margin = _margin_known(total_current_gross, totals["current"]["revenue"])
+    total_previous_margin = _margin_known(total_previous_gross, totals["previous"]["revenue"])
+    total_ytd_margin = _margin_known(total_ytd_gross, totals["ytd"]["revenue"])
     sheet.append([
         "合计", len(set().union(*(row["sku_ids"] for row in rows))) if rows else 0,
         _excel_number(totals["current"]["revenue"]), _excel_number(totals["current"]["cost"]), _excel_number(total_current_gross),
@@ -1340,7 +1274,7 @@ def _build_product_line_profit_sheet(
                 cell.fill = PatternFill("solid", fgColor="EEF3F8")
     note_row = sheet.max_row + 2
     sheet.cell(note_row, 1, "说明")
-    sheet.cell(note_row, 2, f"核算期间：{report_month.year}年{report_month.month}月；收入沿用销售记录口径，成本包含可按销售/FIFO明细归属的采购成本、头程尾程物流及销售关联费用。")
+    sheet.cell(note_row, 2, f"核算期间：{report_month.year}年{report_month.month}月；收入沿用销售记录口径，成本包含可归属的采购、头程尾程及销售费用，并扣除已确认的销售转销准备；待核对成本不计不完整合计。")
     sheet.cell(note_row + 1, 2, "店铺损益表中的运费收入、其他收入、关税及进口税费、本地物流配送成本、代发成本，按各店铺同期间产品线商品销售收入占比分摊；未匹配产品线的销售单独列示。")
     for row_number in (note_row, note_row + 1):
         sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == note_row)
@@ -1358,104 +1292,143 @@ def _build_product_line_profit_sheet(
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
 
 
-async def _load_inventory_impairment_report_rows(
-    db: AsyncSession, report_date: date, store_id: int | None = None,
-) -> list[dict]:
-    """按每天销售后的库存重算财务自定义累计；包含全部已到货批次。"""
-    report_cutoff = datetime.combine(report_date + timedelta(days=1), time.min)
-    previous_month_end = _previous_month_end(report_date)
-    batch_stmt = (
-        select(
-            InventoryBatch,
-            Product.sku,
-            Product.name.label("product_name"),
-            Store.name.label("store_name"),
-            Product.product_type,
-            Product.safe_stock_quantity,
-            User.store_id,
-        )
+async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
+    """一次读取全局事实分配共享安全库存，再由调用方按现有权限过滤。"""
+    cache = getattr(db, "info", None)
+    key = ("holding_inventory_provisions", report_date)
+    if isinstance(cache, dict) and key in cache:
+        return cache[key]
+    cutoff = datetime.combine(report_date + timedelta(days=1), time.min)
+    sold_batch_ids = select(SaleCostDetail.batch_id).join(Sale, Sale.id == SaleCostDetail.sale_id).where(Sale.sold_at < cutoff)
+    batch_rows = (await db.execute(
+        select(InventoryBatch, Product.sku, Product.name.label("product_name"),
+               Store.name.label("store_name"), Product.product_type, Product.safe_stock_quantity, User.store_id)
         .join(Product, Product.id == InventoryBatch.product_id)
         .outerjoin(User, User.id == InventoryBatch.user_id)
         .outerjoin(Store, Store.id == User.store_id)
-        .where(InventoryBatch.arrived_at < report_cutoff)
+        .where(or_(InventoryBatch.arrived_at < cutoff, InventoryBatch.id.in_(sold_batch_ids)))
         .order_by(Store.name, Product.sku, InventoryBatch.arrived_at, InventoryBatch.id)
-    )
-    if store_id is not None:
-        batch_stmt = batch_stmt.where(User.store_id == store_id)
-    batch_rows = (await db.execute(batch_stmt)).all()
-    batch_ids = [row[0].id for row in batch_rows]
+    )).all()
     product_ids = {row[0].product_id for row in batch_rows}
-    rule_rows = (await db.execute(
-        select(ProductImpairmentRule).where(
-            ProductImpairmentRule.product_id.in_(product_ids)
-        )
-    )).scalars().all() if product_ids else []
-    rules_by_product: defaultdict[int, list[ImpairmentRule]] = defaultdict(list)
+    rule_rows = (await db.execute(select(ProductImpairmentRule).where(
+        ProductImpairmentRule.product_id.in_(product_ids)
+    ))).scalars().all() if product_ids else []
+    rules = defaultdict(list)
     for rule in rule_rows:
-        rules_by_product[rule.product_id].append(ImpairmentRule(
-            product_type=rule.product_type,
-            safe_stock_quantity=rule.safe_stock_quantity,
-            effective_date=rule.effective_date,
-        ))
+        rules[rule.product_id].append(ImpairmentRule(rule.product_type, rule.safe_stock_quantity, rule.effective_date))
+    batch_ids = [row[0].id for row in batch_rows]
+    sale_rows = (await db.execute(
+        select(SaleCostDetail.id.label("detail_id"), SaleCostDetail.sale_id,
+               SaleCostDetail.batch_id, SaleCostDetail.quantity.label("report_quantity"),
+               SaleCostDetail.unit_cost.label("saved_unit_cost"), Sale.sold_at,
+               func.coalesce(Sale.store_id, User.store_id).label("sale_store_id"))
+        .join(Sale, Sale.id == SaleCostDetail.sale_id)
+        .outerjoin(User, User.id == Sale.user_id)
+        .where(SaleCostDetail.batch_id.in_(batch_ids), Sale.sold_at < cutoff)
+        .order_by(Sale.sold_at, Sale.id, SaleCostDetail.id)
+    )).all() if batch_ids else []
+    layers = [InventoryLayer(batch.id, batch.product_id, owner, batch.arrived_at.date(),
+                             batch.quantity, kind, safe, tuple(rules[batch.product_id]))
+              for batch, _sku, _name, _store, kind, safe, owner in batch_rows]
+    sales = [ProvisionSale(row.detail_id, row.sale_id, row.batch_id, row.sold_at,
+                           int(row.report_quantity), row.sale_store_id) for row in sale_rows]
+    previous_end = _previous_month_end(report_date)
+    balance_dates = [previous_end, _previous_month_end(previous_end), date(report_date.year - 1, 12, 31)]
+    replay = replay_inventory_provisions(layers, sales, report_date, balance_dates=balance_dates)
+    result = (batch_rows, sale_rows, replay)
+    if isinstance(cache, dict):
+        cache[key] = result
+    return result
 
-    deductions: list[tuple[int, date, int]] = []
-    sold_by_batch: defaultdict[int, int] = defaultdict(int)
-    cost_by_batch: defaultdict[int, Decimal] = defaultdict(lambda: Decimal("0"))
-    if batch_ids:
-        sold_on = func.date(Sale.sold_at)
-        deduction_rows = (await db.execute(
-            select(
-                SaleCostDetail.batch_id,
-                sold_on.label("sold_on"),
-                func.sum(SaleCostDetail.quantity).label("report_quantity"),
-                func.sum(SaleCostDetail.quantity * SaleCostDetail.unit_cost).label("report_cost"),
-            )
-            .join(Sale, Sale.id == SaleCostDetail.sale_id)
-            .where(SaleCostDetail.batch_id.in_(batch_ids), Sale.sold_at < report_cutoff)
-            .group_by(SaleCostDetail.batch_id, sold_on)
-            .order_by(sold_on, SaleCostDetail.batch_id)
-        )).all()
-        for row in deduction_rows:
-            day = date.fromisoformat(row.sold_on) if isinstance(row.sold_on, str) else row.sold_on
-            deductions.append((row.batch_id, day, int(row.report_quantity)))
-            sold_by_batch[row.batch_id] += int(row.report_quantity)
-            cost_by_batch[row.batch_id] += Decimal(row.report_cost)
 
-    original_layers = [
-        InventoryLayer(
-            batch_id=batch.id, product_id=batch.product_id, store_id=batch_store_id,
-            arrived_at=batch.arrived_at.date(), quantity=batch.quantity,
-            product_type=product_type, safe_stock_quantity=safe_stock_quantity,
-            rules=tuple(rules_by_product[batch.product_id]),
-        )
-        for batch, _sku, _name, _store, product_type, safe_stock_quantity, batch_store_id in batch_rows
-    ]
-    accumulated = daily_accumulated_impairments(original_layers, deductions, report_date)
-    rows = []
-    for batch, sku, product_name, store_name, product_type, safe_stock_quantity, batch_store_id in batch_rows:
-        provision = accumulated[batch.id]
-        original_amount = batch.unit_cost * batch.quantity
-        new_batch = batch.arrived_at.date() > previous_month_end
-        rows.append({
-            "product_id": batch.product_id,
-            "store_name": store_name or "未关联店铺",
-            "sku": sku, "product_name": product_name, "store_id": batch_store_id,
-            "product_type": product_type, "safe_stock_quantity": safe_stock_quantity,
-            "arrived_at": batch.arrived_at.date(), "unit_cost": batch.unit_cost,
-            "original_quantity": batch.quantity, "original_inventory_amount": original_amount,
-            "sold_quantity": sold_by_batch[batch.id], "sold_cost_amount": cost_by_batch[batch.id],
-            "quantity": provision.quantity, "previous_month_quantity": provision.previous_quantity,
-            "previous_book_value": (
-                Decimal("0") if new_batch else original_amount - batch.unit_cost * provision.previous_units
-            ),
-            "comparison_note": "本月新增批次，上月自定义账面价值为0" if new_batch else "",
-            "batch_no": batch.batch_no,
-            "provision_quantity": provision.current.provision_quantity,
-            "impairment_rate": provision.current.rate,
-            "impairment_amount": batch.unit_cost * provision.cumulative_units,
-            "monthly_impairment_amount": batch.unit_cost * provision.monthly_units,
+async def _sale_provision_adjustments(db, as_of: date) -> dict:
+    batch_rows, _sale_rows, replay = await _load_inventory_provision_data(db, as_of)
+    batches = {row[0].id: (row[0].unit_cost, row[6]) for row in batch_rows}
+    result = {}
+    for item in replay.writeoffs:
+        cost, owner = batches[item.sale.batch_id]
+        ambiguous = item.units != 0 and (owner is None or item.sale.store_id is None or owner != item.sale.store_id)
+        value = None if ambiguous else _cost_units(cost, item.units)
+        note = "历史流水或跨店/缺失店铺归属影响销售转销，相关期间成本和毛利待核对" if value is None else ""
+        result[item.sale.detail_id] = (value, note)
+    return result
+
+
+async def _store_provision_financial_values(db, store_id: int, periods: dict) -> dict:
+    as_of = max(end for _start, end in periods.values()) - timedelta(days=1)
+    batch_rows, _sale_rows, replay = await _load_inventory_provision_data(db, as_of)
+    batch_info = {row[0].id: (row[0].unit_cost, row[6]) for row in batch_rows}
+    result = {"inventory_impairment": {}, "inventory_writeoff": {}, "_warnings": []}
+    labels = {"current": "本月", "previous": "上月", "ytd": "本年累计"}
+    for period, (start, end) in periods.items():
+        accrued = _sum_known(_cost_units(batch_info[item.batch_id][0], item.units)
+                            for item in replay.accruals
+                            if batch_info[item.batch_id][1] == store_id and start <= item.day < end)
+        transfers = []
+        ambiguous = False
+        for item in replay.writeoffs:
+            sale = item.sale
+            if not start <= sale.sold_at.date() < end:
+                continue
+            cost, owner = batch_info[sale.batch_id]
+            if store_id not in (owner, sale.store_id):
+                continue
+            if owner != sale.store_id and item.units != 0:
+                ambiguous = True
+            elif owner == store_id and sale.store_id == store_id:
+                transfers.append(_cost_units(cost, item.units))
+        transferred = _sum_known(transfers)
+        if ambiguous or transferred is None:
+            accrued = transferred = None
+        result["inventory_impairment"][period] = accrued
+        result["inventory_writeoff"][period] = transferred
+        if accrued is None or transferred is None:
+            result["_warnings"].append(f"{labels[period]}存在历史流水异常或跨店/缺失店铺归属，跌价相关金额及受影响利润待核对，未以0代替。")
+    return result
+
+
+async def _load_inventory_impairment_report_rows(
+    db: AsyncSession, report_date: date, store_id: int | None = None,
+) -> list[dict]:
+    """持有期间增提及转销；金额未知传播null，原始入库和销售成本保留。"""
+    batch_rows, sales, replay = await _load_inventory_provision_data(db, report_date)
+    previous_end = _previous_month_end(report_date)
+    month_start, end = report_date.replace(day=1), report_date + timedelta(days=1)
+    sold, costs = defaultdict(int), defaultdict(lambda: Decimal("0"))
+    mismatched_cost = set()
+    batch_costs = {row[0].id: row[0].unit_cost for row in batch_rows}
+    for sale in sales:
+        sold[sale.batch_id] += int(sale.report_quantity)
+        costs[sale.batch_id] += int(sale.report_quantity) * sale.saved_unit_cost
+        if sale.saved_unit_cost != batch_costs[sale.batch_id]:
+            mismatched_cost.add(sale.batch_id)
+    result = []
+    for batch, sku, name, store, kind, safe, owner in batch_rows:
+        if batch.arrived_at.date() > report_date or (store_id is not None and owner != store_id):
+            continue
+        current = replay.balances[report_date][batch.id]
+        previous = replay.balances[previous_end][batch.id]
+        note = "本月新增批次，上月账面价值为0" if batch.arrived_at.date() > previous_end else ""
+        note = "；".join(filter(None, [note, replay.notes.get(batch.id, "")]))
+        if batch.id in mismatched_cost:
+            note += "；销售成本与当前批次单价不同，保留保存成本，准备按批次成本计算"
+        result.append({
+            "product_id": batch.product_id, "store_name": store or "未关联店铺", "store_id": owner,
+            "sku": sku, "product_name": name, "product_type": kind, "safe_stock_quantity": safe,
+            "arrived_at": batch.arrived_at.date(), "unit_cost": batch.unit_cost, "batch_no": batch.batch_no,
+            "original_quantity": batch.quantity, "original_inventory_amount": batch.quantity * batch.unit_cost,
+            "sold_quantity": sold[batch.id], "sold_cost_amount": costs[batch.id],
+            "quantity": current.quantity, "previous_month_quantity": previous.quantity,
+            "previous_book_value": _subtract_known(previous.quantity * batch.unit_cost,
+                                                     _cost_units(batch.unit_cost, previous.impairment_units)),
+            "comparison_note": note.strip("；"), "provision_quantity": current.provision_quantity,
+            "impairment_rate": current.rate, "impairment_amount": _cost_units(batch.unit_cost, current.impairment_units),
+            "monthly_impairment_amount": _cost_units(batch.unit_cost, current.period_impairment_units),
+            "opening_impairment_amount": _cost_units(batch.unit_cost, previous.impairment_units),
+            "monthly_total_impairment_amount": _cost_units(batch.unit_cost, replay.accrued_units(batch.id, month_start, end)),
+            "monthly_writeoff_amount": _cost_units(batch.unit_cost, replay.written_off_units(batch.id, month_start, end)),
         })
-    return rows
+    return result
 
 
 @router.get("/inventory-impairment")
@@ -1470,16 +1443,10 @@ async def inventory_impairment_report(
     result = []
     for item in rows:
         inventory_amount = item["unit_cost"] * item["quantity"]
-        book_value = item["original_inventory_amount"] - item["impairment_amount"]
+        book_value = _subtract_known(inventory_amount, item["impairment_amount"])
         previous_book_value = item["previous_book_value"]
         rate = item["impairment_rate"]
-        status = (
-            "已售完" if item["quantity"] == 0
-            else "安全库存内" if item["provision_quantity"] == 0
-            else "比例达到上限" if rate >= Decimal("0.9")
-            else "比例接近上限" if rate >= Decimal("0.6")
-            else "正常计提"
-        )
+        status = _inventory_status(item)
         result.append({
             "store_name": item["store_name"],
             "sku": item["sku"],
@@ -1499,9 +1466,11 @@ async def inventory_impairment_report(
             "impairment_amount": item["impairment_amount"],
             "monthly_impairment_amount": item["monthly_impairment_amount"],
             "book_value": book_value,
+            "opening_impairment_amount": item["opening_impairment_amount"],
+            "monthly_total_impairment_amount": item["monthly_total_impairment_amount"],
+            "monthly_writeoff_amount": item["monthly_writeoff_amount"],
             "book_value_difference": (
-                book_value - previous_book_value
-                if previous_book_value is not None else None
+                _subtract_known(book_value, previous_book_value)
             ),
             "comparison_note": item["comparison_note"],
             "status": status,
@@ -1510,47 +1479,34 @@ async def inventory_impairment_report(
 
 
 def _summarize_inventory_impairment_rows(rows: list[dict]) -> list[dict]:
-    """按商品合计全部截止日批次的财务自定义累计，未知比较值不补零。"""
-    grouped: dict[int, dict] = {}
-    quantity_keys = ("original_quantity", "sold_quantity", "quantity", "provision_quantity")
-    amount_keys = (
-        "original_inventory_amount", "sold_cost_amount", "inventory_amount",
-        "impairment_amount", "monthly_impairment_amount", "book_value",
-    )
+    grouped = defaultdict(list)
     for item in rows:
-        product_id = item["product_id"]
-        if product_id not in grouped:
-            grouped[product_id] = {
-                "store_name": "", "sku": item["sku"], "product_name": item["product_name"],
-                "batch_count": 0, "book_value_difference": Decimal("0"),
-                "comparison_note": "", "_stores": set(), "_missing_comparisons": 0,
-                **{key: 0 for key in quantity_keys},
-                **{key: Decimal("0") for key in amount_keys},
-            }
-        summary = grouped[product_id]
-        summary["batch_count"] += 1
-        summary["_stores"].add(item["store_name"])
-        for key in quantity_keys:
-            summary[key] += item[key]
-        inventory_amount = item["unit_cost"] * item["quantity"]
-        book_value = item["original_inventory_amount"] - item["impairment_amount"]
-        for key in amount_keys:
-            summary[key] += (
-                inventory_amount if key == "inventory_amount"
-                else book_value if key == "book_value"
-                else item[key]
-            )
-        if item["previous_book_value"] is None:
-            summary["_missing_comparisons"] += 1
-        else:
-            summary["book_value_difference"] += book_value - item["previous_book_value"]
-    for summary in grouped.values():
-        summary["store_name"] = " / ".join(sorted(summary.pop("_stores")))
-        missing_count = summary.pop("_missing_comparisons")
-        if missing_count:
-            summary["book_value_difference"] = None
-            summary["comparison_note"] = f"{missing_count}个批次缺少比较基准，无法比较"
-    return sorted(grouped.values(), key=lambda item: item["sku"])
+        grouped[item["product_id"]].append(item)
+    quantities = ("original_quantity", "sold_quantity", "quantity", "provision_quantity")
+    amounts = ("original_inventory_amount", "sold_cost_amount", "inventory_amount", "impairment_amount",
+               "monthly_impairment_amount", "book_value", "opening_impairment_amount",
+               "monthly_total_impairment_amount", "monthly_writeoff_amount")
+    result = []
+    for items in grouped.values():
+        calculated = [{**item, "inventory_amount": item["unit_cost"] * item["quantity"],
+                       "book_value": _subtract_known(item["unit_cost"] * item["quantity"], item["impairment_amount"])}
+                      for item in items]
+        summary = {"store_name": " / ".join(sorted({item["store_name"] for item in items})),
+                   "sku": items[0]["sku"], "product_name": items[0]["product_name"], "batch_count": len(items)}
+        for key in quantities:
+            values = [item[key] for item in items]
+            summary[key] = None if None in values else sum(values)
+        for key in amounts:
+            summary[key] = _sum_known(item[key] for item in calculated)
+        summary["book_value_difference"] = _sum_known(
+            _subtract_known(item["book_value"], item["previous_book_value"]) for item in calculated)
+        missing = sum(item["previous_book_value"] is None for item in items)
+        notes = sorted({item.get("comparison_note", "") for item in items if item.get("comparison_note")})
+        if missing:
+            notes.append(f"{missing}个批次缺少比较基准，无法比较")
+        summary["comparison_note"] = "；".join(notes)
+        result.append(summary)
+    return sorted(result, key=lambda item: item["sku"])
 
 
 @router.get("/inventory-impairment/summary")
@@ -1589,16 +1545,14 @@ async def product_line_profit_report(
     rows = await _product_line_profit_data(db, store_ids, report_month, report_date)
     result = []
     for item in rows:
-        current_gross = item["current"]["revenue"] - item["current"]["cost"]
-        previous_gross = item["previous"]["revenue"] - item["previous"]["cost"]
-        ytd_gross = item["ytd"]["revenue"] - item["ytd"]["cost"]
+        current_gross = _subtract_known(item["current"]["revenue"], item["current"]["cost"])
+        previous_gross = _subtract_known(item["previous"]["revenue"], item["previous"]["cost"])
+        ytd_gross = _subtract_known(item["ytd"]["revenue"], item["ytd"]["cost"])
         current_margin = (
-            current_gross / item["current"]["revenue"]
-            if item["current"]["revenue"] else None
+            _margin_known(current_gross, item["current"]["revenue"])
         )
         previous_margin = (
-            previous_gross / item["previous"]["revenue"]
-            if item["previous"]["revenue"] else None
+            _margin_known(previous_gross, item["previous"]["revenue"])
         )
         result.append({
             "name": item["name"],
@@ -1615,8 +1569,7 @@ async def product_line_profit_report(
             "ytd_revenue": item["ytd"]["revenue"],
             "ytd_gross": ytd_gross,
             "ytd_margin": (
-                ytd_gross / item["ytd"]["revenue"]
-                if item["ytd"]["revenue"] else None
+                _margin_known(ytd_gross, item["ytd"]["revenue"])
             ),
             "note": item["note"],
         })
