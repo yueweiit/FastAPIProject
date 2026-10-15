@@ -2,7 +2,7 @@
 
 本模块维护自动期间、批次快照与人工损益保存。销售/FIFO/结算为[销售模块](../sales/database.md)事实来源，商品规则见[商品模块](../products/database.md)，分类见[主数据模块](../finance-masters/database.md)。
 
-存货明细与 SKU 汇总为动态取数和计算结果，不是独立持久化报表表；新增的原始入库/累计出库数量和成本均使用现有批次及销售明细，无新增表/字段或迁移。新增逐日累计也由现有销售日期/FIFO明细在内存计算，无新增表字段、迁移或报表金额回填。各字段映射与公式见[逐字段来源](inventory-impairment-fields.md)。
+存货明细与SKU汇总为动态计算结果，不是独立持久化报表表；原始入库/累计出库数量和成本使用现有批次及销售明细。新增准备、销售转销和期末余额按已有FIFO事实逐日回放，无新增表字段、迁移或报表金额回填。各字段映射与公式见[逐字段来源](inventory-impairment-fields.md)。
 
 ## accounting_periods
 
@@ -78,7 +78,7 @@
 
 (period_start,period_end) 唯一，快照 (accounting_period_id,batch_id) 唯一；期间按自然月、auto_closed 和 snapshot_version=1 生成。snapshot_version 已有值就不覆盖，自动关闭人为空。兼容字段不等于提供人工结账或期间编辑功能。
 
-快照保存数量、单价、库存原值、跌价准备和账面值；store_id 是生成时从批次创建人当前绑定推导的值。07表的财务自定义上月比较现改为从销售日期重建，不读取或补写本表；这里的book_value仍为快照现存成本减准备余额，不能代入逐日累计报表，详见[流程](workflow.md)。
+快照保存数量、单价、库存原值、跌价准备和账面值；store_id是生成时从批次创建人当前绑定推导的值。07上月比较从FIFO流水重建，不读取或补写本表；快照保留原静态余额算法，报表采用实际持有期间回放且可因后续历史变更重算，不能直接替换，详见[流程](workflow.md)。
 
 AccountingPeriod.period_snapshots 使用 all/delete-orphan；没有公开删除期间功能。数据库有快照对批次/商品/店铺的外键，不能在业务删除时忽略它们。
 

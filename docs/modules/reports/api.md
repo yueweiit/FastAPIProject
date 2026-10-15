@@ -25,7 +25,7 @@
 
 ## 存货明细金额契约
 
-`GET /reports/inventory-impairment` 保留已有字段，新增四个入库/出库追溯字段；算法依据见[流程](workflow.md)，完整 21 个响应字段（20 个显示列及 comparison_note）的血缘见[逐字段说明](inventory-impairment-fields.md#页面-20-列完整对照)：
+`GET /reports/inventory-impairment` 保留已有字段及四个入库/出库追溯字段；算法依据见[流程](workflow.md)，完整24个响应字段（23个显示列及comparison_note）的血缘见[逐字段说明](inventory-impairment-fields.md#页面23列完整对照)：
 
 | 字段 | 口径 |
 | --- | --- |
@@ -33,22 +33,25 @@
 | `original_inventory_amount` | 原始入库数量×批次单件成本（含物流/其他成本） |
 | `sold_quantity` | 该批次从入库至截止日已确认销售出库数量 |
 | `sold_cost_amount` | 同期间销售成本明细数量×明细保存的单价之和 |
-| `impairment_amount` | 各日销售后库存按各日累计比例计算的金额逐日相加，保留售完前金额，不按成本封顶 |
-| `monthly_impairment_amount` | 本月1日至截止日每天金额之和，包含当月已售商品售前金额 |
-| `book_value` | 原始入库成本金额减逐日累计跌价，财务自定义口径，保留负数 |
-| `book_value_difference` | 当前自定义账面价值减按相同每日口径重算的上月值；本月新增批次上月为0，不依赖准备余额快照 |
-| `comparison_note` | 说明本月新增批次上月自定义账面为0，正常历史批次为空字符串 |
-| `status` | 售完批次为“已售完”；其他按安全库存/比例状态显示 |
+| `impairment_amount` | 截止日现存计提数量×批次单价×累计比例，即期末准备余额；沿用规则历史、安全库存及90%上限 |
+| `monthly_impairment_amount` | 截止日仍在库商品本月新增准备，按规则段的本月比例增量及上限计算，不含已售商品 |
+| `book_value` | 现存库存成本减期末累计准备，售完为0 |
+| `book_value_difference` | 本期账面减按相同余额规则重建的上月账面，含出入库影响；本月新增批次上月为0，不依赖快照 |
+| `comparison_note` | 说明本月新增批次上月账面为0，正常历史批次为空字符串 |
+| `opening_impairment_amount` | 上月末准备余额，本月新批为0 |
+| `monthly_total_impairment_amount` | 本月实际新增准备，含已售部分售出前增提 |
+| `monthly_writeoff_amount` | 本月销售转出对应全部准备，可能含期初准备 |
+| `status` | 异常优先为历史流水待核对；其他依次为已售完、安全库存内、比例上限/接近上限、正常 |
 
-2026-10-12最终确认改变上述金额字段语义，JSON字段名保留；页面/Excel明确标注逐日累计及财务自定义账面。明细、汇总和导出均包含全部已到货批次，已售完批次金额不会清零。正常上月值从现有流水重算；意外缺失比较值仍传播null。店铺损益继续使用原准备余额差，见[流程](workflow.md)。
+2026-10-15追加持有期间计提/转销：销售当天先计提，售完期末余额0，但本月总计提和转销可非0。旧字段保留语义并新增三项变动。历史时序/数量异常相关金额为null，不填0；上月按同一回放计算，金额/比较值未知按列传播至SKU及合计。
 
-`GET /reports/inventory-impairment/summary` 返回 16 字段：store_name、sku、product_name、batch_count，上述四个追溯字段，以及 quantity、provision_quantity、inventory_amount、impairment_amount、monthly_impairment_amount、book_value、book_value_difference、comparison_note。按 product_id 汇总，不合计单价/库龄/比例。包含已售完旧批次，和明细的范围一致；任一比较值未知则该SKU差额仍为null。完整范围和例子见[SKU 汇总说明](inventory-impairment-fields.md#sku-汇总与成本核对)。
+`GET /reports/inventory-impairment/summary` 返回19字段：store_name、sku、product_name、batch_count，上述四个追溯字段，以及 quantity、provision_quantity、inventory_amount、impairment_amount、monthly_impairment_amount、book_value、book_value_difference、comparison_note及上述三项新增变动。按 product_id 汇总，不合计单价/库龄/比例。包含已售完旧批次，和明细的范围一致；任一准备或比较值未知则该SKU对应合计为null。完整范围和例子见[SKU 汇总说明](inventory-impairment-fields.md#sku汇总与成本核对)。
 
 ## 损益保存契约
 
 StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks。金额单元 StoreProfitLossCell 有 current/previous/ytd，可空；只保存允许的人工科目，自动/公式键忽略。备注只接受已定义科目、去空白后最多500字符。保存替换原 JSON，应提交完整要保留的人工值。
 
-响应 StoreProfitLossResponse 含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/remark。没有单独的审批/结账状态，公式由后端生成。UI 当前仅展示/编辑本月金额，API 和单店 Excel 仍提供三个期间。
+响应StoreProfitLossResponse新增warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。新增inventory_writeoff自动科目抵减营业成本，inventory_impairment取期间总计提，不再用净余额差。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/remark。没有单独的审批/结账状态，公式由后端生成。UI 当前仅展示/编辑本月金额，API 和单店 Excel 仍提供三个期间。
 
 ## 导出与副作用
 
@@ -56,4 +59,4 @@ StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks
 
 07存货查询/导出不再调用ensure_period_snapshot，仅读取并计算；应用启动与后台仍有迁移/快照写入，不能用启动代替只读验证。OA 完整配置的读取失败抛异常，汇率历史缺失在不同报表中处理不同，细节见[流程](workflow.md)。
 
-输入日期不合规400，越店/无绑定403，无店铺404，框架校验422；并未定义统一报表外部数据错误格式。Excel 为 StreamingResponse，工作簿公式缓存已有处理。回归包含逐日公式、模拟会话、内存工作簿和权限；本地备份核验与生产部署应分别记录，生产接口和原始历史完整性仍待验证。损益字段契约见 [schemas.py](../../../schemas.py)。
+输入日期不合规400，越店/无绑定403，无店铺404，框架校验422；并未定义统一报表外部数据错误格式。Excel为StreamingResponse，工作簿公式缓存已有处理。回归覆盖库存余额/本月增提、模拟会话、内存工作簿和权限；本地核验与生产部署分别记录，生产接口和原始历史完整性仍待验证。损益字段契约见[schemas.py](../../../schemas.py)。
