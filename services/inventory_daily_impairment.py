@@ -1,4 +1,7 @@
-"""07 存货报表的财务自定义口径：逐日累计当天库存的跌价金额。"""
+"""2026-10-12历史逐日累计算法，仅保留用于复核旧口径。
+
+当前07报表使用inventory_provision_movements；本算法不再接入查询或导出。
+"""
 
 from collections import defaultdict
 from dataclasses import dataclass, replace

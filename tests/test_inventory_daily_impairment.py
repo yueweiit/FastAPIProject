@@ -1,3 +1,5 @@
+"""已停用的2026-10-12算法回归，不代表当前报表验收口径。"""
+
 import unittest
 from datetime import date, timedelta
 from decimal import Decimal
@@ -7,7 +9,7 @@ from services.inventory_impairment import ImpairmentRule, InventoryLayer, batch_
 
 
 class InventoryDailyImpairmentTests(unittest.TestCase):
-    def test_finance_accepted_example_and_month_split(self):
+    def test_historical_daily_accumulation_example_and_month_split(self):
         arrival = date(2026, 8, 21)
         layer = InventoryLayer(1, 10, None, arrival, 100, "new", 0)
         result = daily_accumulated_impairments(
