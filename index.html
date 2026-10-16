@@ -822,6 +822,7 @@ function handleSessionExpired() {
         document.getElementById('product-import-dialog').close();
     }
     resetProductImportPreview();
+    resetStoreProfitLossState();
     clearLegacyAuth();
     AUTH_CSRF = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
     document.querySelectorAll('#sec-sales tbody, #sec-reports tbody, #sec-reports tfoot, #users-tbody').forEach(node => node.innerHTML = '');
@@ -2392,11 +2393,34 @@ async function exportFinancialAttachments() {
 }
 
 let storeProfitLossReport = null;
+let storeProfitLossRequestId = 0;
+let storeProfitLossLoading = false;
+let storeProfitLossSavePromise = null;
 
 function defaultProfitLossMonth() {
     const input = document.getElementById('profit-loss-month');
     if (!input.value) input.value = new Date().toLocaleDateString('sv-SE').slice(0, 7);
     return input.value;
+}
+
+function profitLossSelectionMatches(report) {
+    return Boolean(report)
+        && String(report.report_month || '').slice(0, 7) === defaultProfitLossMonth()
+        && (!isAdmin() || String(report.store_id) === document.getElementById('profit-loss-store').value);
+}
+
+function updateProfitLossSaveState() {
+    const busy = storeProfitLossLoading || Boolean(storeProfitLossSavePromise);
+    const editable = Boolean(storeProfitLossReport?.can_edit) && profitLossSelectionMatches(storeProfitLossReport);
+    document.getElementById('profit-loss-save').disabled = busy || !editable;
+    document.querySelectorAll('#store-profit-loss-tbody input').forEach(input => input.disabled = busy || !editable);
+}
+
+function resetStoreProfitLossState() {
+    storeProfitLossRequestId++;
+    storeProfitLossReport = null;
+    storeProfitLossLoading = false;
+    updateProfitLossSaveState();
 }
 
 function formatProfitLossAmount(value, row) {
@@ -2407,7 +2431,7 @@ function formatProfitLossAmount(value, row) {
     return `¥${amount.toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
 }
 
-async function loadStoreProfitLossStores() {
+async function loadStoreProfitLossStores(requestId = storeProfitLossRequestId) {
     const group = document.getElementById('profit-loss-store-group');
     const select = document.getElementById('profit-loss-store');
     if (!isAdmin()) {
@@ -2417,9 +2441,12 @@ async function loadStoreProfitLossStores() {
     group.style.display = '';
     const selected = select.value;
     const stores = await api('GET', '/finance-masters/stores?active_only=true');
+    if (requestId !== storeProfitLossRequestId) return;
     select.innerHTML = stores.map(store => `<option value="${store.id}">${escapeHtml(store.name)}</option>`).join('');
     if (selected && stores.some(store => Number(store.id) === Number(selected))) {
         select.value = selected;
+    } else {
+        select.value = stores.length ? String(stores[0].id) : '';
     }
 }
 
@@ -2438,9 +2465,11 @@ function renderStoreProfitLoss(report) {
         const amountCells = ['current'].map(period => {
             const value = row.value?.[period];
             if (row.kind === 'manual') {
-                const inputValue = value === null || value === undefined ? '' : escapeHtml(value);
-                const title = row.source || '人工填写';
-                return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" ${editable ? '' : 'disabled'}></td>`;
+                const manualValue = row.manual_value?.[period];
+                const inputValue = manualValue === null || manualValue === undefined ? '' : escapeHtml(manualValue);
+                const defaultValue = inputValue === '' && value !== null && value !== undefined ? escapeHtml(value) : '';
+                const title = row.key === 'salary' ? '留空使用OA工资当前值；填写后作为人工覆盖' : (row.source || '人工填写');
+                return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" placeholder="${defaultValue}" ${editable ? '' : 'disabled'}></td>`;
             }
             const title = row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
             return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(title)}">${formatProfitLossAmount(value, row)}</td>`;
@@ -2453,26 +2482,46 @@ function renderStoreProfitLoss(report) {
 async function loadStoreProfitLoss() {
     const tbody = document.getElementById('store-profit-loss-tbody');
     const month = defaultProfitLossMonth();
+    const requestId = ++storeProfitLossRequestId;
+    storeProfitLossReport = null;
+    storeProfitLossLoading = true;
+    updateProfitLossSaveState();
+    document.getElementById('profit-loss-updated').textContent = '';
+    tbody.innerHTML = '<tr><td colspan="3" class="empty">正在加载...</td></tr>';
     try {
-        await loadStoreProfitLossStores();
+        // 同一表保存完成后再查询，避免读到保存前的数据并覆盖界面。
+        if (storeProfitLossSavePromise) await storeProfitLossSavePromise.catch(() => undefined);
+        if (requestId !== storeProfitLossRequestId) return;
+        await loadStoreProfitLossStores(requestId);
+        if (requestId !== storeProfitLossRequestId) return;
         const params = new URLSearchParams({report_month: `${month}-01`});
         const storeId = document.getElementById('profit-loss-store').value;
         if (isAdmin() && storeId) params.set('store_id', storeId);
         const report = await api('GET', `/reports/store-profit-loss?${params.toString()}`);
+        if (requestId !== storeProfitLossRequestId || !profitLossSelectionMatches(report)) return;
         storeProfitLossReport = report;
         renderStoreProfitLoss(report);
     } catch (e) {
+        if (requestId !== storeProfitLossRequestId) return;
         storeProfitLossReport = null;
         document.getElementById('profit-loss-updated').textContent = '';
         tbody.innerHTML = `<tr><td colspan="3" class="empty">${escapeHtml(e.message)}</td></tr>`;
+    } finally {
+        if (requestId === storeProfitLossRequestId) {
+            storeProfitLossLoading = false;
+            updateProfitLossSaveState();
+        }
     }
 }
 
 async function saveStoreProfitLoss() {
-    if (!storeProfitLossReport?.can_edit) {
-        showMsg('当前账号没有保存权限', false);
+    if (storeProfitLossLoading || storeProfitLossSavePromise
+        || !storeProfitLossReport?.can_edit || !profitLossSelectionMatches(storeProfitLossReport)) {
+        showMsg('请等待当前店铺和月份的报表加载完成后再保存', false);
         return;
     }
+    const loadedReport = storeProfitLossReport;
+    const requestId = storeProfitLossRequestId;
     const manualValues = {};
     document.querySelectorAll('#store-profit-loss-tbody .profit-loss-amount').forEach(input => {
         const key = input.dataset.profitKey;
@@ -2485,17 +2534,28 @@ async function saveStoreProfitLoss() {
         const value = input.value.trim();
         if (value) remarks[input.dataset.profitRemark] = value;
     });
-    try {
-        const report = await api('PUT', '/reports/store-profit-loss', {
-            store_id: storeProfitLossReport.store_id,
-            report_month: `${defaultProfitLossMonth()}-01`,
+    const pending = api('PUT', '/reports/store-profit-loss', {
+            store_id: loadedReport.store_id,
+            report_month: `${String(loadedReport.report_month).slice(0, 7)}-01`,
+            update_scope: 'current',
             manual_values: manualValues,
             remarks,
         });
-        storeProfitLossReport = report;
-        renderStoreProfitLoss(report);
-        showMsg('店铺损益表已保存');
-    } catch (e) { showMsg(e.message, false); }
+    storeProfitLossSavePromise = pending;
+    updateProfitLossSaveState();
+    try {
+        const report = await pending;
+        if (requestId === storeProfitLossRequestId && profitLossSelectionMatches(report)) {
+            storeProfitLossReport = report;
+            renderStoreProfitLoss(report);
+            showMsg('店铺损益表已保存');
+        }
+    } catch (e) {
+        showMsg(`${String(loadedReport.report_month).slice(0, 7)} 店铺损益表保存失败：${escapeHtml(e.message)}`, false);
+    } finally {
+        if (storeProfitLossSavePromise === pending) storeProfitLossSavePromise = null;
+        updateProfitLossSaveState();
+    }
 }
 
 function reportMoney(value) {
