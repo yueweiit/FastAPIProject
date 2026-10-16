@@ -13,6 +13,7 @@
 | `user_id` | `Integer` | 是 | 业务创建人/操作人关联 | 索引；ForeignKey('users.id') |
 | `store_id` | `Integer` | 是 | 店铺关联；具体归属见模块规则 | 索引；ForeignKey('stores.id') |
 | `order_no` | `String(64)` | 否 | 销售订单标识 | 索引 |
+| `order_claim` | `String(64)` | 是 | 新订单首条明细的全局占位；等于order_no，组合后续明细/历史记录为NULL | 唯一约束uq_sales_order_claim |
 | `quantity` | `Integer` | 否 | 数量；业务含义见本表说明 | — |
 | `selling_price` | `DECIMAL(12, 4)` | 否 | 销售单价 | — |
 | `total_cost` | `DECIMAL(12, 4)` | 否 | FIFO 销售总成本 | — |
@@ -24,7 +25,7 @@
 复合唯一约束与索引（ORM 声明）：
 
 ```python
-(Index('ix_sales_sold_at', 'sold_at'), Index('ix_sales_user_sold_at', 'user_id', 'sold_at'))
+(Index('ix_sales_sold_at', 'sold_at'), Index('ix_sales_user_sold_at', 'user_id', 'sold_at'), UniqueConstraint('order_claim', name='uq_sales_order_claim'))
 ```
 
 ## sale_cost_details
@@ -157,7 +158,7 @@ settlement_entries.quantity 为平台来源数量，可为负数；allocations.q
 
 新销售/结算/导入保存 store_id，用户后续改绑不更改它；管理员无店铺导入仍可能为空。旧销售根据创建人当前绑定进行兼容查询，旧结算的 store_id 是否完整需核实。
 
-source_key 全局唯一，不含店铺维度；order_no 普通索引且非唯一，组合销售可共享订单号。allocations 的 (settlement_entry_id,product_id) 唯一，避免同来源行重复组件；批次删除和撤销必须保留/正确处理所有外键关系。
+source_key 全局唯一，不含店铺维度；order_no 普通索引且非唯一，组合销售可共享订单号。新订单通过order_claim唯一索引兜底，NULL可有多条；只由首条明细占位，同一事务回滚/撤销删除销售会释放占位。迁移只补可空列和唯一索引，不回填历史记录；历史order_no查重仍保留。allocations 的 (settlement_entry_id,product_id) 唯一，避免同来源行重复组件；批次删除和撤销必须保留/正确处理所有外键关系。
 
 raw_data 保存原始行，不保存原文件内容；source_file/sheet/row_number 是追溯线索。撤销删掉结算、分摊、销售和成本明细，仅保留导入批次状态/统计/撤销人，并不保留完整被撤销业务行审计副本。成本字段和原币/人民币差异见[流程](workflow.md)。
 

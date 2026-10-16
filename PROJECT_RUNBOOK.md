@@ -4,6 +4,14 @@
 
 > 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
 
+## 2026-10-16 修复及更新注意
+
+- 本次涉及商品图片服务、销售路由/FIFO、models.py、migrate.py、schemas.py、报表路由和两份页面，不能只上传HTML。损益页面新增update_scope=current，保留人工上月/年累计值；默认API仍整体替换，必须前后端一起更新。详细逻辑和验证见[修复记录](docs/development/2026-10-16-project-safety-fixes.md)。
+- 启动兼容迁移新增sales.order_claim（可空VARCHAR(64)）和uq_sales_order_claim唯一索引；历史值保持NULL，不改写订单/成本。正式库先备份并确认DDL权限、索引创建的锁等待及回滚安排，统一更新所有销售写入进程；旧代码不会写占位值，不宜混跑。启动仍有其他既存迁移/历史修复副作用，不可当只读验证。
+- 仅本地127.0.0.1:3309 / inventory_fifo_test已在明确授权后补订单结构、完成InnoDB验证，临时业务记录已清理且既有数据摘要一致。新增结构保留、自增推进。tests/mysql_sales_integrity.py默认只读检查；--apply-local-order-schema才有写入，不得用于生产。
+- 入库其他成本现在自动计入09/10/12；财务应重新导出，并核对历史人工科目是否重复录过同笔费用。历史已用未来入库扣减的销售不会自动重写，需要业务核对后另定处理方案。
+- 图片更新保留旧文件；历史HTML/SVG访问返回404，正常新图片重新编码，动图保留首帧。没有清理历史uploads。本次没有重启应用或发布服务器，运行中进程是否已加载本次代码需在获准更新时确认。
+
 ## 项目概览
 
 - FastAPI + SQLAlchemy 异步 ORM + MySQL 的 FIFO 库存成本核算系统。
@@ -220,7 +228,7 @@ FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0`
 6. 批次号按当天已有数量加一生成；并发入库可能触发唯一约束冲突。
 7. `test_main.http` 使用过时字段 `duty_cost` 且缺少认证头；当前字段为 `last_mile_cost`。
 8. `migrate.py` 在应用启动时运行，尚非完整的版本化迁移；部署含结构变更的版本前仍须备份数据库。新增批次留档字段（含三个成本单号）的历史独立脚本为 `migrations/20260820_add_batch_dingtalk_fields.py`，执行前应核对目标库与现有列。
-9. 上传仅使用原文件扩展名，未限制大小和类型；公网部署前应限制类型、大小和反向代理上传额度。
+9. 商品图片现有限制大小/像素、实际解码和重新编码，静态/uploads有扩展名及响应头保护；销售文件等其他入口和反向代理上传额度仍需单独核查，见[商品流程](docs/modules/products/workflow.md#创建与图片)。
 
 ## 备份与排障
 

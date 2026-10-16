@@ -81,7 +81,7 @@ erDiagram
 
 ORM 有外键的字段，在历史库通过 ALTER 添加时不一定同时补外键；sales_import_batches 的兼容建表 SQL 与 ORM 的外键定义也不完全一致。因此模型关系不等于实库约束。
 
-SKU、用户名、批次号、source_key 具有唯一约束；销售 order_no 只有普通索引，程序查重不是数据库唯一幂等保证。店铺、映射、规则及快照组合约束见各模块字典。
+SKU、用户名、批次号、source_key具有唯一约束；销售order_no仍为普通索引，新增可空order_claim唯一约束，由新订单首条明细占位、组合后续明细及历史记录为NULL。前置查重与数据库兜底共同使用，不回填历史，详见[销售字段字典](../modules/sales/database.md)。店铺、映射、规则及快照组合约束见各模块字典。
 
 商品规则使用 delete-orphan 及 ON DELETE CASCADE；平台映射组件有 ORM 级联。其他历史关联不能默认安全级联。商品/用户删除可能被外键或 ORM 关联阻止，图片文件还可能先删除，修改此类行为必须核查上下游。依据：[models.py](../../models.py)、[products.py](../../routers/products.py)、[finance_masters.py](../../routers/finance_masters.py)。
 

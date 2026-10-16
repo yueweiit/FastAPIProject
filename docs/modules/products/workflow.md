@@ -2,9 +2,9 @@
 
 ## 创建与图片
 
-createProduct 使用 multipart 提交 sku、name、product_type、safe_stock_quantity 和可选 image。后端检查 SKU 唯一；图片按 UUID 和原扩展名写入 uploads，生成 /uploads 路径。随后验证规则、创建 Product、flush 取得 ID、写当日 ProductImpairmentRule 并 commit。
+createProduct 使用 multipart 提交 sku、name、product_type、safe_stock_quantity 和可选 image。后端先检查 SKU、校验商品规则，再有界读取图片；允许 JPEG/PNG/GIF/WebP 扩展名，且必须能实际解码为这些格式。原文件最多5 MiB、像素总数最多2000万，重新编码后最多10 MiB。JPEG统一保存为UUID文件名的.jpg，其余转为.png；移除元数据和尾随内容，GIF/WebP仅保留首帧。随后创建 Product、flush 取得 ID、写当日 ProductImpairmentRule 并 commit。
 
-图片可能在规则校验或数据库提交前写入，失败不自动回滚文件。当前未完整限制图片 MIME、内容和大小。静态图片由 [main.py](../../../main.py) 公开挂载。
+图片写入失败或数据库提交异常时，只清理本次新建文件。更新图片保留旧文件，避免事务失败破坏已有图片引用；历史文件清理需要另行核对引用和授权。静态图片仍公开访问，但只允许图片扩展名，历史HTML/SVG也返回404；强制图片MIME，并添加nosniff和sandbox CSP，隔离历史伪装图片的活动内容。依据：[product_images.py](../../../services/product_images.py) 的 normalize_product_image、read_product_image、ProductImageFiles；[products.py](../../../routers/products.py) 的 _save_product_image、create_product、update_product；[main.py](../../../main.py) 的 /uploads 挂载。
 
 ## 商品 Excel 批量新增
 
@@ -59,4 +59,4 @@ flowchart TD
 
 列表支持 SKU/名称模糊搜索，库存数量和价值由批次聚合；选项接口只取轻量商品信息。页面分页和跨页复选保存状态仅在浏览器内。导出带 product_ids 时导出选择记录；未传则导出全部商品，后端导出没有 keyword 参数，页面按当前查询得到 ID 实现筛选导出。
 
-更新图片先删除旧文件再写新文件；删除商品在平台映射检查后先删文件，再删除 ORM 记录并提交。其他历史引用可能让提交失败，删除前需同时审查文件/表关联。依据：[products.py](../../../routers/products.py) 的 export_products、update_product、delete_product。
+更新图片的旧文件保留策略见上文；删除商品仍在平台映射检查后先删文件，再删除 ORM 记录并提交。其他历史引用可能让删除提交失败，删除前需同时审查文件/表关联，本次图片上传修复没有改变删除商品的事务逻辑。依据：[products.py](../../../routers/products.py) 的 export_products、update_product、delete_product。

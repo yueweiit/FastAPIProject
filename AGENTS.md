@@ -23,7 +23,7 @@
 
 1. 修改前检查 Git 状态；核对实际页面、路由、服务、模型、校验、权限、事务和上下游，只分析实际存在的层次。知识库提供定位，不替代源码核验。
 2. 优先最小修改，不擅自增加依赖、重构架构或改变接口。商品/批次/销售列表不传 page 是数组、传 page 是分页对象，保持兼容。
-3. 金额用 Decimal 与 DECIMAL；FIFO、导入、撤销、批次修改必须维持行锁和相同锁序，库存、销售、成本明细在同一事务内保持一致。勿随意改写历史成本或直接修正剩余库存。
+3. 金额用 Decimal 与 DECIMAL；FIFO、导入、撤销、批次修改必须维持行锁和相同锁序，库存、销售、成本明细在同一事务内保持一致。销售只用到货自然日不晚于销售日的批次；新订单仅首条明细占用order_claim唯一值，组合后续明细为NULL，不得移除数据库兜底。勿随意改写历史成本或直接修正剩余库存。
 4. 权限由服务端保证。viewer 当前可写商品与平台 SKU 映射；敏感销售/损益按店铺限制，但共享库存和独立存货接口有例外，修改前读权限文档。批次没有固化店铺字段，FIFO 当前按商品共享扣库。
 5. 商品规则有生效历史；快照持久化不覆盖，但报表比较值会按规则历史重算。财务币种、成本分类、差额方向及分摊不得擅自改口径。
 6. 实际首页为 `templates/index.html`；根目录 `index.html` 是副本且当前存在差异。页面修改先核对差异和用户改动，按任务范围决定同步，不能用副本替代运行模板。
@@ -36,6 +36,7 @@
 
 - 使用现有 unittest/IsolatedAsyncioTestCase，优先受影响测试；测试映射见 [conventions.md](docs/knowledge/conventions.md)。常用命令为 `.\.venv\Scripts\python.exe -m unittest discover -s tests -v`，运行前确认已有环境，不在纯分析/文档任务中安装依赖或启动服务。
 - `tests/mysql_fifo_concurrency.py` 会建表、迁移并写本地测试库，只在对应运行任务已授权且目标核实后执行；模拟锁测试不等于真实 MySQL/InnoDB 集成验证。
+- `tests/mysql_sales_integrity.py` 默认只读检查订单结构；`--apply-local-order-schema` 会补sales.order_claim及唯一索引、写入并清理自建记录。只允许核实的 `127.0.0.1:3309 / inventory_fifo_test / fifo_local_app`，必须有本地结构变更及运行授权；不可用于生产，不回填历史订单。
 - SSO 优先 `test_eims_sso` 与 `node tests/auth_page_checks.cjs`。`tests/mysql_auth_sessions.py --apply-local-auth-schema` 会补认证结构及写临时记录，只允许核实的 `127.0.0.1:3309 / inventory_fifo_test / fifo_local_app`，有相应本地运行授权后执行；不得用于生产。
 - 纯文档任务验证链接、源码路径/符号、表/接口覆盖和变更范围，不调用有写入副作用的入口。不能执行的检查如实说明。
 - 业务、API、表、权限、核心算法或部署方式实质变化后，按需更新相关现有模块文档、全局索引及根目录维护文档；不因格式/注释小改动批量建文档。

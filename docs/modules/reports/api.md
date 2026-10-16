@@ -49,9 +49,11 @@
 
 ## 损益保存契约
 
-StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks。金额单元 StoreProfitLossCell 有 current/previous/ytd，可空；只保存允许的人工科目，自动/公式键忽略。备注只接受已定义科目、去空白后最多500字符。保存替换原 JSON，应提交完整要保留的人工值。
+StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks，以及可选update_scope（all/current，默认all）。金额单元StoreProfitLossCell有current/previous/ytd，可空；只保存允许的人工科目，自动/公式键忽略。默认all仍整体替换人工JSON，须提交完整要保留的值；current只替换本月人工列，保留数据库中已有previous/ytd，忽略请求中的比较期间值，未提交的本月人工科目清空为null。当前页面显式提交current，避免只编辑本月却清空比较值；OA薪资默认金额仅显示为输入框占位值，未人工填写时提交null，不会把本月/比较期间OA默认金额固化为人工值。已有报表保存时加行锁保护读取及合并。
 
-响应StoreProfitLossResponse新增warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。新增inventory_writeoff自动科目抵减营业成本，inventory_impairment取期间总计提，不再用净余额差。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/remark。没有单独的审批/结账状态，公式由后端生成。UI 当前仅展示/编辑本月金额，API 和单店 Excel 仍提供三个期间。
+remarks在两种scope下均为完整替换，只接受已定义科目、去空白后最多500字符。权限、店铺、月份校验不变；非法update_scope返回422。字段定义见[schemas.py](../../../schemas.py)，保存实现为[update_store_profit_loss](../../../routers/reports.py)。
+
+响应StoreProfitLossResponse含warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。inventory_writeoff自动科目抵减营业成本，inventory_impairment取期间总计提，不用净余额差。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/manual_value/remark。value为最终计算金额；人工行的manual_value只含实际保存的人工覆盖，未保存时为null；自动/公式行为null。两者不能混作保存输入。没有单独的审批/结账状态，公式由后端生成。UI 当前仅展示/编辑本月金额，API 和单店 Excel 仍提供三个期间。
 
 ## 导出与副作用
 

@@ -32,9 +32,10 @@
 | 认证/商品权限/店铺隔离 | test_user_creation_permissions、test_product_feature_permissions、test_store_data_isolation |
 | EIMS/Cookie/CSRF/启停/刷新/退出 | test_eims_sso；node tests/auth_page_checks.cjs；授权后 mysql_auth_sessions 专用本地验证 |
 | 商品批量新增/模板/预览/结果 | test_product_import、test_product_feature_permissions；必要时授权的 mysql_product_import 专用本地库验证 |
-| FIFO/组合分摊/汇率/导入格式 | test_sales_rules、test_fifo_concurrency；必要时授权的本地 MySQL 验证 |
+| 商品图片/历史上传隔离/失败清理 | test_product_images（临时目录、独立ASGI应用，不运行main生命周期） |
+| FIFO/组合分摊/汇率/导入格式/订单防重 | test_sales_rules、test_fifo_concurrency、test_sales_integrity；必要时授权的mysql_sales_integrity本地InnoDB验证 |
 | 商品规则/跌价/快照/批次成本及SKU汇总 | test_inventory_provision_movements、test_provision_reporting、test_inventory_impairment_report（快照历史）、test_inventory_cost_summary、test_accounting_period_snapshots、test_accounting_period_removal；node tests/inventory_page_checks.cjs |
-| 店铺损益/OA/财务附件 | test_store_profit_loss_report、test_oa_office_expenses、test_financial_attachments_export |
+| 店铺损益/OA/财务附件 | test_store_profit_loss_report、test_provision_reporting、test_oa_office_expenses、test_financial_attachments_export；node tests/profit_loss_page_checks.cjs |
 | 前端交互 | 核对模板与副本；在获准运行的环境检查分页、选择、表单、错误和导出 |
 | 纯文档 | 链接/代码路径/符号/表和路由覆盖检查，确认旧文件和业务代码未改动 |
 
@@ -45,6 +46,8 @@
 ```
 
 [tests/mysql_fifo_concurrency.py](../../tests/mysql_fifo_concurrency.py) 会连接并写入特定本地测试库，虽有目标限制和清理逻辑，也不能当纯只读检查或默认执行。普通测试主要使用模拟数据，不等同于目标 MySQL/InnoDB 的集成验证。运行前确认依赖已存在，不为文档任务安装依赖或启动应用。
+
+[tests/mysql_sales_integrity.py](../../tests/mysql_sales_integrity.py) 默认只读检查字段/索引；显式`--apply-local-order-schema`才补可空订单占位列及唯一索引、创建/清理自建商品批次销售，核对既有业务表摘要。严格限定127.0.0.1:3309 / inventory_fifo_test / fifo_local_app，需明确本地结构及写入授权；结构保留、自增推进，不回填历史记录，也不执行完整启动迁移。验证不同商品的同订单并发、组合多明细、失败重试及未来批次排除；不得连接生产或自动纳入unittest。
 
 [tests/test_eims_sso.py](../../tests/test_eims_sso.py) 使用模拟提供方、RSA/JWKS 和独立临时 SQLite，不进入 main 生命周期；SQLite 锁仅模拟。`node tests/auth_page_checks.cjs` 验证两份页面脚本和认证辅助函数，不能替代真实浏览器联调。
 

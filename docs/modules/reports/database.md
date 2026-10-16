@@ -84,7 +84,7 @@ AccountingPeriod.period_snapshots 使用 all/delete-orphan；没有公开删除�
 
 ## 人工损益保存与外部数据
 
-store_profit_loss_reports 以 (store_id,report_month) 唯一；人工金额按各科目/期间以字符串或空值放入 manual_values，remarks 保存备注，report_metadata 对应数据库列 metadata。该表保存人工输入和扩展信息，不保存全部自动计算结果/结账审计副本；保存是替换 JSON。
+store_profit_loss_reports以(store_id,report_month)唯一；人工金额按各科目/期间以字符串或空值放入manual_values，remarks保存备注，report_metadata对应数据库列metadata。该表保存人工输入和扩展信息，不保存全部自动计算结果/结账审计副本。默认保存整体替换JSON；页面使用current范围，在已有报表行锁内仅替换本月人工列、保留已有上月/年累计人工值，remarks仍完整替换。范围字段不是新数据库列，具体见[损益保存契约](api.md#损益保存契约)。
 
 OA ding_approval_instance 是外部 PostgreSQL 表，不在本项目 ORM 或迁移中创建，也没有本地费用复制表。汇率事实保存在 settlement_entries，不在报表表中。依据：[models.py](../../../models.py)、[reports.py](../../../routers/reports.py)、[oa_office_expenses.py](../../../services/oa_office_expenses.py)。
 
