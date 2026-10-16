@@ -106,8 +106,9 @@ STORE_PROFIT_LOSS_ROWS = (
     ("shipping_revenue", "  运费收入", "manual", None),
     ("other_revenue", "  其他收入", "manual", None),
     ("operating_cost", "减：营业成本（对应）", "formula", None),
-    ("product_purchase_cost", "  应商品采购成本", "auto", "FIFO 实际扣除数量 × 入库采购单价"),
-    ("head_logistics_cost", "  头程尾程物流成本", "auto", "FIFO 实际扣除数量分摊入库头程和尾程物流费用"),
+    ("product_purchase_cost", "  应商品采购成本", "auto", "按批次采购金额权重分配已保存的FIFO销售成本"),
+    ("head_logistics_cost", "  头程尾程物流成本", "auto", "按批次头尾程费用权重分配已保存的FIFO销售成本"),
+    ("inventory_other_cost", "  入库其他成本", "auto", "按批次其他费用权重分配已保存的FIFO销售成本"),
     ("customs_import_tax", "  关税及进口税费（正报）", "manual", None),
     ("local_logistics_cost", "  本地物流配送成本", "manual", None),
     ("fulfillment_cost", "  代发成本", "manual", None),
@@ -244,7 +245,7 @@ def _build_store_profit_loss_values(
         )
         values["operating_cost"][period] = sum(
             (get(key) for key in (
-                "product_purchase_cost", "head_logistics_cost", "customs_import_tax",
+                "product_purchase_cost", "head_logistics_cost", "inventory_other_cost", "customs_import_tax",
                 "local_logistics_cost", "fulfillment_cost", "other_direct_cost",
             )),
             Decimal("0"),
@@ -308,6 +309,28 @@ def _add_period_value(
             target[period] += amount
 
 
+def _fifo_cost_components(detail: SaleCostDetail, batch: InventoryBatch) -> tuple[Decimal, Decimal, Decimal]:
+    """按原批次成本构成分配已保存的FIFO成本，尾差留在最后一个非零科目。"""
+    quantity = Decimal(detail.quantity)
+    divisor = Decimal(batch.quantity or 1)
+    source_parts = (
+        batch.purchase_price * quantity,
+        (batch.shipping_cost + batch.last_mile_cost) * quantity / divisor,
+        batch.other_cost * quantity / divisor,
+    )
+    saved_cost = detail.unit_cost * quantity
+    source_total = sum(source_parts, Decimal("0"))
+    if source_total <= 0:
+        return saved_cost, Decimal("0"), Decimal("0")
+
+    allocated = [Decimal("0"), Decimal("0"), Decimal("0")]
+    nonzero_parts = [index for index, amount in enumerate(source_parts) if amount]
+    for index in nonzero_parts[:-1]:
+        allocated[index] = saved_cost * source_parts[index] / source_total
+    allocated[nonzero_parts[-1]] = saved_cost - sum(allocated, Decimal("0"))
+    return allocated[0], allocated[1], allocated[2]
+
+
 async def _store_profit_loss_auto_values(
     db: AsyncSession, store_id: int, report_month: date, store_name: str | None = None
 ) -> dict[str, dict[str, Decimal]]:
@@ -358,15 +381,18 @@ async def _store_profit_loss_auto_values(
             .where(SaleCostDetail.sale_id.in_(sale_ids))
         )).all()
         for detail, batch, sold_at in cost_rows:
-            quantity = Decimal(detail.quantity)
+            purchase_cost, logistics_cost, other_cost = _fifo_cost_components(detail, batch)
             _add_period_value(
                 auto_values["product_purchase_cost"], sold_at.date(),
-                batch.purchase_price * quantity, periods,
+                purchase_cost, periods,
             )
-            divisor = Decimal(batch.quantity or 1)
             _add_period_value(
                 auto_values["head_logistics_cost"], sold_at.date(),
-                (batch.shipping_cost + batch.last_mile_cost) * quantity / divisor, periods,
+                logistics_cost, periods,
+            )
+            _add_period_value(
+                auto_values["inventory_other_cost"], sold_at.date(),
+                other_cost, periods,
             )
         for sale in sales:
             context = import_context_by_sale.get(sale.id, {})
@@ -539,6 +565,7 @@ async def _store_profit_loss_response(
     )
     manual_values = report.manual_values if report else {}
     values = _build_store_profit_loss_values(auto_values, manual_values)
+    saved_manual_values = manual_values if isinstance(manual_values, dict) else {}
     remarks = report.remarks if report else {}
     rows = [
         StoreProfitLossRowResponse(
@@ -549,6 +576,8 @@ async def _store_profit_loss_response(
             is_formula=kind == "formula",
             source=source,
             value=StoreProfitLossCell(**values[key]),
+            manual_value=StoreProfitLossCell(**saved_manual_values.get(key, {}))
+            if kind == "manual" and isinstance(saved_manual_values.get(key), dict) else None,
             remark=str(remarks.get(key, "")),
         )
         for key, label, kind, source in STORE_PROFIT_LOSS_ROWS
@@ -617,8 +646,20 @@ async def update_store_profit_loss(
         select(StoreProfitLossReport).where(
             StoreProfitLossReport.store_id == store.id,
             StoreProfitLossReport.report_month == data.report_month,
-        )
+        ).with_for_update()
     )
+    if data.update_scope == "current":
+        # 页面仅编辑本月；不能把未提交的上月/年累计人工值清空或固化OA默认值。
+        saved_values = report.manual_values if report else {}
+        keys = (set(saved_values) | set(manual_values)) & STORE_PROFIT_LOSS_MANUAL_KEYS
+        manual_values = {
+            key: {
+                "current": manual_values.get(key, {}).get("current"),
+                "previous": saved_values.get(key, {}).get("previous"),
+                "ytd": saved_values.get(key, {}).get("ytd"),
+            }
+            for key in keys
+        }
     if report is None:
         report = StoreProfitLossReport(
             store_id=store.id,
@@ -1180,10 +1221,7 @@ async def _product_line_profit_data(
             line_id = sale_line_by_id.get(sale.id)
             if line_id not in line_data:
                 continue
-            quantity = Decimal(detail.quantity)
-            batch_cost = batch.purchase_price * quantity
-            divisor = Decimal(batch.quantity or 1)
-            batch_cost += (batch.shipping_cost + batch.last_mile_cost) * quantity / divisor
+            batch_cost = detail.unit_cost * Decimal(detail.quantity)
             for period in STORE_PROFIT_LOSS_PERIODS:
                 start, end = periods[period]
                 if start <= sale.sold_at.date() < end:

@@ -2,13 +2,17 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from routers.reports import (
     _build_store_profit_loss_values,
+    _fifo_cost_components,
     _month_periods,
     _store_profit_loss_auto_values,
+    _store_profit_loss_response,
+    update_store_profit_loss,
 )
+from schemas import StoreProfitLossUpdateRequest
 
 
 class _Result:
@@ -34,6 +38,131 @@ class _AutoValuesDb:
 
 
 class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
+    async def _save_manual_report(self, saved, **payload):
+        report = SimpleNamespace(manual_values=saved) if saved is not None else None
+        db = SimpleNamespace(scalar=AsyncMock(return_value=report), add=Mock(),
+                             commit=AsyncMock(), refresh=AsyncMock())
+        data = StoreProfitLossUpdateRequest(store_id=7, report_month=date(2026,9,1), **payload)
+        with patch("routers.reports._resolve_report_store", new=AsyncMock(return_value=SimpleNamespace(id=7))), \
+             patch("routers.reports._store_profit_loss_response", new=AsyncMock(return_value=None)):
+            await update_store_profit_loss(data, db, SimpleNamespace(id=9))
+        self.assertIn("FOR UPDATE", str(db.scalar.await_args.args[0]))
+        db.commit.assert_awaited_once()
+        return report if report is not None else db.add.call_args.args[0]
+
+    async def test_current_save_preserves_comparison_values_and_ignores_auto_keys(self):
+        saved = {"salary": {"current":"100", "previous":"80", "ytd":"500"},
+                 "advertising": {"current":"30", "previous":"20", "ytd":"300"}}
+        report = await self._save_manual_report(saved, update_scope="current", manual_values={
+            "salary": {"current":"120", "previous":"999", "ytd":"999"},
+            "inventory_other_cost": {"current":"999"},
+        })
+        self.assertEqual(report.manual_values, {
+            "salary": {"current":"120", "previous":"80", "ytd":"500"},
+            "advertising": {"current":None, "previous":"20", "ytd":"300"},
+        })
+        self.assertEqual(saved["salary"]["current"], "100")
+
+    async def test_current_save_clears_current_without_freezing_oa_comparison_defaults(self):
+        report = await self._save_manual_report(
+            {"salary": {"current":"120", "previous":"0", "ytd":None}},
+            update_scope="current", manual_values={"salary":{"current":None}},
+        )
+        self.assertEqual(report.manual_values["salary"], {"current":None, "previous":"0", "ytd":None})
+        values = _build_store_profit_loss_values(
+            {"salary":{"current":Decimal(100), "previous":Decimal(80), "ytd":Decimal(500)}},
+            report.manual_values,
+        )
+        self.assertEqual(values["salary"], {"current":Decimal(100), "previous":Decimal(0), "ytd":Decimal(500)})
+
+    async def test_full_save_remains_the_default_replacement_contract(self):
+        report = await self._save_manual_report(
+            {"salary":{"current":"100", "previous":"80", "ytd":"500"}},
+            manual_values={"advertising":{"current":"30", "ytd":"300"}},
+        )
+        self.assertEqual(report.manual_values, {
+            "advertising":{"current":"30", "previous":None, "ytd":"300"},
+        })
+
+    async def test_new_current_only_report_does_not_save_comparison_inputs(self):
+        report = await self._save_manual_report(None, update_scope="current", manual_values={
+            "salary":{"current":"120", "previous":"80", "ytd":"500"},
+        })
+        self.assertEqual(report.manual_values, {
+            "salary":{"current":"120", "previous":None, "ytd":None},
+        })
+
+    async def test_landed_other_cost_is_included_once_in_net_profit(self):
+        sale = SimpleNamespace(id=1, sold_at=datetime(2026,9,30), selling_price=Decimal(30),
+                               quantity=10, platform_fee=Decimal(0))
+        batch = SimpleNamespace(quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0),
+                                last_mile_cost=Decimal(0), other_cost=Decimal(1000))
+        db = _AutoValuesDb([sale], [(SimpleNamespace(quantity=10, unit_cost=Decimal(20)), batch, sale.sold_at)])
+        zero = {key: {period: Decimal(0) for period in ("current", "previous", "ytd")}
+                for key in ("inventory_impairment", "inventory_writeoff")}
+        with patch("routers.sales._sale_import_context", new=AsyncMock(return_value=({},{}))), \
+             patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=zero)), \
+             patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})), \
+             patch("routers.reports.shared_admin_totals_by_application_date", new=AsyncMock(return_value={})):
+            auto = await _store_profit_loss_auto_values(db, 7, date(2026,9,1))
+        values = _build_store_profit_loss_values(auto,{})
+        self.assertEqual(auto["inventory_other_cost"]["current"], Decimal(100))
+        self.assertEqual(values["operating_cost"]["current"], Decimal(200))
+        self.assertEqual(values["net_profit"]["current"], Decimal(100))
+
+    def test_cost_components_reconcile_to_saved_fifo_cost_after_rounding(self):
+        detail = SimpleNamespace(quantity=1000, unit_cost=Decimal("0.0000"))
+        batch = SimpleNamespace(quantity=1000, purchase_price=Decimal(0),
+                                shipping_cost=Decimal(0), last_mile_cost=Decimal(0),
+                                other_cost=Decimal("0.01"))
+        self.assertEqual(_fifo_cost_components(detail, batch),
+                         (Decimal(0), Decimal(0), Decimal(0)))
+
+        detail.unit_cost = Decimal("10.0001")
+        batch.purchase_price = Decimal(10)
+        batch.other_cost = Decimal("0.01")
+        purchase, logistics, other = _fifo_cost_components(detail, batch)
+        self.assertEqual(purchase + logistics + other, Decimal("10000.1"))
+        self.assertEqual(logistics, Decimal(0))
+        self.assertGreater(other, Decimal(0))
+
+    async def test_small_other_cost_does_not_exceed_saved_fifo_cost_in_report(self):
+        sale = SimpleNamespace(id=1, sold_at=datetime(2026,9,30), selling_price=Decimal(0),
+                               quantity=1000, platform_fee=Decimal(0))
+        batch = SimpleNamespace(quantity=1000, purchase_price=Decimal(0),
+                                shipping_cost=Decimal(0), last_mile_cost=Decimal(0),
+                                other_cost=Decimal("0.01"))
+        detail = SimpleNamespace(quantity=1000, unit_cost=Decimal("0.0000"))
+        db = _AutoValuesDb([sale], [(detail, batch, sale.sold_at)])
+        zero = {key: {period: Decimal(0) for period in ("current", "previous", "ytd")}
+                for key in ("inventory_impairment", "inventory_writeoff")}
+        with patch("routers.sales._sale_import_context", new=AsyncMock(return_value=({},{}))), \
+             patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=zero)), \
+             patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})), \
+             patch("routers.reports.shared_admin_totals_by_application_date", new=AsyncMock(return_value={})):
+            auto = await _store_profit_loss_auto_values(db, 7, date(2026,9,1))
+        values = _build_store_profit_loss_values(auto, {})
+        self.assertEqual(auto["inventory_other_cost"]["current"], Decimal(0))
+        self.assertEqual(values["operating_cost"]["current"], Decimal(0))
+
+    async def test_oa_salary_default_is_separate_from_saved_manual_value(self):
+        auto = {"salary": {"current": Decimal(100), "previous": Decimal(80),
+                            "ytd": Decimal(500)}}
+        store = SimpleNamespace(id=7, name="测试店铺", platform="TikTok")
+        user = SimpleNamespace(role="admin")
+        with patch("routers.reports._store_profit_loss_auto_values", new=AsyncMock(return_value=auto)):
+            response = await _store_profit_loss_response(None, user, store, date(2026,9,1), None)
+            salary = next(row for row in response.rows if row.key == "salary")
+            self.assertEqual(salary.value.current, Decimal(100))
+            self.assertIsNone(salary.manual_value)
+
+            saved = SimpleNamespace(manual_values={"salary": {"current": "120"}},
+                                    remarks={}, updated_at=None)
+            response = await _store_profit_loss_response(None, user, store, date(2026,9,1), saved)
+            salary = next(row for row in response.rows if row.key == "salary")
+            self.assertEqual(salary.value.current, Decimal(120))
+            self.assertEqual(salary.manual_value.current, Decimal(120))
+
     def test_month_periods_include_previous_month_and_ytd(self):
         periods = _month_periods(date(2026, 8, 1))
         self.assertEqual(periods["current"], (date(2026, 8, 1), date(2026, 9, 1)))
@@ -72,8 +201,8 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         db = _AutoValuesDb(
             [current_sale, previous_sale],
             [
-                (SimpleNamespace(quantity=2), current_batch, current_sale.sold_at),
-                (SimpleNamespace(quantity=1), previous_batch, previous_sale.sold_at),
+                (SimpleNamespace(quantity=2, unit_cost=Decimal(19)), current_batch, current_sale.sold_at),
+                (SimpleNamespace(quantity=1, unit_cost=Decimal(16)), previous_batch, previous_sale.sold_at),
             ],
         )
 
@@ -144,6 +273,9 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "current": Decimal("6"),
             "previous": Decimal("3"),
             "ytd": Decimal("9"),
+        })
+        self.assertEqual(values["inventory_other_cost"], {
+            "current": Decimal("2"), "previous": Decimal("1"), "ytd": Decimal("3"),
         })
         self.assertEqual(values["other_direct_cost"], {
             "current": Decimal("20"),

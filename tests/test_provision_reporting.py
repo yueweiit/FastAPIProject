@@ -168,8 +168,8 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
     async def test_product_line_deducts_the_same_writeoff_and_masks_unknown_cost(self):
         sale = SimpleNamespace(id=1, store_id=7, product_id=10, sold_at=datetime(2026,9,10),
                                selling_price=Decimal(20), quantity=10, platform_fee=Decimal(0))
-        batch = SimpleNamespace(quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0), last_mile_cost=Decimal(0))
-        detail = SimpleNamespace(id=1, quantity=10)
+        batch = SimpleNamespace(quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0), last_mile_cost=Decimal(0), other_cost=Decimal(1000))
+        detail = SimpleNamespace(id=1, quantity=10, unit_cost=Decimal("20.0001"))
         for adjustment in (Decimal(5), None):
             db = SimpleNamespace(execute=AsyncMock(side_effect=[result([]), result([(sale,7)]),
                                                                  result([]), result([(detail,batch,sale)]), result([])]))
@@ -181,11 +181,11 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(rows[0]["current"]["cost"])
                 self.assertIn("待核对", rows[0]["note"])
             else:
-                self.assertEqual(rows[0]["current"]["cost"], Decimal(95))
+                self.assertEqual(rows[0]["current"]["cost"], Decimal("195.001"))
             workbook = Workbook()
             _build_product_line_profit_sheet(workbook, rows, date(2026,9,1))
             sheet = workbook.worksheets[-1]
-            self.assertEqual(sheet["D2"].value, None if adjustment is None else 95)
+            self.assertEqual(sheet["D2"].value, None if adjustment is None else 195.001)
             if adjustment is None:
                 self.assertIsNone(sheet["E2"].value)
                 self.assertIsNone(sheet["D3"].value)

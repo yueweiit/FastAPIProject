@@ -319,12 +319,14 @@ class StoreProfitLossRowResponse(BaseModel):
     is_formula: bool = False
     source: str | None = None
     value: StoreProfitLossCell
+    manual_value: StoreProfitLossCell | None = None
     remark: str = ""
 
 
 class StoreProfitLossUpdateRequest(BaseModel):
     store_id: int = Field(..., ge=1)
     report_month: date
+    update_scope: Literal["all", "current"] = "all"
     manual_values: dict[str, StoreProfitLossCell] = Field(default_factory=dict)
     remarks: dict[str, str] = Field(default_factory=dict)
 
