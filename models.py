@@ -165,6 +165,7 @@ class Sale(Base):
     __table_args__ = (
         Index("ix_sales_sold_at", "sold_at"),
         Index("ix_sales_user_sold_at", "user_id", "sold_at"),
+        UniqueConstraint("order_claim", name="uq_sales_order_claim"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -174,6 +175,8 @@ class Sale(Base):
         Integer, ForeignKey("stores.id"), index=True, nullable=True
     )
     order_no: Mapped[str] = mapped_column(String(64), index=True)
+    # 每个订单只由首条明细占位；组合明细和未回填的历史记录保持NULL。
+    order_claim: Mapped[str | None] = mapped_column(String(64), nullable=True)
     quantity: Mapped[int] = mapped_column(Integer)
     selling_price: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # 销售单价
     total_cost: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # FIFO算出的总成本

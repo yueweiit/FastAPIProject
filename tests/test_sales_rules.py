@@ -89,7 +89,7 @@ class StockAllocationTests(unittest.TestCase):
             [2, 2, 0, 1],
         )
         self.assertIsNone(candidates[0]["mapping_error"])
-        self.assertIn("本行需要 2 件，当前可用 1 件", candidates[2]["mapping_error"])
+        self.assertIn("本行需要 2 件，销售日可用 1 件", candidates[2]["mapping_error"])
         self.assertFalse(candidates[2]["is_inventory_sale"])
         self.assertIsNone(candidates[3]["mapping_error"])
         self.assertTrue(candidates[3]["is_inventory_sale"])
@@ -112,7 +112,7 @@ class StockAllocationTests(unittest.TestCase):
         self.assertFalse(candidates[0]["is_inventory_sale"])
         self.assertNotIn("sale_quantity", candidates[0]["components"][0])
         self.assertNotIn("sale_quantity", candidates[0]["components"][1])
-        self.assertIn("商品 B 本行需要 1 件，当前可用 0 件", candidates[0]["mapping_error"])
+        self.assertIn("商品 B 本行需要 1 件，销售日可用 0 件", candidates[0]["mapping_error"])
 
 
 class PlatformSkuMappingTests(unittest.TestCase):
@@ -411,12 +411,14 @@ class FifoCostTests(unittest.IsolatedAsyncioTestCase):
         old_batch = SimpleNamespace(
             id=1,
             batch_no="OLD",
+            arrived_at=datetime(2026, 8, 1),
             remaining_quantity=2,
             unit_cost=Decimal("10"),
         )
         new_batch = SimpleNamespace(
             id=2,
             batch_no="NEW",
+            arrived_at=datetime(2026, 8, 5),
             remaining_quantity=5,
             unit_cost=Decimal("14"),
         )

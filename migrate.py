@@ -18,6 +18,7 @@ MIGRATIONS = (
     ("users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("sales", "user_id", "INT NULL"),
     ("sales", "store_id", "INT NULL"),
+    ("sales", "order_claim", "VARCHAR(64) NULL"),
     ("products", "image", "VARCHAR(500) NULL"),
     ("products", "product_type", "VARCHAR(16) NOT NULL DEFAULT 'stable'"),
     ("products", "safe_stock_quantity", "INT NOT NULL DEFAULT 0"),
@@ -78,6 +79,14 @@ async def _index_exists(connection, table_name: str, index_name: str) -> bool:
         {"table_name": table_name, "index_name": index_name},
     )
     return result.scalar_one_or_none() is not None
+
+
+async def ensure_sales_order_schema(connection) -> None:
+    """仅增加可空占位列和唯一索引，不回填或修正历史销售。"""
+    if not await _column_exists(connection, "sales", "order_claim"):
+        await connection.execute(text("ALTER TABLE `sales` ADD COLUMN `order_claim` VARCHAR(64) NULL"))
+    if not await _index_exists(connection, "sales", "uq_sales_order_claim"):
+        await connection.execute(text("CREATE UNIQUE INDEX `uq_sales_order_claim` ON `sales` (`order_claim`)"))
 
 
 async def migrate() -> None:
@@ -214,6 +223,9 @@ async def migrate() -> None:
                 text(f"CREATE INDEX `{index_name}` ON `{table_name}` ({columns})")
             )
             print(f"Added index {table_name}.{index_name}")
+
+        # 历史记录保留NULL，不重写原订单或成本；新订单仅首条明细占用唯一值。
+        await ensure_sales_order_schema(connection)
 
         await connection.execute(
             text(

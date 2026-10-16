@@ -2,7 +2,7 @@ import csv
 import hashlib
 import io
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -438,33 +438,58 @@ def _component_allocation_shares(components: list[dict], item_quantity: int) -> 
     ]
 
 
-def _allocate_available_stock(candidates: list[dict], stock_map: dict[int, int]) -> None:
+def _allocate_available_stock(
+    candidates: list[dict], stock_map: dict[int, int], *, batches: list[InventoryBatch] | None = None,
+) -> None:
     """Allocate stock in file order without partially fulfilling a row."""
-    remaining_stock = dict(stock_map)
+    layers = defaultdict(list)
+    if batches is None:
+        for product_id, quantity in stock_map.items():
+            layers[product_id].append([date.min, quantity])
+    else:
+        for batch in sorted(batches, key=lambda item: (item.product_id, item.arrived_at, item.id)):
+            layers[batch.product_id].append([batch.arrived_at.date(), batch.remaining_quantity])
     for item in candidates:
         if not item["is_inventory_sale"]:
             continue
 
+        sold_on = (item.get("sold_at") or datetime.now()).date()
+
         requirements = []
+        demands = Counter()
+        products = {}
         for component in item["components"]:
             required = item["quantity"] * component["multiplier"]
             product = component["product"]
-            available = remaining_stock.get(product.id, 0)
-            requirements.append((component, required, available))
+            requirements.append((component, required))
+            demands[product.id] += required
+            products[product.id] = product
 
+        available_by_product = {
+            product_id: sum(quantity for arrived_on, quantity in layers[product_id] if arrived_on <= sold_on)
+            for product_id in demands
+        }
         shortage_messages = [
-            f"商品 {component['product'].sku} 本行需要 {required} 件，当前可用 {available} 件"
-            for component, required, available in requirements
-            if available < required
+            f"商品 {products[product_id].sku} 本行需要 {required} 件，销售日可用 {available_by_product[product_id]} 件"
+            for product_id, required in demands.items()
+            if available_by_product[product_id] < required
         ]
         if shortage_messages:
-            item["mapping_error"] = "库存不足：" + "；".join(shortage_messages)
+            item["mapping_error"] = "销售日可用库存不足：" + "；".join(shortage_messages)
             item["is_inventory_sale"] = False
             continue
 
-        for component, required, available in requirements:
+        for component, required in requirements:
             component["sale_quantity"] = required
-            remaining_stock[component["product"].id] = available - required
+            remaining = required
+            for layer in layers[component["product"].id]:
+                if layer[0] > sold_on:
+                    continue
+                take = min(remaining, layer[1])
+                layer[1] -= take
+                remaining -= take
+                if not remaining:
+                    break
 
 
 def _order_no(order_id: str, sku_id: str) -> str:
@@ -890,7 +915,7 @@ async def import_sales_file(
         stock_map: dict[int, int] = {}
         for batch in locked_batches:
             stock_map[batch.product_id] = stock_map.get(batch.product_id, 0) + batch.remaining_quantity
-        _allocate_available_stock(candidates, stock_map)
+        _allocate_available_stock(candidates, stock_map, batches=locked_batches)
 
     pending_confirmation = sum(1 for item in candidates if item["mapping_error"])
     import_batch = SalesImportBatch(
@@ -938,6 +963,7 @@ async def import_sales_file(
                             user_id=user.id,
                             store_id=import_store.id if import_store else None,
                             commit=False,
+                            claim_order=not component_sales,
                         )
                     except InsufficientStockError as exc:
                         raise HTTPException(status_code=400, detail=str(exc))
@@ -1429,7 +1455,11 @@ async def create_sale(
             store_id=store_id,
         )
     except InsufficientStockError as e:
+        await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="订单已存在或销售数据冲突，请刷新后重试")
 
     return _build_sale_response(sale, cost_details)
 

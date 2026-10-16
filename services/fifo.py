@@ -50,18 +50,21 @@ async def fifo_sell(
     user_id: int | None = None,
     store_id: int | None = None,
     commit: bool = True,
+    *, claim_order: bool = True,
 ) -> tuple[Sale, list[dict]]:
     if sold_at is None:
         sold_at = datetime.now()
 
     # 锁住当前库存批次，等前一个销售事务提交后再读取最新剩余数量。
     batches = await lock_fifo_batches(db, [product_id])
+    # 按自然日核算；销售日之后才到货的库存不能用于历史销售。
+    batches = [batch for batch in batches if batch.arrived_at.date() <= sold_at.date()]
 
     # 1. 检查库存
     total_available = sum(b.remaining_quantity for b in batches)
     if total_available < quantity:
         raise InsufficientStockError(
-            f"库存不足: 需要 {quantity} 件, 仅有 {total_available} 件"
+            f"截至销售日可用库存不足: 需要 {quantity} 件, 仅有 {total_available} 件"
         )
 
     # 2. FIFO扣减
@@ -93,6 +96,7 @@ async def fifo_sell(
         user_id=user_id,
         store_id=store_id,
         order_no=order_no,
+        order_claim=order_no if claim_order else None,
         quantity=quantity,
         selling_price=selling_price,
         total_cost=total_cost,

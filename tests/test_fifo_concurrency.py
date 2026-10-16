@@ -47,6 +47,7 @@ class _Session:
             batch_no="BATCH-1",
             remaining_quantity=quantity,
             unit_cost=Decimal("10"),
+            arrived_at=datetime(2026, 1, 1),
         )
         await asyncio.sleep(0)
         return _Rows([self.batch] if quantity > 0 else [])
