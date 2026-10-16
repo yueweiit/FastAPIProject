@@ -9,7 +9,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
 
 from database import async_session, init_db
 from migrate import migrate
@@ -20,6 +19,7 @@ from services.accounting_periods import ensure_period_snapshot, previous_month_e
 from services.auth_sessions import store as auth_session_store
 from services.eims_sso import SsoError, close_client
 from services.auth_logging import protect_oauth_access_logs
+from services.product_images import ProductImageFiles
 
 BASE_DIR = Path(__file__).parent
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ app.include_router(finance_masters.router)
 
 uploads_dir = BASE_DIR / "uploads"
 uploads_dir.mkdir(exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+app.mount("/uploads", ProductImageFiles(directory=str(uploads_dir)), name="uploads")
 
 
 @app.get("/", response_class=HTMLResponse)

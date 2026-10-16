@@ -1,4 +1,3 @@
-import os
 import uuid
 from datetime import date, datetime
 from io import BytesIO
@@ -39,6 +38,7 @@ from services.product_import import (
     parse_product_import,
     preview_product_import,
 )
+from services.product_images import read_product_image
 
 router = APIRouter(prefix="/products", tags=["商品管理"])
 
@@ -58,6 +58,19 @@ def _impairment_settings(product_type: str, safe_stock_quantity: int) -> tuple[s
     )
 
 
+async def _save_product_image(normalized: tuple[str, bytes] | None) -> Path | None:
+    if normalized is None:
+        return None
+    extension, content = normalized
+    path = UPLOAD_DIR / f"{uuid.uuid4().hex}{extension}"
+    try:
+        await run_in_threadpool(path.write_bytes, content)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
 @router.post("", response_model=ProductResponse)
 async def create_product(
     sku: str = Form(...),
@@ -73,34 +86,32 @@ async def create_product(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"SKU已存在: {sku}")
 
-    image_path = None
-    if image and image.filename:
-        ext = os.path.splitext(image.filename)[1]
-        filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = UPLOAD_DIR / filename
-        content = await image.read()
-        filepath.write_bytes(content)
-        image_path = f"/uploads/{filename}"
-
     product_type, safe_stock_quantity = _impairment_settings(
         product_type, safe_stock_quantity
     )
+    saved_image = await _save_product_image(await read_product_image(image))
     product = Product(
         sku=sku,
         name=name,
-        image=image_path,
+        image=f"/uploads/{saved_image.name}" if saved_image else None,
         product_type=product_type,
         safe_stock_quantity=safe_stock_quantity,
     )
-    db.add(product)
-    await db.flush()
-    db.add(ProductImpairmentRule(
-        product_id=product.id,
-        product_type=product_type,
-        safe_stock_quantity=safe_stock_quantity,
-        effective_date=date.today(),
-    ))
-    await db.commit()
+    try:
+        db.add(product)
+        await db.flush()
+        db.add(ProductImpairmentRule(
+            product_id=product.id,
+            product_type=product_type,
+            safe_stock_quantity=safe_stock_quantity,
+            effective_date=date.today(),
+        ))
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        if saved_image:
+            saved_image.unlink(missing_ok=True)
+        raise
     await db.refresh(product)
     return _enrich_product(product, 0, Decimal("0"), None)
 
@@ -370,6 +381,7 @@ async def update_product(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"SKU已存在: {sku}")
 
+    normalized_image = await read_product_image(image)
     product.sku = sku
     product.name = name
     if product_type is not None or safe_stock_quantity is not None:
@@ -415,20 +427,16 @@ async def update_product(
                     effective_date=today,
                 ))
 
-    if image and image.filename:
-        # 删除旧图片
-        if product.image:
-            old_path = Path(__file__).parent.parent / product.image.lstrip("/")
-            if old_path.exists():
-                old_path.unlink()
-        ext = os.path.splitext(image.filename)[1]
-        filename = f"{uuid.uuid4().hex}{ext}"
-        filepath = UPLOAD_DIR / filename
-        content = await image.read()
-        filepath.write_bytes(content)
-        product.image = f"/uploads/{filename}"
-
-    await db.commit()
+    saved_image = await _save_product_image(normalized_image)
+    if saved_image:
+        product.image = f"/uploads/{saved_image.name}"
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        if saved_image:
+            saved_image.unlink(missing_ok=True)
+        raise
     await db.refresh(product)
     return _enrich_product(product, 0, Decimal("0"), None)
 
