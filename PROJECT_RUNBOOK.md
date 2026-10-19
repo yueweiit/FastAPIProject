@@ -307,3 +307,5 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 6. 补录9月成本后到9月工作台比较旧版，复核并保存新版；旧版不覆盖。已有财务记录时不能通过关闭开关回退版本：init_db会拒绝启动，避免成本/费用静默恢复旧值。不要删除表/凭证或批量回填原FIFO成本，回滚需要保持可读取调整层的兼容代码及备份方案。
 
 本次仅离线DDL与隔离SQLite/VM验证；真实MySQL锁等待、并发成本/FIFO、旧库结构及浏览器/OA/平台凭证待环境验收。测试命令见[约定](docs/knowledge/conventions.md)。
+
+2026-10-19后续回归：在本机3309的独立副本`fifo_browser_20261019`及8011临时服务中定位并修复财务保存500。公共audit现显式异步加载MySQL默认时间字段，包括更新时的updated_at；无需DDL，更新相关Python文件后重启获准目标服务。原8010服务及inventory_fifo_test结构未修改；生产未迁移、启用或部署。专用MySQL脚本运行限制、事务回滚和命令见[财务增强回归](docs/knowledge/conventions.md#财务增强回归)，不得用它连接业务库。

@@ -70,3 +70,5 @@ source_key、order_no查重和order_claim均为全局范围，没有改成按店
 启用财务增强后，查询成本和人民币利润叠加按原批次数量分配的实际差额，已售部分仍归原销售月。原Sale及SaleCostDetail保存成本不改写，旧原币profit不可作为重算人民币利润。批次成本状态/反向单/月度版本见[财务增强流程](../financial-control/workflow.md)。
 
 财务增强启用后，导入头已被结算分类或费用凭证引用时拒绝物理撤销（409），不改变库存；保留来源并用更正凭证处理，避免外键异常和审计来源丢失。新增关联先锁导入头，已撤销来源不能再引用。
+
+页面 rollbackSalesImport 使用 [page-interactions.js](../../../static/page-interactions.js) 的页面内确认框，告知销售删除及库存恢复后再请求撤销；取消/Esc/会话退出不提交，等待期间连点不重复发起。服务端409保护及事务不变，不再依赖浏览器原生 confirm。

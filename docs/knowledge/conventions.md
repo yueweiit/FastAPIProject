@@ -79,6 +79,9 @@
 
 ## 财务增强回归
 
+- `node tests/page_interactions_checks.cjs`：两份实际页面新增/编辑批次函数在上海、UTC、墨西哥城三种进程时区的午夜边界与重复编辑；未改日期保留秒数；撤销取消、连点及会话切换不提交。页面内dialog的键盘/焦点/显示仍需真实浏览器验收。
+
 - `.\.venv\Scripts\python.exe -m unittest tests.test_financial_controls tests.test_financial_facts -v`：独立内存SQLite，验证真实ORM财务链路，不启动main生命周期。
 - `node tests/financial_control_page_checks.cjs`：实际工作台函数的VM检查，含连续切换/过期响应/重复点击/金额字符串/表单变化/退出；不等于浏览器视觉验收。
+- `tests/mysql_financial_audit.py --run-local-finance-checks`：先通过进程环境显式设置 `FINANCE_TEST_HOST/PORT/DATABASE/USER/PASSWORD`。仅允许 `127.0.0.1:3309` 且数据库与账号均以 `fifo_browser_` 开头的既有专用副本；不读取业务库凭据作为测试连接，不创建/迁移结构，不启动main，不访问OA。所有随机前缀商品/库存/凭证/审计在同一事务中验证后回滚，自增序列可能推进。覆盖六类默认时间字段、来源onupdate、幂等、费用确认、三类冲销、旧版保留/比较/导出。须事先核实目标并有本地写入测试授权，不自动纳入unittest，不能用于业务库或生产。
 - `migrations/add_financial_controls.py --write-sql ...`只离线生成DDL；省略参数默认只读核验指定隔离库，显式apply才加表，前置授权与目标保护见[运行步骤](../../PROJECT_RUNBOOK.md#财务增强结构与启用)。不复用旧并发脚本启动全库迁移。

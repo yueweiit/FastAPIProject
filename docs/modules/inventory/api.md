@@ -16,6 +16,8 @@
 
 PUT 同样使用 BatchCreate，quantity 仍必填，费用省略会采用模型默认0；不是任意字段 PATCH。product_id 虽在请求里必填，但不会更换批次商品。可选单号通过 model_fields_set 判断是否保留；总金额/采购单价的复用规则见[流程](workflow.md)。
 
+批次业务时间按无时区 DateTime 保存；页面请求示例为 `2026-09-01T00:15`，不转换为 UTC 的 `Z` 字符串。响应仍是既有 ISO 无时区字符串，未新增字段或改变响应类型。日期未改动的编辑保留响应中的秒数/小数秒；历史数据不自动回填，见[批次日期规则](workflow.md#批次业务日期)。
+
 ## 查询和导出
 
 GET 列表支持 product_id、keyword（名称/SKU/批次号，≤255）、page、page_size；分页约定见[接口总览](../../knowledge/api-overview.md)。
