@@ -3,6 +3,7 @@ from datetime import date, datetime
 from io import BytesIO
 from decimal import Decimal
 from pathlib import Path
+from services.cost_layers import adjusted_cost_expression
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
@@ -186,7 +187,7 @@ def _product_summary_stmt():
             Product,
             func.coalesce(func.sum(InventoryBatch.remaining_quantity), 0).label("stock_quantity"),
             func.coalesce(
-                func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost), 0
+                func.sum(InventoryBatch.remaining_quantity * adjusted_cost_expression()), 0
             ).label("stock_value"),
             func.max(InventoryBatch.arrived_at).label("last_batch_at"),
         )
@@ -256,7 +257,7 @@ async def export_products(
             InventoryBatch.product_id,
             func.coalesce(func.sum(InventoryBatch.remaining_quantity), 0).label("stock_quantity"),
             func.coalesce(
-                func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost), 0
+                func.sum(InventoryBatch.remaining_quantity * adjusted_cost_expression()), 0
             ).label("stock_value"),
             func.max(InventoryBatch.arrived_at).label("last_batch_at"),
         )

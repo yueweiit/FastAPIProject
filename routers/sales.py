@@ -46,6 +46,8 @@ from schemas import (
 )
 from services.fifo import fifo_sell, lock_fifo_batches, InsufficientStockError
 from services.exchange_rates import ExchangeRateError, get_cny_rates
+from services.financial_facts import unlinked_settlement_events, valid_rate, settlement_expense
+from services.cost_layers import sale_cost_context
 from auth import RequireOperator, RequireAnyRole
 
 router = APIRouter(prefix="/sales", tags=["销售管理"])
@@ -569,10 +571,7 @@ def _other_expense_from_row(
     transaction_type: str | None = None,
 ) -> Decimal:
     """Return the settlement difference shown as other expense."""
-    expense = net_product_sales - settlement_total
-    if transaction_type in COMPENSATION_TRANSACTION_TYPES:
-        return abs(expense)
-    return expense
+    return settlement_expense(net_product_sales, settlement_total, transaction_type)
 
 
 def _is_missing_sku_id(value) -> bool:
@@ -1107,6 +1106,17 @@ async def rollback_sales_import(
     )
     sale_ids: set[int] = set()
     if entry_ids:
+        from services.finance_config import financial_controls_enabled
+        if financial_controls_enabled():
+            from models import FinancialExpense, SettlementClassification
+            # 已持有导入头锁，财务关联也先锁该头；当前读检查不遗漏并发提交。
+            references = []
+            for model in (FinancialExpense, SettlementClassification):
+                references.append(await db.scalar(select(model.id).where(
+                    model.settlement_entry_id.in_(entry_ids)).limit(1).with_for_update()))
+            if any(value is not None for value in references):
+                raise HTTPException(409, detail={"code": "import_has_financial_references",
+                    "message": "该导入已有费用凭证或结算分类，不能物理撤销；请保留来源，通过更正凭证处理。"})
         sale_ids.update(
             sale_id
             for sale_id in (
@@ -1206,12 +1216,16 @@ def _build_sale_response(
     exchange_rate_source: str | None = "CNY",
     source_net_product_sales: Decimal | None = None,
     source_other_expense: Decimal | None = None,
+    cost_context: dict | None = None,
 ) -> SaleResponse:
+    cost_context = cost_context or {}
+    adjusted_cost = sale.total_cost + cost_context.get("adjustment", Decimal(0))
     currency = currency.upper()
     if currency == "CNY":
         exchange_rate_to_cny = exchange_rate_to_cny or Decimal("1")
         exchange_rate_date = exchange_rate_date or sale.sold_at.date()
         exchange_rate_source = exchange_rate_source or "CNY"
+    exchange_rate_to_cny = valid_rate(currency, exchange_rate_to_cny)
     selling_price_cny = None
     sales_revenue_cny = None
     platform_fee_cny = None
@@ -1230,7 +1244,7 @@ def _build_sale_response(
             sales_revenue_cny / sale.quantity if sale.quantity else Decimal("0")
         )
         platform_fee_cny = source_other_expense * exchange_rate_to_cny
-        profit_cny = sales_revenue_cny - sale.total_cost - platform_fee_cny
+        profit_cny = sales_revenue_cny - adjusted_cost - platform_fee_cny
     return SaleResponse(
         id=sale.id,
         product_id=sale.product_id,
@@ -1238,7 +1252,10 @@ def _build_sale_response(
         order_no=sale.order_no,
         quantity=sale.quantity,
         selling_price=sale.selling_price,
-        total_cost=sale.total_cost,
+        total_cost=adjusted_cost,
+        original_total_cost=sale.total_cost,
+        cost_adjustment_cny=cost_context.get("adjustment", Decimal(0)),
+        cost_status=cost_context.get("cost_status", "unverified"),
         platform_fee=sale.platform_fee,
         profit=sale.profit,
         currency=currency,
@@ -1257,7 +1274,8 @@ def _build_sale_response(
                 batch_id=d["batch_id"],
                 batch_no=d["batch_no"],
                 quantity=d["quantity"],
-                unit_cost=d["unit_cost"],
+                unit_cost=d["unit_cost"] + cost_context.get("batch_deltas", {}).get(d["batch_id"], Decimal(0)),
+                base_unit_cost=d["unit_cost"],
             )
             for d in cost_details
         ],
@@ -1461,7 +1479,7 @@ async def create_sale(
         await db.rollback()
         raise HTTPException(status_code=409, detail="订单已存在或销售数据冲突，请刷新后重试")
 
-    return _build_sale_response(sale, cost_details)
+    return _build_sale_response(sale, cost_details, cost_context=(await sale_cost_context(db, [sale])).get(sale.id))
 
 
 @router.get("/pending-confirmations", response_model=PendingConfirmationPageResponse)
@@ -1671,9 +1689,12 @@ async def _filtered_sales(
     keyword: str | None,
     month: str | None,
     user: User,
+    *, include_cost_details: bool = False,
 ) -> list[Sale]:
     conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
     stmt = select(Sale)
+    if include_cost_details:
+        stmt = stmt.options(selectinload(Sale.cost_details))
     if normalized_keyword:
         stmt = stmt.join(Product)
     stmt = stmt.where(*conditions).order_by(Sale.sold_at.desc(), Sale.id.desc())
@@ -1683,6 +1704,8 @@ async def _filtered_sales(
 def _monthly_sales_summary(
     sales: list[Sale],
     import_context_by_sale: dict[int, dict],
+    financial_events=(),
+    cost_contexts=None,
 ) -> list[MonthlySalesSummaryResponse]:
     grouped: dict[str, dict] = {}
     for sale in sales:
@@ -1701,13 +1724,12 @@ def _monthly_sales_summary(
         )
         group["sales_count"] += 1
         group["sold_quantity"] += sale.quantity
-        group["sales_cost_cny"] += sale.total_cost
+        cost = sale.total_cost + (cost_contexts or {}).get(sale.id, {}).get("adjustment", Decimal(0))
+        group["sales_cost_cny"] += cost
 
         context = import_context_by_sale.get(sale.id, {})
         currency = (context.get("currency") or "CNY").upper()
-        rate = context.get("exchange_rate_to_cny", Decimal("1"))
-        if currency == "CNY":
-            rate = rate or Decimal("1")
+        rate = valid_rate(currency, context.get("exchange_rate_to_cny", Decimal("1")))
         if rate is None:
             group["fx_missing_count"] += 1
             continue
@@ -1719,9 +1741,23 @@ def _monthly_sales_summary(
         platform_fee_cny = source_other_expense * rate
         group["sales_revenue_cny"] += revenue_cny
         group["platform_fee_cny"] += platform_fee_cny
-        group["gross_profit_cny"] += revenue_cny - sale.total_cost - platform_fee_cny
+        group["gross_profit_cny"] += revenue_cny - cost - platform_fee_cny
 
     summary = []
+    for event in financial_events:
+        month = event.occurred_at.strftime("%Y-%m")
+        group = grouped.setdefault(month, {
+            "sales_count": 0, "sold_quantity": 0, "sales_revenue_cny": Decimal(0),
+            "sales_cost_cny": Decimal(0), "platform_fee_cny": Decimal(0),
+            "gross_profit_cny": Decimal(0), "fx_missing_count": 0,
+        })
+        group["settlement_event_count"] = group.get("settlement_event_count", 0) + 1
+        if event.revenue is None or event.expense is None:
+            group["fx_missing_count"] += 1
+        else:
+            group["sales_revenue_cny"] += event.revenue
+            group["platform_fee_cny"] += event.expense
+            group["gross_profit_cny"] += event.revenue - event.expense
     for month in sorted(grouped, reverse=True):
         values = grouped[month]
         if values["fx_missing_count"]:
@@ -1743,7 +1779,14 @@ async def monthly_sales_summary(
     """按月份汇总销售记录，金额统一返回人民币。"""
     sales = await _filtered_sales(db, product_id, keyword, month, user)
     import_context_by_sale, _ = await _sale_import_context(db, sales)
-    return _monthly_sales_summary(sales, import_context_by_sale)
+    start = datetime.strptime(month, "%Y-%m").date() if month else None
+    end = (start.replace(year=start.year + 1, month=1) if start.month == 12
+           else start.replace(month=start.month + 1)) if start else None
+    events = await unlinked_settlement_events(
+        db, None if user.role == "admin" else {_require_bound_store(user)}, start, end,
+        product_id=product_id, keyword=keyword.strip() if keyword else None,
+    )
+    return _monthly_sales_summary(sales, import_context_by_sale, events, await sale_cost_context(db, sales))
 
 
 @router.get("", response_model=list[SaleResponse] | SalePageResponse)
@@ -1757,6 +1800,7 @@ async def list_sales(
     user: User = Depends(RequireAnyRole),
 ):
     """列出销售，支持按月份、商品名称或 SKU 筛选。"""
+    requested_page = page
     conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
     stmt = select(Sale).options(selectinload(Sale.cost_details))
     count_stmt = select(func.count()).select_from(Sale)
@@ -1781,6 +1825,8 @@ async def list_sales(
         )
         batch_map = dict(batches_result.all())
 
+    cost_contexts = await sale_cost_context(db, sales)
+
     response = []
     for sale in sales:
         details = []
@@ -1802,106 +1848,62 @@ async def list_sales(
             exchange_rate_source=import_context.get("exchange_rate_source", "CNY"),
             source_net_product_sales=import_context.get("source_net_product_sales"),
             source_other_expense=import_context.get("source_other_expense"),
+            cost_context=cost_contexts.get(sale.id),
         ))
-    if page is not None and product_id is None:
-        expense_conditions = [
-            SettlementEntry.transaction_type.in_(COMPENSATION_TRANSACTION_TYPES),
-            func.lower(func.trim(SettlementEntry.platform_sku_id)).in_(["", "/", "-", "--", "n/a", "null"]),
-        ]
-        if month:
-            month_start = datetime.strptime(month, "%Y-%m")
-            next_month = datetime(
-                month_start.year + (1 if month_start.month == 12 else 0),
-                1 if month_start.month == 12 else month_start.month + 1,
-                1,
-            )
-            expense_conditions.extend((
-                func.coalesce(SettlementEntry.settlement_date, SettlementEntry.imported_at) >= month_start,
-                func.coalesce(SettlementEntry.settlement_date, SettlementEntry.imported_at) < next_month,
-            ))
-        if normalized_keyword:
-            expense_conditions.append(SettlementEntry.transaction_type.ilike(f"%{normalized_keyword}%"))
-        if user.role != "admin":
-            expense_conditions.append(
-                SettlementEntry.store_id == _require_bound_store(user)
-            )
-        expense_stmt = (
-            select(SettlementEntry)
-            .options(selectinload(SettlementEntry.store))
-            .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id)
-            .where(*expense_conditions)
-            .order_by(
-                func.coalesce(SettlementEntry.settlement_date, SettlementEntry.imported_at).desc(),
-                SettlementEntry.id.desc(),
-            )
-        )
-        expense_entries = list((await db.execute(expense_stmt)).scalars().all())
-        expense_responses = []
-        for entry in expense_entries:
-            currency = (entry.currency or "CNY").upper()
-            rate = entry.exchange_rate_to_cny
-            if currency == "CNY":
-                rate = rate or Decimal("1")
-            other_expense = _other_expense_from_row(
-                entry.net_product_sales or Decimal("0"),
-                entry.settlement_total or Decimal("0"),
-                entry.transaction_type,
-            )
-            expense_cny = other_expense * rate if rate is not None else None
-            occurred_at = entry.settlement_date or entry.imported_at
-            expense_responses.append(SaleResponse(
-                id=-entry.id,
-                product_id=None,
-                order_no=entry.order_id or f"{entry.transaction_type}-{entry.id}",
-                quantity=0,
-                selling_price=Decimal("0"),
-                total_cost=Decimal("0"),
-                platform_fee=other_expense,
-                profit=-other_expense,
-                currency=currency,
-                exchange_rate_to_cny=rate,
-                exchange_rate_date=entry.exchange_rate_date,
-                exchange_rate_source=entry.exchange_rate_source,
-                selling_price_cny=Decimal("0") if rate is not None else None,
-                sales_revenue_cny=Decimal("0") if rate is not None else None,
-                platform_fee_cny=expense_cny,
-                profit_cny=-expense_cny if expense_cny is not None else None,
-                store_name=entry.store.name if entry.store else None,
-                sold_at=occurred_at,
-                created_at=entry.imported_at,
-                record_type="other_expense",
-                display_sku="-",
-                display_name=entry.transaction_type or "赔付",
-            ))
-        combined = sorted(
-            [*response, *expense_responses],
-            key=lambda item: (item.sold_at, item.id),
-            reverse=True,
-        )
-        total += len(expense_responses)
-        start = (page - 1) * page_size
-        # Sales were already paged. Requery all sales only when expense rows affect this view.
-        if expense_responses:
-            all_sales = await _filtered_sales(db, product_id, keyword, month, user)
+    start_date = datetime.strptime(month, "%Y-%m").date() if month else None
+    end_date = (start_date.replace(year=start_date.year + 1, month=1) if start_date.month == 12
+                else start_date.replace(month=start_date.month + 1)) if start_date else None
+    events = await unlinked_settlement_events(
+        db, None if user.role == "admin" else {_require_bound_store(user)}, start_date, end_date,
+        product_id=product_id, keyword=normalized_keyword,
+    )
+    if events:
+        stores = dict((await db.execute(select(Store.id, Store.name).where(
+            Store.id.in_({event.store_id for event in events if event.store_id is not None})
+        ))).all())
+        event_responses = [SaleResponse(
+            id=-event.entry_id, product_id=event.product_id, order_no=event.order_no,
+            quantity=0, selling_price=event.original_revenue, total_cost=Decimal(0),
+            platform_fee=event.original_expense, profit=event.original_revenue-event.original_expense,
+            currency=event.currency, exchange_rate_to_cny=event.rate,
+            exchange_rate_date=event.rate_date, exchange_rate_source=event.rate_source,
+            selling_price_cny=event.revenue, sales_revenue_cny=event.revenue,
+            platform_fee_cny=event.expense,
+            profit_cny=event.revenue-event.expense if event.revenue is not None and event.expense is not None else None,
+            store_name=stores.get(event.store_id), sold_at=event.occurred_at,
+            created_at=event.created_at or event.occurred_at,
+            record_type="other_expense" if event.transaction_type in COMPENSATION_TRANSACTION_TYPES else "settlement_adjustment",
+            display_sku=event.platform_sku_id or "-", display_name=event.transaction_type,
+        ) for event in events]
+        if page is not None:
+            # 先合并全部记录再分页，费用/退款不能造成丢行、重复页或缺失成本明细。
+            all_sales = await _filtered_sales(db, product_id, keyword, month, user, include_cost_details=True)
+            all_batch_ids = {cd.batch_id for sale in all_sales for cd in sale.cost_details}
+            if all_batch_ids:
+                batch_map = dict((await db.execute(select(InventoryBatch.id, InventoryBatch.batch_no).where(
+                    InventoryBatch.id.in_(all_batch_ids)
+                ))).all())
             all_context, all_stores = await _sale_import_context(db, all_sales)
-            combined_sales = [
-                _build_sale_response(
-                    sale, [],
-                    currency=all_context.get(sale.id, {}).get("currency", "CNY"),
-                    store_name=all_stores.get(sale.id),
-                    exchange_rate_to_cny=all_context.get(sale.id, {}).get("exchange_rate_to_cny", Decimal("1")),
-                    exchange_rate_date=all_context.get(sale.id, {}).get("exchange_rate_date"),
-                    exchange_rate_source=all_context.get(sale.id, {}).get("exchange_rate_source", "CNY"),
-                    source_net_product_sales=all_context.get(sale.id, {}).get("source_net_product_sales"),
-                    source_other_expense=all_context.get(sale.id, {}).get("source_other_expense"),
-                ) for sale in all_sales
-            ]
-            combined = sorted(
-                [*combined_sales, *expense_responses],
-                key=lambda item: (item.sold_at, item.id),
-                reverse=True,
-            )[start:start + page_size]
-        response = combined
+            all_costs = await sale_cost_context(db, all_sales)
+            response = [_build_sale_response(
+                sale, [{"batch_id": cd.batch_id, "batch_no": batch_map.get(cd.batch_id, ""),
+                        "quantity": cd.quantity, "unit_cost": cd.unit_cost} for cd in sale.cost_details],
+                currency=all_context.get(sale.id, {}).get("currency", "CNY"),
+                store_name=all_stores.get(sale.id),
+                exchange_rate_to_cny=all_context.get(sale.id, {}).get("exchange_rate_to_cny", Decimal(1)),
+                exchange_rate_date=all_context.get(sale.id, {}).get("exchange_rate_date"),
+                exchange_rate_source=all_context.get(sale.id, {}).get("exchange_rate_source"),
+                source_net_product_sales=all_context.get(sale.id, {}).get("source_net_product_sales"),
+                source_other_expense=all_context.get(sale.id, {}).get("source_other_expense"),
+                cost_context=all_costs.get(sale.id),
+            ) for sale in all_sales]
+        combined = sorted([*response, *event_responses], key=lambda item: (item.sold_at, item.id), reverse=True)
+        if page is None:
+            response = combined
+        else:
+            total = len(combined)
+            page = min(requested_page, max(1, (total + page_size - 1) // page_size))
+            response = combined[(page-1)*page_size:page*page_size]
     if page is None:
         return response
     return SalePageResponse(items=response, total=total, page=page, page_size=page_size)
@@ -1949,4 +1951,5 @@ async def get_sale(
         exchange_rate_source=import_context.get("exchange_rate_source", "CNY"),
         source_net_product_sales=import_context.get("source_net_product_sales"),
         source_other_expense=import_context.get("source_other_expense"),
+        cost_context=(await sale_cost_context(db, [sale])).get(sale.id),
     )

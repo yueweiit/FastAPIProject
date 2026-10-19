@@ -28,7 +28,7 @@ class _Result:
 
 class _AutoValuesDb:
     def __init__(self, sales, cost_rows):
-        self.results = [_Result(sales), _Result(cost_rows)]
+        self.results = [_Result(sales), _Result(cost_rows), _Result([])]
 
     async def execute(self, _statement):
         return self.results.pop(0)
@@ -95,7 +95,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
     async def test_landed_other_cost_is_included_once_in_net_profit(self):
         sale = SimpleNamespace(id=1, sold_at=datetime(2026,9,30), selling_price=Decimal(30),
                                quantity=10, platform_fee=Decimal(0))
-        batch = SimpleNamespace(quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0),
+        batch = SimpleNamespace(id=1, quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0),
                                 last_mile_cost=Decimal(0), other_cost=Decimal(1000))
         db = _AutoValuesDb([sale], [(SimpleNamespace(quantity=10, unit_cost=Decimal(20)), batch, sale.sold_at)])
         zero = {key: {period: Decimal(0) for period in ("current", "previous", "ytd")}
@@ -112,7 +112,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
 
     def test_cost_components_reconcile_to_saved_fifo_cost_after_rounding(self):
         detail = SimpleNamespace(quantity=1000, unit_cost=Decimal("0.0000"))
-        batch = SimpleNamespace(quantity=1000, purchase_price=Decimal(0),
+        batch = SimpleNamespace(id=1, quantity=1000, purchase_price=Decimal(0),
                                 shipping_cost=Decimal(0), last_mile_cost=Decimal(0),
                                 other_cost=Decimal("0.01"))
         self.assertEqual(_fifo_cost_components(detail, batch),
@@ -129,7 +129,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
     async def test_small_other_cost_does_not_exceed_saved_fifo_cost_in_report(self):
         sale = SimpleNamespace(id=1, sold_at=datetime(2026,9,30), selling_price=Decimal(0),
                                quantity=1000, platform_fee=Decimal(0))
-        batch = SimpleNamespace(quantity=1000, purchase_price=Decimal(0),
+        batch = SimpleNamespace(id=1, quantity=1000, purchase_price=Decimal(0),
                                 shipping_cost=Decimal(0), last_mile_cost=Decimal(0),
                                 other_cost=Decimal("0.01"))
         detail = SimpleNamespace(quantity=1000, unit_cost=Decimal("0.0000"))
@@ -185,6 +185,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             platform_fee=Decimal("0"),
         )
         current_batch = SimpleNamespace(
+            id=1,
             quantity=5,
             purchase_price=Decimal("15"),
             shipping_cost=Decimal("10"),
@@ -192,6 +193,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             other_cost=Decimal("5"),
         )
         previous_batch = SimpleNamespace(
+            id=2,
             quantity=3,
             purchase_price=Decimal("12"),
             shipping_cost=Decimal("6"),

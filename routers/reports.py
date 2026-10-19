@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from io import BytesIO
 from typing import Literal
+from types import SimpleNamespace
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -42,6 +43,10 @@ from services.oa_office_expenses import (
     shared_admin_totals_by_application_date,
 )
 from services.inventory_provision_movements import ProvisionSale, replay_inventory_provisions
+from services.financial_facts import (
+    manual_period_values, unlinked_settlement_events, valid_rate,
+)
+from services.cost_layers import load_cost_layers, category_adjustments, unit_adjustment, AdjustedBatch
 from services.inventory_impairment import (
     InventoryLayer,
     ImpairmentRule,
@@ -236,6 +241,8 @@ def _build_store_profit_loss_values(
                 values[key][period] = auto_values.get(key, {}).get(period)
             else:
                 values[key][period] = Decimal(str(value))
+            if key in manual_values.get("_unknown", {}).get(period, []):
+                values[key][period] = None
 
     for period in STORE_PROFIT_LOSS_PERIODS:
         get = lambda key: _decimal_or_zero(values[key][period])
@@ -282,14 +289,32 @@ def _build_store_profit_loss_values(
             - get("non_operating_expense")
             - get("income_tax_expense")
         )
-        if values["inventory_writeoff"][period] is None:
-            for key in ("operating_cost", "gross_profit", "gross_margin"):
-                values[key][period] = None
-        if values["inventory_writeoff"][period] is None or values["inventory_impairment"][period] is None:
-            values["asset_impairment_loss"][period] = values["inventory_impairment"][period]
-            values["operating_profit"][period] = None
-            values["net_profit"][period] = None
-    values["_warnings"] = auto_values.get("_warnings", [])
+        revenue_keys = ("product_sales_revenue", "shipping_revenue", "other_revenue")
+        cost_keys = ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
+                     "customs_import_tax", "local_logistics_cost", "fulfillment_cost",
+                     "other_direct_cost", "inventory_writeoff")
+        # 人工空白沿用未填按0；自动项未知必须贯穿所有衍生金额及Excel汇总。
+        unknown = lambda keys: any((key in STORE_PROFIT_LOSS_AUTO_KEYS or key in manual_values.get("_unknown", {}).get(period, []))
+                                   and values[key][period] is None for key in keys)
+        if unknown(revenue_keys):
+            values["operating_revenue"][period] = None
+        if unknown(cost_keys):
+            values["operating_cost"][period] = None
+        if values["operating_revenue"][period] is None or values["operating_cost"][period] is None:
+            values["gross_profit"][period] = values["gross_margin"][period] = None
+        if unknown(("rent_utilities", "shared_admin")):
+            values["admin_expenses"][period] = None
+        if unknown(("salary", "advertising", "platform_subscription", "warehousing", "delivery", "platform_fines")):
+            values["selling_expenses"][period] = None
+        if values["inventory_impairment"][period] is None:
+            values["asset_impairment_loss"][period] = None
+        if any(values[key][period] is None for key in
+               ("gross_profit", "admin_expenses", "selling_expenses", "asset_impairment_loss")) or unknown((
+                   "tax_surcharge", "research_development", "finance_expenses", "credit_impairment_loss",
+                   "non_operating_income", "non_operating_expense", "income_tax_expense")):
+            values["operating_profit"][period] = values["net_profit"][period] = None
+    values["_warnings"] = [*auto_values.get("_warnings", []), *manual_values.get("_warnings", [])]
+    values["_unknown"] = manual_values.get("_unknown", {})
     return values
 
 
@@ -309,7 +334,7 @@ def _add_period_value(
             target[period] += amount
 
 
-def _fifo_cost_components(detail: SaleCostDetail, batch: InventoryBatch) -> tuple[Decimal, Decimal, Decimal]:
+def _fifo_cost_components(detail: SaleCostDetail, batch: InventoryBatch, layers=()) -> tuple[Decimal, Decimal, Decimal]:
     """按原批次成本构成分配已保存的FIFO成本，尾差留在最后一个非零科目。"""
     quantity = Decimal(detail.quantity)
     divisor = Decimal(batch.quantity or 1)
@@ -321,13 +346,19 @@ def _fifo_cost_components(detail: SaleCostDetail, batch: InventoryBatch) -> tupl
     saved_cost = detail.unit_cost * quantity
     source_total = sum(source_parts, Decimal("0"))
     if source_total <= 0:
-        return saved_cost, Decimal("0"), Decimal("0")
+        delta = category_adjustments(layers)
+        return (saved_cost + delta["purchase"] * quantity,
+                (delta["head_shipping"] + delta["last_mile"]) * quantity, delta["other"] * quantity)
 
     allocated = [Decimal("0"), Decimal("0"), Decimal("0")]
     nonzero_parts = [index for index, amount in enumerate(source_parts) if amount]
     for index in nonzero_parts[:-1]:
         allocated[index] = saved_cost * source_parts[index] / source_total
     allocated[nonzero_parts[-1]] = saved_cost - sum(allocated, Decimal("0"))
+    delta = category_adjustments(layers)
+    allocated[0] += delta["purchase"] * quantity
+    allocated[1] += (delta["head_shipping"] + delta["last_mile"]) * quantity
+    allocated[2] += delta["other"] * quantity
     return allocated[0], allocated[1], allocated[2]
 
 
@@ -351,6 +382,7 @@ async def _store_profit_loss_auto_values(
         key: {period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS}
         for key in STORE_PROFIT_LOSS_AUTO_KEYS
     }
+    missing_fx_dates = []
     if sales:
         # Imported rows retain their source amount and historical FX rate in the
         # sales module; manual sales fall back to their stored CNY amount.
@@ -359,8 +391,9 @@ async def _store_profit_loss_auto_values(
         import_context_by_sale, _ = await _sale_import_context(db, sales)
         for sale in sales:
             context = import_context_by_sale.get(sale.id, {})
-            rate = context.get("exchange_rate_to_cny", Decimal("1"))
+            rate = valid_rate(context.get("currency"), context.get("exchange_rate_to_cny", Decimal("1")))
             if rate is None:
+                missing_fx_dates.append(sale.sold_at.date())
                 continue
             revenue = context.get(
                 "source_net_product_sales", sale.selling_price * sale.quantity
@@ -380,8 +413,9 @@ async def _store_profit_loss_auto_values(
             .join(InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id)
             .where(SaleCostDetail.sale_id.in_(sale_ids))
         )).all()
+        layers = await load_cost_layers(db, {batch.id for _detail, batch, _date in cost_rows})
         for detail, batch, sold_at in cost_rows:
-            purchase_cost, logistics_cost, other_cost = _fifo_cost_components(detail, batch)
+            purchase_cost, logistics_cost, other_cost = _fifo_cost_components(detail, batch, layers.get(batch.id, []))
             _add_period_value(
                 auto_values["product_purchase_cost"], sold_at.date(),
                 purchase_cost, periods,
@@ -396,7 +430,7 @@ async def _store_profit_loss_auto_values(
             )
         for sale in sales:
             context = import_context_by_sale.get(sale.id, {})
-            rate = context.get("exchange_rate_to_cny", Decimal("1"))
+            rate = valid_rate(context.get("currency"), context.get("exchange_rate_to_cny", Decimal("1")))
             if rate is None:
                 continue
             other_expense = context.get("source_other_expense", sale.platform_fee) * rate
@@ -408,6 +442,23 @@ async def _store_profit_loss_auto_values(
             )
 
     auto_values.update(await _store_provision_financial_values(db, store_id, periods))
+    warnings = auto_values.setdefault("_warnings", [])
+    events = await unlinked_settlement_events(db, {store_id}, read_start, ytd_end)
+    for event in events:
+        if event.revenue is None or event.expense is None:
+            missing_fx_dates.append(event.occurred_at.date())
+        else:
+            _add_period_value(auto_values["product_sales_revenue"], event.occurred_at.date(), event.revenue, periods)
+            _add_period_value(auto_values["other_direct_cost"], event.occurred_at.date(), event.expense, periods)
+        if event.uses_import_date:
+            warnings.append(f"结算行{event.entry_id}缺少业务日期，暂按导入日期归月，需核对。")
+    for period, (start, end) in periods.items():
+        count = sum(start <= day < end for day in missing_fx_dates)
+        if count:
+            auto_values["product_sales_revenue"][period] = None
+            auto_values["other_direct_cost"][period] = None
+            label = {"current": "本月", "previous": "上月", "ytd": "本年累计"}[period]
+            warnings.append(f"{label}有{count}笔销售或结算缺少有效汇率，收入、平台费用及受影响利润留空。")
     active_store_count = await db.scalar(
         select(func.count()).select_from(Store).where(Store.is_active.is_(True))
     )
@@ -441,6 +492,11 @@ async def _store_profit_loss_auto_values(
             _add_period_value(
                 auto_values["salary"], application_date, total, periods
             )
+        salary_months = {}
+        for day, total in salary_totals.get(store_name.strip(), {}).items():
+            month = day.replace(day=1).isoformat()
+            salary_months[month] = salary_months.get(month, Decimal(0)) + total
+        auto_values["_monthly_defaults"] = {"salary": salary_months}
     return auto_values
 
 
@@ -563,9 +619,15 @@ async def _store_profit_loss_response(
     auto_values = await _store_profit_loss_auto_values(
         db, store.id, report_month, store.name
     )
-    manual_values = report.manual_values if report else {}
+    saved_manual_values = report.manual_values if report else {}
+    manual_values = saved_manual_values
+    if db is not None:
+        manual_values = await manual_period_values(
+            db, store.id, report_month, STORE_PROFIT_LOSS_MANUAL_KEYS,
+            auto_values.get("_monthly_defaults"),
+        )
     values = _build_store_profit_loss_values(auto_values, manual_values)
-    saved_manual_values = manual_values if isinstance(manual_values, dict) else {}
+    saved_manual_values = saved_manual_values if isinstance(saved_manual_values, dict) else {}
     remarks = report.remarks if report else {}
     rows = [
         StoreProfitLossRowResponse(
@@ -578,6 +640,7 @@ async def _store_profit_loss_response(
             value=StoreProfitLossCell(**values[key]),
             manual_value=StoreProfitLossCell(**saved_manual_values.get(key, {}))
             if kind == "manual" and isinstance(saved_manual_values.get(key), dict) else None,
+            input_source=manual_values.get("_sources", {}).get(key, "manual"),
             remark=str(remarks.get(key, "")),
         )
         for key, label, kind, source in STORE_PROFIT_LOSS_ROWS
@@ -625,6 +688,10 @@ async def update_store_profit_loss(
     if data.report_month.day != 1:
         raise HTTPException(status_code=400, detail="核算月份必须传入该月第一天")
     store = await _resolve_report_store(db, user, data.store_id)
+    from services.finance_config import financial_controls_enabled
+    from services.financial_controls import scoped_store
+    if financial_controls_enabled():
+        await scoped_store(db, user, store.id, lock=True)
     manual_values = {}
     for key, cell in data.manual_values.items():
         if key not in STORE_PROFIT_LOSS_MANUAL_KEYS:
@@ -660,6 +727,18 @@ async def update_store_profit_loss(
             }
             for key in keys
         }
+    if financial_controls_enabled():
+        from models import FinancialExpenseSource
+        ledger_keys = (await db.execute(select(FinancialExpenseSource.category).where(
+            FinancialExpenseSource.store_id == store.id,
+            FinancialExpenseSource.report_month == data.report_month,
+            FinancialExpenseSource.mode == "ledger").with_for_update())).scalars().all()
+        saved_values = report.manual_values if report else {}
+        for key in ledger_keys:
+            if key in saved_values:
+                manual_values[key] = saved_values[key]
+            else:
+                manual_values.pop(key, None)
     if report is None:
         report = StoreProfitLossReport(
             store_id=store.id,
@@ -673,6 +752,9 @@ async def update_store_profit_loss(
         report.manual_values = manual_values
         report.remarks = remarks
         report.updated_by_user_id = user.id
+    metadata = dict(getattr(report, "report_metadata", None) or {})
+    metadata["manual_period_mode"] = "monthly" if data.update_scope == "current" else "legacy"
+    report.report_metadata = metadata
     await db.commit()
     await db.refresh(report)
     return await _store_profit_loss_response(db, user, store, data.report_month, report)
@@ -958,13 +1040,11 @@ def _build_store_profit_loss_summary_sheet(
     sheet = workbook.create_sheet(STORE_PROFIT_LOSS_SUMMARY_SHEET)
     headers = ["项目"] + [store.name for store, _values in store_reports] + ["合计", "占比"]
     sheet.append(headers)
-    revenue_total = sum(
-        (_decimal_or_zero(values["operating_revenue"].get("current")) for _store, values in store_reports),
-        Decimal("0"),
-    )
+    revenue_total = _sum_known(values["operating_revenue"].get("current") for _store, values in store_reports)
     for key, label, _kind, _source in STORE_PROFIT_LOSS_ROWS:
         store_values = [
-            (values[key].get("current") if key in {"inventory_writeoff", "inventory_impairment", "operating_cost", "gross_profit", "gross_margin", "asset_impairment_loss", "operating_profit", "net_profit"}
+            (values[key].get("current") if key in STORE_PROFIT_LOSS_AUTO_KEYS | STORE_PROFIT_LOSS_FORMULA_KEYS
+             or key in values.get("_unknown", {}).get("current", [])
              else _decimal_or_zero(values[key].get("current"))) for _store, values in store_reports
         ]
         if key == "gross_margin":
@@ -1060,11 +1140,21 @@ def _allocate_store_profit_loss_to_product_lines(
     line_data: dict[int | None, dict],
     revenue_by_store_line: dict[int, dict[int | None, dict[str, Decimal]]],
     manual_values_by_store: dict[int, dict],
+    unknown_store_periods=None,
 ) -> None:
     """Allocate store-level revenue and direct costs by product-line sales share."""
     for store_id, line_revenues in revenue_by_store_line.items():
         manual_values = manual_values_by_store.get(store_id, {})
         for period in STORE_PROFIT_LOSS_PERIODS:
+            unknown_keys = set(manual_values.get("_unknown", {}).get(period, []))
+            if unknown_keys & (set(PRODUCT_LINE_ALLOCATED_REVENUE_KEYS) | set(PRODUCT_LINE_ALLOCATED_COST_KEYS)):
+                for line_id in line_revenues:
+                    if unknown_keys & set(PRODUCT_LINE_ALLOCATED_REVENUE_KEYS):
+                        line_data[line_id].setdefault("_unknown_revenue_periods", set()).add(period)
+                    if unknown_keys & set(PRODUCT_LINE_ALLOCATED_COST_KEYS):
+                        line_data[line_id].setdefault("_unknown_cost_periods", set()).add(period)
+                    line_data[line_id]["note"] += "；分摊费用明细尚未确认，相关金额待核对。"
+                continue
             period_total = sum(
                 (values[period] for values in line_revenues.values()), Decimal("0")
             )
@@ -1084,6 +1174,16 @@ def _allocate_store_profit_loss_to_product_lines(
                 ),
                 Decimal("0"),
             )
+            if period in (unknown_store_periods or {}).get(store_id, set()):
+                for line_id in line_revenues:
+                    item = line_data[line_id]
+                    if revenue_to_allocate:
+                        item.setdefault("_unknown_revenue_periods", set()).add(period)
+                    if cost_to_allocate:
+                        item.setdefault("_unknown_cost_periods", set()).add(period)
+                    if revenue_to_allocate or cost_to_allocate:
+                        item["note"] += "；店铺收入不完整，人工金额分摊待核对。"
+                continue
             for line_id, values in line_revenues.items():
                 share = values[period] / period_total
                 line_data[line_id][period]["revenue"] += revenue_to_allocate * share
@@ -1112,6 +1212,7 @@ async def _product_line_profit_data(
     ] = defaultdict(lambda: defaultdict(
         lambda: {period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS}
     ))
+    unknown_store_periods = defaultdict(set)
     for mapping, product_line, product in mapping_rows:
         mappings_by_store_product[(mapping.store_id, mapping.product_id)].append((mapping, product_line, product))
         if _mapping_effective_on(mapping, report_date):
@@ -1191,10 +1292,15 @@ async def _product_line_profit_data(
         item["sku_ids"].add(sale.product_id)
         sale_line_by_id[sale.id] = line_id
         context = import_context_by_sale.get(sale.id, {})
-        rate = context.get("exchange_rate_to_cny", Decimal("1"))
+        rate = valid_rate(context.get("currency"), context.get("exchange_rate_to_cny", Decimal("1")))
         if rate is None:
-            warning = "销售收入因汇率缺失未计入；FIFO成本仍按销售成本明细计入。"
+            warning = "销售汇率缺失，相关期间收入、销售费用及毛利待核对；已保存FIFO成本仍展示。"
             item["note"] = f"{item['note']}；{warning}".strip("；")
+            for period, (start, end) in periods.items():
+                if start <= sale.sold_at.date() < end:
+                    unknown_store_periods[sale_store_id].add(period)
+                    item.setdefault("_unknown_revenue_periods", set()).add(period)
+                    item.setdefault("_unknown_cost_periods", set()).add(period)
             continue
         revenue = context.get("source_net_product_sales", sale.selling_price * sale.quantity) * rate
         for period in STORE_PROFIT_LOSS_PERIODS:
@@ -1216,12 +1322,13 @@ async def _product_line_profit_data(
             .join(InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id)
             .where(SaleCostDetail.sale_id.in_([sale.id for sale, _user_store_id in sales]))
         )).all()
+        cost_layers = await load_cost_layers(db, {batch.id for _detail, batch, _sale in cost_rows})
         adjustments = await _sale_provision_adjustments(db, ytd_end - timedelta(days=1))
         for detail, batch, sale in cost_rows:
             line_id = sale_line_by_id.get(sale.id)
             if line_id not in line_data:
                 continue
-            batch_cost = detail.unit_cost * Decimal(detail.quantity)
+            batch_cost = (detail.unit_cost + unit_adjustment(cost_layers.get(batch.id, []))) * Decimal(detail.quantity)
             for period in STORE_PROFIT_LOSS_PERIODS:
                 start, end = periods[period]
                 if start <= sale.sold_at.date() < end:
@@ -1234,20 +1341,48 @@ async def _product_line_profit_data(
                     else:
                         line_data[line_id][period]["cost"] -= adjustment
 
-    reports = list((await db.execute(
-        select(StoreProfitLossReport).where(
-            StoreProfitLossReport.report_month == report_month,
-            StoreProfitLossReport.store_id.in_(store_ids),
-        )
-    )).scalars().all()) if store_ids else []
+    events = await unlinked_settlement_events(db, store_ids, read_start, ytd_end) if store_ids else []
+    for event in events:
+        candidates = mappings_by_store_product.get((event.store_id, event.product_id), [])
+        mapping = _product_line_mapping_for_sale(
+            {(event.store_id, event.product_id): candidates}, event.store_id, event.product_id,
+            event.occurred_at.date(), {event.platform_sku_id} if event.platform_sku_id else set(),
+        ) if event.product_id else None
+        line_id = mapping[1].id if mapping else None
+        item = line_data.setdefault(line_id, {
+            "name": mapping[1].name if mapping else "未分配产品线（结算调整）", "sku_ids": set(),
+            **{p: {"revenue": Decimal(0), "cost": Decimal(0)} for p in STORE_PROFIT_LOSS_PERIODS},
+            "note": "" if mapping else "无可靠组件/产品线分摊的结算调整保留于未分配组。",
+        })
+        for period, (start, end) in periods.items():
+            if not start <= event.occurred_at.date() < end:
+                continue
+            if event.revenue is None or event.expense is None:
+                unknown_store_periods[event.store_id].add(period)
+                item.setdefault("_unknown_revenue_periods", set()).add(period)
+                item.setdefault("_unknown_cost_periods", set()).add(period)
+                item["note"] += "；结算汇率缺失，相关收入、费用及毛利待核对。"
+            else:
+                item[period]["revenue"] += event.revenue
+                item[period]["cost"] += event.expense
+                if event.store_id is not None:
+                    revenue_by_store_line[event.store_id][line_id][period] += event.revenue
+
+    manual_by_store = {
+        store_id: await manual_period_values(db, store_id, report_month, STORE_PROFIT_LOSS_MANUAL_KEYS)
+        for store_id in sorted(store_ids)
+    }
     _allocate_store_profit_loss_to_product_lines(
         line_data,
         revenue_by_store_line,
-        {report.store_id: report.manual_values for report in reports},
+        manual_by_store,
+        unknown_store_periods,
     )
 
     rows = []
     for item in sorted(line_data.values(), key=lambda value: value["name"]):
+        for period in item.get("_unknown_revenue_periods", set()):
+            item[period]["revenue"] = None
         for period in item.get("_unknown_cost_periods", set()):
             item[period]["cost"] = None
         rows.append({
@@ -1271,7 +1406,7 @@ def _build_product_line_profit_sheet(
     headers = ["产品线/品类", "SKU数量", "本月营业收入", "本月营业成本", "本月毛利", "本月毛利率", "上月毛利率", "环比变化", "本年累计收入", "本年累计毛利", "累计毛利率", "备注"]
     sheet.append(headers)
     totals = {
-        period: {"revenue": sum((row[period]["revenue"] for row in rows), Decimal("0")), "cost": _sum_known(row[period]["cost"] for row in rows)}
+        period: {"revenue": _sum_known(row[period]["revenue"] for row in rows), "cost": _sum_known(row[period]["cost"] for row in rows)}
         for period in ("current", "previous", "ytd")
     }
     for row in rows:
@@ -1347,6 +1482,9 @@ async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
         .where(or_(InventoryBatch.arrived_at < cutoff, InventoryBatch.id.in_(sold_batch_ids)))
         .order_by(Store.name, Product.sku, InventoryBatch.arrived_at, InventoryBatch.id)
     )).all()
+    cost_layers = await load_cost_layers(db, {row[0].id for row in batch_rows})
+    if cost_layers:
+        batch_rows = [(AdjustedBatch(row[0], cost_layers.get(row[0].id, [])), *row[1:]) for row in batch_rows]
     product_ids = {row[0].product_id for row in batch_rows}
     rule_rows = (await db.execute(select(ProductImpairmentRule).where(
         ProductImpairmentRule.product_id.in_(product_ids)
@@ -1365,6 +1503,10 @@ async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
         .where(SaleCostDetail.batch_id.in_(batch_ids), Sale.sold_at < cutoff)
         .order_by(Sale.sold_at, Sale.id, SaleCostDetail.id)
     )).all() if batch_ids else []
+    if cost_layers:
+        sale_rows = [SimpleNamespace(**{**dict(row._mapping),
+            "saved_unit_cost": row.saved_unit_cost + unit_adjustment(cost_layers.get(row.batch_id, []))})
+            for row in sale_rows]
     layers = [InventoryLayer(batch.id, batch.product_id, owner, batch.arrived_at.date(),
                              batch.quantity, kind, safe, tuple(rules[batch.product_id]))
               for batch, _sku, _name, _store, kind, safe, owner in batch_rows]
@@ -1454,6 +1596,10 @@ async def _load_inventory_impairment_report_rows(
             "product_id": batch.product_id, "store_name": store or "未关联店铺", "store_id": owner,
             "sku": sku, "product_name": name, "product_type": kind, "safe_stock_quantity": safe,
             "arrived_at": batch.arrived_at.date(), "unit_cost": batch.unit_cost, "batch_no": batch.batch_no,
+            "batch_id": batch.id,
+            "base_unit_cost": getattr(batch, "base_unit_cost", batch.unit_cost),
+            "cost_adjustment_per_unit": getattr(batch, "cost_adjustment_per_unit", Decimal(0)),
+            "cost_status": getattr(batch, "cost_status", "unverified"),
             "original_quantity": batch.quantity, "original_inventory_amount": batch.quantity * batch.unit_cost,
             "sold_quantity": sold[batch.id], "sold_cost_amount": costs[batch.id],
             "quantity": current.quantity, "previous_month_quantity": previous.quantity,
@@ -1672,7 +1818,10 @@ async def export_financial_attachments(
         db, selected_store.id, report_month, selected_store.name
     )
     selected_values = _build_store_profit_loss_values(
-        selected_auto_values, report.manual_values if report else {}
+        selected_auto_values, await manual_period_values(
+            db, selected_store.id, report_month, STORE_PROFIT_LOSS_MANUAL_KEYS,
+            selected_auto_values.get("_monthly_defaults"),
+        )
     )
     selected_remarks = report.remarks if report else {}
 
@@ -1707,7 +1856,10 @@ async def export_financial_attachments(
             store_reports.append((
                 store,
                 _build_store_profit_loss_values(
-                    auto_values, store_report.manual_values if store_report else {}
+                    auto_values, await manual_period_values(
+                        db, store.id, report_month, STORE_PROFIT_LOSS_MANUAL_KEYS,
+                        auto_values.get("_monthly_defaults"),
+                    )
                 ),
             ))
         _build_store_profit_loss_summary_sheet(workbook, store_reports, report_month)

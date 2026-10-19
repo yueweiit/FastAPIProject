@@ -168,11 +168,11 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
     async def test_product_line_deducts_the_same_writeoff_and_masks_unknown_cost(self):
         sale = SimpleNamespace(id=1, store_id=7, product_id=10, sold_at=datetime(2026,9,10),
                                selling_price=Decimal(20), quantity=10, platform_fee=Decimal(0))
-        batch = SimpleNamespace(quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0), last_mile_cost=Decimal(0), other_cost=Decimal(1000))
+        batch = SimpleNamespace(id=1, quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0), last_mile_cost=Decimal(0), other_cost=Decimal(1000))
         detail = SimpleNamespace(id=1, quantity=10, unit_cost=Decimal("20.0001"))
         for adjustment in (Decimal(5), None):
             db = SimpleNamespace(execute=AsyncMock(side_effect=[result([]), result([(sale,7)]),
-                                                                 result([]), result([(detail,batch,sale)]), result([])]))
+                                                                 result([]), result([(detail,batch,sale)]), result([]), result([])]))
             with patch("routers.sales._sale_import_context", new_callable=AsyncMock, return_value=({},{})), \
                  patch("routers.reports._sale_provision_adjustments", new_callable=AsyncMock,
                        return_value={1:(adjustment,"转销归属待核对" if adjustment is None else "")}):

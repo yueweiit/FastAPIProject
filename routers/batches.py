@@ -17,6 +17,7 @@ from database import get_db
 from models import InventoryBatch, Product, User, SaleCostDetail
 from schemas import BatchCreate, BatchPageResponse, BatchResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
+from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
 
 router = APIRouter(prefix="/batches", tags=["入库管理"])
 BASE_DIR = Path(__file__).parent.parent
@@ -140,6 +141,7 @@ async def update_batch(
         raise HTTPException(status_code=403, detail="无权修改此批次")
 
     # 检查是否已被消耗
+    await ensure_batch_cost_editable(db, batch_id)
     if batch.remaining_quantity != batch.quantity:
         raise HTTPException(status_code=400, detail="批次已有出库记录，无法修改")
 
@@ -186,6 +188,8 @@ async def delete_batch(
     if batch.remaining_quantity != batch.quantity:
         raise HTTPException(status_code=400, detail="批次已有出库记录，无法删除")
 
+    await ensure_batch_cost_editable(db, batch_id)
+
     await db.delete(batch)
     await db.commit()
     return {"ok": True}
@@ -229,6 +233,9 @@ async def list_batches(
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     batches = result.scalars().all()
+    cost_layers = await load_cost_layers(db, {batch.id for batch in batches})
+    if cost_layers:
+        batches = [AdjustedBatch(batch, cost_layers.get(batch.id, [])) for batch in batches]
     if page is None:
         return batches
     return BatchPageResponse(items=batches, total=total, page=page, page_size=page_size)
@@ -261,6 +268,10 @@ async def export_batches(
     batches = list(result.scalars().all())
     if not batches:
         raise HTTPException(status_code=404, detail="没有可导出的批次")
+
+    cost_layers = await load_cost_layers(db, {batch.id for batch in batches})
+    if cost_layers:
+        batches = [AdjustedBatch(batch, cost_layers.get(batch.id, [])) for batch in batches]
 
     product_ids = {batch.product_id for batch in batches}
     products_result = await db.execute(select(Product).where(Product.id.in_(product_ids)))
