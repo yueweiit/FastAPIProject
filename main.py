@@ -14,6 +14,7 @@ from database import async_session, init_db
 from migrate import migrate
 from routers import products, batches, sales, reports, auth, finance_masters
 from routers import eims_auth
+from routers import financial_control
 from auth import seed_users
 from services.accounting_periods import ensure_period_snapshot, previous_month_end
 from services.auth_sessions import store as auth_session_store
@@ -100,6 +101,7 @@ app.include_router(batches.router)
 app.include_router(sales.router)
 app.include_router(reports.router)
 app.include_router(finance_masters.router)
+app.include_router(financial_control.router)
 
 uploads_dir = BASE_DIR / "uploads"
 uploads_dir.mkdir(exist_ok=True)
