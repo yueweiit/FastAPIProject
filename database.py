@@ -33,5 +33,18 @@ async def get_db():
 
 
 async def init_db():
+    from services.finance_config import FINANCE_TABLES, financial_controls_enabled
+    from sqlalchemy import inspect, select
+    tables = [table for table in Base.metadata.sorted_tables
+              if financial_controls_enabled() or table.name not in FINANCE_TABLES]
+    def guard_disabled(connection):
+        if financial_controls_enabled():
+            return
+        existing = set(inspect(connection).get_table_names())
+        for name in sorted(existing & FINANCE_TABLES):
+            table = Base.metadata.tables[name]
+            if connection.execute(select(table.c.id).limit(1)).first() is not None:
+                raise RuntimeError("已有财务增强记录，不能关闭财务开关并回退成本/费用口径；请恢复配置后启动。")
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(guard_disabled)
+        await conn.run_sync(lambda connection: Base.metadata.create_all(connection, tables=tables))

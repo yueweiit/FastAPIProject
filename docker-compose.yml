@@ -12,6 +12,7 @@ services:
     environment:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       FIFO_AUTH_MODE: ${FIFO_AUTH_MODE:-hybrid}
+      FIFO_FINANCIAL_CONTROLS_ENABLED: ${FIFO_FINANCIAL_CONTROLS_ENABLED:-0}
       FIFO_PUBLIC_BASE_URL: ${FIFO_PUBLIC_BASE_URL:-}
       EIMS_ISSUER: ${EIMS_ISSUER:-https://eims.yueweiportal.com}
       EIMS_CLIENT_ID: ${EIMS_CLIENT_ID:-}

@@ -2,7 +2,83 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+
+
+class FinancialMoneyRequest(BaseModel):
+    amount: Decimal = Field(max_digits=16, decimal_places=4)
+    currency: str = Field(default="CNY", pattern=r"^[A-Z]{3}$")
+    exchange_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
+
+    @model_validator(mode="after")
+    def check_financial_rate(self):
+        if self.currency == "CNY":
+            if self.exchange_rate not in (None, Decimal(1)):
+                raise ValueError("CNY汇率必须为1")
+            self.exchange_rate = Decimal(1)
+        elif self.exchange_rate is None:
+            raise ValueError("外币必须明确填写有效人民币汇率")
+        return self
+
+
+class CostAllocationRequest(BaseModel):
+    batch_id: int = Field(gt=0)
+    weight: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=8)
+
+
+class CostAdjustmentRequest(FinancialMoneyRequest):
+    request_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    source_ref: str = Field(min_length=1, max_length=128)
+    category: Literal["purchase", "head_shipping", "last_mile", "other"]
+    allocation_basis: Literal["quantity", "weight", "volume", "value"] = "quantity"
+    rate_date: date
+    document_date: date
+    allocations: list[CostAllocationRequest] = Field(min_length=1, max_length=100)
+    is_final: bool = False
+    note: str = Field(default="", max_length=1000)
+
+
+class FinanceReversalRequest(BaseModel):
+    request_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    note: str = Field(min_length=1, max_length=1000)
+
+
+class ExpenseRequest(FinancialMoneyRequest):
+    request_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    store_id: int = Field(gt=0)
+    expense_date: date
+    category: str = Field(min_length=1, max_length=64)
+    source_ref: str = Field(min_length=1, max_length=128)
+    settlement_entry_id: int | None = Field(default=None, gt=0)
+    note: str = Field(default="", max_length=1000)
+
+
+class ExpenseSourceRequest(BaseModel):
+    store_id: int = Field(gt=0)
+    report_month: date
+    category: str = Field(min_length=1, max_length=64)
+    mode: Literal["manual", "ledger"]
+
+
+class ReceiptRequest(FinancialMoneyRequest):
+    request_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    store_id: int = Field(gt=0)
+    payout_id: str = Field(min_length=1, max_length=128)
+    receipt_date: date
+    source_ref: str = Field(min_length=1, max_length=128)
+    note: str = Field(default="", max_length=1000)
+
+
+class SettlementClassificationRequest(BaseModel):
+    breakdown: dict[str, Decimal]
+    note: str = Field(default="", max_length=1000)
+
+
+class FinancialVersionRequest(BaseModel):
+    request_key: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    store_id: int = Field(gt=0)
+    report_month: date
+    note: str = Field(default="", max_length=1000)
 
 
 # ========== 认证 ==========
@@ -141,6 +217,9 @@ class BatchResponse(BaseModel):
     shipping_date: datetime | None = None
     arrived_at: datetime
     created_at: datetime
+    base_unit_cost: Decimal | None = None
+    cost_adjustment_per_unit: Decimal = Decimal(0)
+    cost_status: str = "unverified"
 
 
 class BatchPageResponse(BaseModel):
@@ -168,6 +247,7 @@ class CostDetailResponse(BaseModel):
     batch_no: str
     quantity: int
     unit_cost: Decimal
+    base_unit_cost: Decimal | None = None
 
 
 class SaleResponse(BaseModel):
@@ -180,6 +260,9 @@ class SaleResponse(BaseModel):
     quantity: int
     selling_price: Decimal
     total_cost: Decimal
+    original_total_cost: Decimal | None = None
+    cost_adjustment_cny: Decimal = Decimal(0)
+    cost_status: str = "unverified"
     platform_fee: Decimal
     profit: Decimal
     currency: str = "CNY"
@@ -215,6 +298,7 @@ class MonthlySalesSummaryResponse(BaseModel):
     platform_fee_cny: Decimal | None = None
     gross_profit_cny: Decimal | None = None
     fx_missing_count: int = 0
+    settlement_event_count: int = 0
 
 
 class SalesImportError(BaseModel):
@@ -320,6 +404,7 @@ class StoreProfitLossRowResponse(BaseModel):
     source: str | None = None
     value: StoreProfitLossCell
     manual_value: StoreProfitLossCell | None = None
+    input_source: Literal["manual", "ledger"] = "manual"
     remark: str = ""
 
 

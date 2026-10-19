@@ -562,3 +562,136 @@ class StoreProfitLossReport(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class InventoryCostAdjustment(Base):
+    """已确认成本补差；反向单保留原单，历史销售按当前已知成本重述。"""
+    __tablename__ = "inventory_cost_adjustments"
+    __table_args__ = (UniqueConstraint("category", "source_ref", name="uq_cost_adjustment_source"), {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_key: Mapped[str] = mapped_column(String(64), unique=True)
+    source_ref: Mapped[str] = mapped_column(String(128))
+    category: Mapped[str] = mapped_column(String(32))
+    allocation_basis: Mapped[str] = mapped_column(String(16))
+    amount: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+    currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(DECIMAL(18, 8))
+    rate_date: Mapped[date] = mapped_column(Date)
+    amount_cny: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+    document_date: Mapped[date] = mapped_column(Date)
+    is_final: Mapped[bool] = mapped_column(Boolean, default=False)
+    note: Mapped[str] = mapped_column(String(1000), default="")
+    reverses_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("inventory_cost_adjustments.id"), unique=True, nullable=True)
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class InventoryCostAdjustmentLine(Base):
+    __tablename__ = "inventory_cost_adjustment_lines"
+    __table_args__ = (UniqueConstraint("adjustment_id", "batch_id", name="uq_cost_adjustment_batch"), {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    adjustment_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventory_cost_adjustments.id"), index=True)
+    batch_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventory_batches.id"), index=True)
+    quantity: Mapped[int] = mapped_column(Integer)
+    allocation_weight: Mapped[Decimal] = mapped_column(DECIMAL(20, 8))
+    amount_cny: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+
+
+class FinancialExpense(Base):
+    __tablename__ = "financial_expenses"
+    __table_args__ = (UniqueConstraint("store_id", "category", "source_ref", name="uq_financial_expense_source"), {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_key: Mapped[str] = mapped_column(String(64), unique=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    expense_date: Mapped[date] = mapped_column(Date, index=True)
+    category: Mapped[str] = mapped_column(String(64))
+    source_ref: Mapped[str] = mapped_column(String(128))
+    amount: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+    currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(DECIMAL(18, 8))
+    amount_cny: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+    status: Mapped[str] = mapped_column(String(16), default="draft")
+    settlement_entry_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("settlement_entries.id"), nullable=True)
+    reverses_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("financial_expenses.id"), unique=True, nullable=True)
+    note: Mapped[str] = mapped_column(String(1000), default="")
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    posted_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class FinancialExpenseSource(Base):
+    __tablename__ = "financial_expense_sources"
+    __table_args__ = (UniqueConstraint("store_id", "report_month", "category", name="uq_expense_source_month"), {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    report_month: Mapped[date] = mapped_column(Date)
+    category: Mapped[str] = mapped_column(String(64))
+    mode: Mapped[str] = mapped_column(String(16))
+    updated_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class FinancialReceipt(Base):
+    __tablename__ = "financial_receipts"
+    __table_args__ = (UniqueConstraint("store_id", "source_ref", name="uq_financial_receipt_source"), {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_key: Mapped[str] = mapped_column(String(64), unique=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    payout_id: Mapped[str] = mapped_column(String(128), index=True)
+    receipt_date: Mapped[date] = mapped_column(Date)
+    source_ref: Mapped[str] = mapped_column(String(128))
+    amount: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+    currency: Mapped[str] = mapped_column(String(3))
+    exchange_rate: Mapped[Decimal] = mapped_column(DECIMAL(18, 8))
+    amount_cny: Mapped[Decimal] = mapped_column(DECIMAL(16, 4))
+    note: Mapped[str] = mapped_column(String(1000), default="")
+    reverses_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("financial_receipts.id"), unique=True, nullable=True)
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SettlementClassification(Base):
+    __tablename__ = "settlement_classifications"
+    __table_args__ = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    settlement_entry_id: Mapped[int] = mapped_column(Integer, ForeignKey("settlement_entries.id"), unique=True)
+    breakdown: Mapped[dict] = mapped_column(JSON)
+    note: Mapped[str] = mapped_column(String(1000), default="")
+    confirmed_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    confirmed_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FinancialReportVersion(Base):
+    __tablename__ = "financial_report_versions"
+    __table_args__ = (
+        UniqueConstraint("store_id", "report_month", "version", name="uq_financial_version_number"),
+        UniqueConstraint("store_id", "report_month", "source_digest", name="uq_financial_version_digest"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    request_key: Mapped[str] = mapped_column(String(64), unique=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    report_month: Mapped[date] = mapped_column(Date)
+    version: Mapped[int] = mapped_column(Integer)
+    source_digest: Mapped[str] = mapped_column(String(64))
+    calculation_version: Mapped[str] = mapped_column(String(32), default="restated-cost-v1")
+    status: Mapped[str] = mapped_column(String(24))
+    payload: Mapped[dict] = mapped_column(JSON)
+    note: Mapped[str] = mapped_column(String(1000), default="")
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FinancialAuditEvent(Base):
+    __tablename__ = "financial_audit_events"
+    __table_args__ = {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"}
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("stores.id"), nullable=True, index=True)
+    entity_type: Mapped[str] = mapped_column(String(32))
+    entity_id: Mapped[int] = mapped_column(Integer, index=True)
+    action: Mapped[str] = mapped_column(String(32))
+    before_values: Mapped[dict] = mapped_column(JSON, default=dict)
+    after_values: Mapped[dict] = mapped_column(JSON, default=dict)
+    actor_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
