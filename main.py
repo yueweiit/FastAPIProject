@@ -118,3 +118,9 @@ async def root():
 async def financial_control_script():
     return FileResponse(BASE_DIR / "static" / "financial-control.js", media_type="text/javascript",
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/page-interactions.js", include_in_schema=False)
+async def page_interactions_script():
+    return FileResponse(BASE_DIR / "static" / "page-interactions.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})

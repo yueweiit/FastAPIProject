@@ -1700,8 +1700,8 @@ async function createBatch() {
             last_mile_cost_no: document.getElementById('b-lastmile-no').value.trim() || undefined,
             other_cost: +document.getElementById('b-other').value || 0,
             other_cost_no: document.getElementById('b-other-no').value.trim() || undefined,
-            shipping_date: shipdate ? new Date(shipdate).toISOString() : undefined,
-            arrived_at: arrived ? new Date(arrived).toISOString() : undefined,
+            shipping_date: window.PageInteractions.batchDateTimeValue(shipdate),
+            arrived_at: window.PageInteractions.batchDateTimeValue(arrived),
         });
         showMsg(`入库成功: ${b.batch_no} | ${b.quantity}件 | 单件成本 ¥${b.unit_cost}`);
         loadBatches();
@@ -1878,8 +1878,11 @@ async function openEditBatch(id) {
     document.getElementById('eb-lastmile-no').value = b.last_mile_cost_no || '';
     document.getElementById('eb-other').value = b.other_cost;
     document.getElementById('eb-other-no').value = b.other_cost_no || '';
-    document.getElementById('eb-shipdate').value = b.shipping_date?.slice(0,16) || '';
-    document.getElementById('eb-date').value = b.arrived_at?.slice(0,16) || '';
+    for (const [id, value] of [['eb-shipdate', b.shipping_date], ['eb-date', b.arrived_at]]) {
+        const input = document.getElementById(id);
+        input.value = window.PageInteractions.batchDateTimeInput(value);
+        input.dataset.originalValue = value || '';
+    }
     document.getElementById('edit-batch-modal').style.display = '';
     calcEditUnitCost();
 }
@@ -1920,8 +1923,8 @@ async function saveEditBatch() {
             last_mile_cost_no: document.getElementById('eb-lastmile-no').value.trim() || undefined,
             other_cost: +document.getElementById('eb-other').value || 0,
             other_cost_no: document.getElementById('eb-other-no').value.trim() || undefined,
-            shipping_date: shipdate ? new Date(shipdate).toISOString() : undefined,
-            arrived_at: arrived ? new Date(arrived).toISOString() : undefined,
+            shipping_date: window.PageInteractions.batchDateTimeValue(shipdate, document.getElementById('eb-shipdate').dataset.originalValue),
+            arrived_at: window.PageInteractions.batchDateTimeValue(arrived, document.getElementById('eb-date').dataset.originalValue),
         });
         showMsg(`批次 ${b.batch_no} 更新成功`);
         closeEditBatch();
@@ -2694,6 +2697,7 @@ async function loadProductLineProfit() {
 document.getElementById('inventory-impairment-date').value = new Date().toLocaleDateString('sv-SE');
 initializeAuth();
 </script>
+<script src="/page-interactions.js" defer></script>
 <script src="/financial-control.js" defer></script>
 </body>
 </html>
