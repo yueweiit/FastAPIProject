@@ -2,11 +2,13 @@
 
 ## 存储边界
 
-主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的 19 张 ORM 表；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
+主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的27张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
 
-OA PostgreSQL 是外部只读数据源，不属于这 19 张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
+OA PostgreSQL 是外部只读数据源，不属于这27张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
 
 ## 表清单与唯一维护入口
+
+跨模块重要字段、状态编码及响应计算字段的区别从[数据字典导航](data-dictionary.md)进入；完整类型与约束继续在下列模块字典维护。
 
 | 表 | ORM 类 | 用途 | 字段字典 |
 | --- | --- | --- | --- |
@@ -65,7 +67,23 @@ erDiagram
     products ||--o{ inventory_period_snapshots : 商品
     stores |o--o{ inventory_period_snapshots : 店铺
     stores ||--o{ store_profit_loss_reports : 人工损益
+    users |o--o{ sales_import_batches : 撤销
+    users |o--o{ accounting_periods : 关闭快照期间
+    users |o--o{ store_profit_loss_reports : 更新人工损益
 ```
+
+财务增强另有8张表、88个字段和20个外键关系，清单/关系/约束统一见[财务增强字典](../modules/financial-control/database.md)；总计27表、305字段、52外键。既有关系图保留核心业务链，新表关系由模块字典引用，不把默认未启用的表当作目标库已有结构。
+
+| 新增表（默认关闭） | ORM类 | 字段字典 |
+| --- | --- | --- |
+| inventory_cost_adjustments | InventoryCostAdjustment | [财务增强](../modules/financial-control/database.md#inventory_cost_adjustments) |
+| inventory_cost_adjustment_lines | InventoryCostAdjustmentLine | [财务增强](../modules/financial-control/database.md#inventory_cost_adjustment_lines) |
+| financial_expenses | FinancialExpense | [财务增强](../modules/financial-control/database.md#financial_expenses) |
+| financial_expense_sources | FinancialExpenseSource | [财务增强](../modules/financial-control/database.md#financial_expense_sources) |
+| financial_receipts | FinancialReceipt | [财务增强](../modules/financial-control/database.md#financial_receipts) |
+| settlement_classifications | SettlementClassification | [财务增强](../modules/financial-control/database.md#settlement_classifications) |
+| financial_report_versions | FinancialReportVersion | [财务增强](../modules/financial-control/database.md#financial_report_versions) |
+| financial_audit_events | FinancialAuditEvent | [财务增强](../modules/financial-control/database.md#financial_audit_events) |
 
 ## 金额、库存和时间
 
@@ -77,7 +95,7 @@ erDiagram
 
 ## 约束与迁移
 
-创建新库使用 Base.metadata.create_all；既有库由 [migrate.py](../../migrate.py) 补兼容列、索引、表，并修复映射状态、回填历史导入批次。未发现 Alembic 或迁移版本表；DDL 不能假定与业务事务一样可整体回滚。
+创建新库使用Base.metadata.create_all；database.init_db在财务开关关闭时排除新增8表，启用后允许创建，启用前仍需显式审核。既有库由 [migrate.py](../../migrate.py) 补兼容列、索引、表，并修复映射状态、回填历史导入批次。未发现 Alembic 或迁移版本表；DDL 不能假定与业务事务一样可整体回滚。
 
 ORM 有外键的字段，在历史库通过 ALTER 添加时不一定同时补外键；sales_import_batches 的兼容建表 SQL 与 ORM 的外键定义也不完全一致。因此模型关系不等于实库约束。
 

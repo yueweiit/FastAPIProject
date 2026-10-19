@@ -4,7 +4,7 @@
 
 ## sales
 
-来源：[models.py](../../../models.py) 的 `Sale`（源码第 124 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `Sale`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -30,7 +30,7 @@
 
 ## sale_cost_details
 
-来源：[models.py](../../../models.py) 的 `SaleCostDetail`（源码第 157 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `SaleCostDetail`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -42,7 +42,7 @@
 
 ## sales_import_batches
 
-来源：[models.py](../../../models.py) 的 `SalesImportBatch`（源码第 171 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `SalesImportBatch`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -70,7 +70,7 @@
 
 ## settlement_entries
 
-来源：[models.py](../../../models.py) 的 `SettlementEntry`（源码第 205 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `SettlementEntry`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -130,7 +130,7 @@
 
 ## settlement_entry_allocations
 
-来源：[models.py](../../../models.py) 的 `SettlementEntryAllocation`（源码第 282 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `SettlementEntryAllocation`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |

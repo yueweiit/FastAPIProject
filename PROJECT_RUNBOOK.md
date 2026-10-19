@@ -225,7 +225,7 @@ FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0`
 3. 月度报表会过滤 operator 的销售，但库存汇总未按用户过滤，可能泄露全局库存。
 4. 删除商品或用户没有显式级联策略；有批次或销售关联时，删除前必须备份并确认外键影响。
 5. FIFO 扣库、导入预检和批次编辑/删除已有行锁；并发库存写入必须沿用该事务约束，且大批量导入可能增加锁等待时间。
-6. 批次号按当天已有数量加一生成；并发入库可能触发唯一约束冲突。
+6. 批次号按到货日前缀的最大有效序号加一，唯一约束冲突后最多尝试三次，仍冲突返回409；目标环境并发入库待验证，见[库存流程](docs/modules/inventory/workflow.md#新建批次)。
 7. `test_main.http` 使用过时字段 `duty_cost` 且缺少认证头；当前字段为 `last_mile_cost`。
 8. `migrate.py` 在应用启动时运行，尚非完整的版本化迁移；部署含结构变更的版本前仍须备份数据库。新增批次留档字段（含三个成本单号）的历史独立脚本为 `migrations/20260820_add_batch_dingtalk_fields.py`，执行前应核对目标库与现有列。
 9. 商品图片现有限制大小/像素、实际解码和重新编码，静态/uploads有扩展名及响应头保护；销售文件等其他入口和反向代理上传额度仍需单独核查，见[商品流程](docs/modules/products/workflow.md#创建与图片)。
@@ -289,3 +289,21 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 - 2026-10-08：在本机 Docker `mysql57` 建立 `inventory_fifo` 和独立测试账号，项目本地 `.env` 指向 `127.0.0.1:3308`。已初始化 17 张表；真实 MySQL 并发验证确认两笔销售争用最后一件库存时仅一笔成功，测试业务记录已清理。
 - 2026-10-12：从下载的 MySQL 8.0.46 服务器备份恢复独立本地测试库 `inventory_fifo_test`（`127.0.0.1:3309`），逐表核对 17 张表、5,631 条记录及外键、库存边界，项目 `.env` 已切换，旧测试库保留；随后在本机 `8010` 端口成功启动应用，首页和接口定义检查通过。
 - 2026-10-12：增加商品 Excel 批量新增的模板、预览、确认及结果下载，已有 SKU 跳过，商品与规则统一提交；96 项单元测试通过，独立本地 MySQL 8.0.46 验证 2,000 条导入、重复/并发冲突和整批回滚。原业务测试库在验证期间数量和校验值未变化；服务器尚未更新，浏览器视觉验收因自动化工具启动失败待验证。
+
+## 财务增强结构与启用
+
+2026-10-19新增[财务增强模块](docs/modules/financial-control/overview.md)。FIFO_FINANCIAL_CONTROLS_ENABLED默认0，Compose已传递；尚未对目标库执行加表、启用或部署。
+
+1. 先审核现有19表、8张新增表和外键/唯一约束/DECIMAL精度，备份并确认InnoDB、utf8mb4及会话REPEATABLE READ。保存版本会拒绝MySQL非REPEATABLE READ；不修改服务器隔离配置。
+2. 离线生成DDL（不连接数据库）：
+
+   ```powershell
+   .\.venv\Scripts\python.exe migrations/add_financial_controls.py --write-sql output/financial-controls/schema.mysql.sql
+   ```
+
+3. 隔离库默认只读核验：` .\.venv\Scripts\python.exe migrations/add_financial_controls.py `。脚本仅接受已核实127.0.0.1:3309 / inventory_fifo_test / fifo_local_app；凭证在本地环境，不输出连接串。只有该库的结构修改已获授权，才增加`--apply-local-finance-schema`创建8表；不创建数据库，不运行migrate/种子/历史修复，不写业务记录。脚本核验字段清单/可空性/外键/唯一键/引擎/隔离级别；精度、字符集、权限及执行计划仍需审核DDL和实际结构。
+4. 正式环境由有权限维护者另行审核和执行加法DDL，脚本的隔离目标保护不可移除；本次没有生产授权。MySQL DDL不能依赖事务回滚。已有同名表不自动改造，结构差异需逐项处理。
+5. 验证完成后持久配置FIFO_FINANCIAL_CONTROLS_ENABLED=1，按既有发布流程加载新代码。应用启动会运行既有迁移、初始化、快照等写入副作用；不能用启动代替预检。确认实际静态脚本、22个新API、角色/店铺、实际账单和旧版导出。
+6. 补录9月成本后到9月工作台比较旧版，复核并保存新版；旧版不覆盖。已有财务记录时不能通过关闭开关回退版本：init_db会拒绝启动，避免成本/费用静默恢复旧值。不要删除表/凭证或批量回填原FIFO成本，回滚需要保持可读取调整层的兼容代码及备份方案。
+
+本次仅离线DDL与隔离SQLite/VM验证；真实MySQL锁等待、并发成本/FIFO、旧库结构及浏览器/OA/平台凭证待环境验收。测试命令见[约定](docs/knowledge/conventions.md)。

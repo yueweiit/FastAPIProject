@@ -32,3 +32,7 @@ list_batches 按 arrived_at、id 降序，可按 product_id 或商品名称/SKU/
 导出有 batch_ids 时优先按选择 ID，不叠加 keyword/product_id；没有 ID 才用筛选条件导出全部匹配记录。宽表独立滚动、分页和跨页选择仅为前端交互。依据：[模板](../../../templates/index.html)、[batches.py](../../../routers/batches.py) 的 list_batches、export_batches。
 
 销售事务和撤销细节见[销售流程](../sales/workflow.md)。本次未创建或编辑任何批次。
+
+## 实际成本补差
+
+启用后列表、导出和商品库存金额使用原成本加调整层；数量和FIFO原始保存成本不变。批次已有成本调整来源即禁止直接编辑/删除，反向后也不删除来源。按最新凭证重算历史库存和准备，已保存月度版本保持旧值。流程与公式见[财务增强](../financial-control/workflow.md)。

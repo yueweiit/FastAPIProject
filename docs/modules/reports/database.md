@@ -6,7 +6,7 @@
 
 ## accounting_periods
 
-来源：[models.py](../../../models.py) 的 `AccountingPeriod`（源码第 426 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `AccountingPeriod`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -29,7 +29,7 @@
 
 ## inventory_period_snapshots
 
-来源：[models.py](../../../models.py) 的 `InventoryPeriodSnapshot`（源码第 456 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `InventoryPeriodSnapshot`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -54,7 +54,7 @@
 
 ## store_profit_loss_reports
 
-来源：[models.py](../../../models.py) 的 `StoreProfitLossReport`（源码第 497 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `StoreProfitLossReport`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -83,6 +83,8 @@
 AccountingPeriod.period_snapshots 使用 all/delete-orphan；没有公开删除期间功能。数据库有快照对批次/商品/店铺的外键，不能在业务删除时忽略它们。
 
 ## 人工损益保存与外部数据
+
+metadata（ORM属性report_metadata）增加内部manual_period_mode：页面current保存标monthly，比较期间从实际月记录推导；旧all保存标legacy，明确输入的比较金额保持兼容。原manual_values.previous/ytd仍保留存储，不做历史回填；字段类型和表结构不变。实现见[financial_facts.py](../../../services/financial_facts.py)。
 
 store_profit_loss_reports以(store_id,report_month)唯一；人工金额按各科目/期间以字符串或空值放入manual_values，remarks保存备注，report_metadata对应数据库列metadata。该表保存人工输入和扩展信息，不保存全部自动计算结果/结账审计副本。默认保存整体替换JSON；页面使用current范围，在已有报表行锁内仅替换本月人工列、保留已有上月/年累计人工值，remarks仍完整替换。范围字段不是新数据库列，具体见[损益保存契约](api.md#损益保存契约)。
 

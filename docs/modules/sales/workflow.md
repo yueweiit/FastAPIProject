@@ -40,6 +40,8 @@ flowchart TD
 
 ## 组合金额与人民币
 
+2026-10-19：独立退款/调整/赔付通过[financial_facts.py](../../../services/financial_facts.py)公共查询进入销售列表、月度和财务报表；排除直接或组件销售已关联的结算，不重复计算原销售收入。独立事件不创建Sale、不自动恢复库存，数量显示0；金额按结算日优先归月，销售仍按sold_at。商品归属不明的组合调整保留全店及未分配组，不能猜测组件利润。阶段边界及后续成本调整见[完善计划](../../plans/2026-10-19-financial-accuracy.md)。
+
 每个组件出库数量 = 来源数量×quantity_per_sale。初始按数量分配收入/费用；总 FIFO 成本>0 时改为各组件 FIFO 成本占比分摊收入及其他费用；总成本为0时保持数量分摊。_sale_import_context 从保存的关联及权重重构来源金额。
 
 其他费用 = 净商品销售额−结算总金额；物流/平台赔付取差额绝对值作为费用。外币净收入和费用乘固化汇率；profit_cny = 收入人民币−FIFO成本−费用人民币。导入后的 sales.selling_price/platform_fee 为来源分摊金额，持久化 profit 会与人民币成本相减，报表应使用人民币响应与结算上下文，不能直接把原字段视为人民币。
@@ -62,3 +64,9 @@ stateDiagram-v2
 结算映射状态 confirmed/pending_confirmation 与导入状态 completed/rolled_back 是两套字段。撤销先锁导入批次，拒绝重复撤销；按原明细汇总并锁库存批次，校验恢复不超过原数量，然后删除分摊、结算、成本明细、销售并标记撤销。删除销售同时释放该订单占位，失败事务也会回滚占位。历史快照不随撤销重建，当前报表可受影响。
 
 source_key、order_no查重和order_claim均为全局范围，没有改成按店铺分区；跨店同号策略仍待业务确认。模拟回归见[test_sales_integrity.py](../../../tests/test_sales_integrity.py)，真实本地InnoDB并发/回滚验证见[mysql_sales_integrity.py](../../../tests/mysql_sales_integrity.py)；本地通过不代表生产结构或混合版本已验收。依据：[sales.py](../../../routers/sales.py) 的 rollback_sales_import；[models.py](../../../models.py)；[migrate.py](../../../migrate.py) 的 ensure_sales_order_schema。
+
+## 实际成本追溯层
+
+启用财务增强后，查询成本和人民币利润叠加按原批次数量分配的实际差额，已售部分仍归原销售月。原Sale及SaleCostDetail保存成本不改写，旧原币profit不可作为重算人民币利润。批次成本状态/反向单/月度版本见[财务增强流程](../financial-control/workflow.md)。
+
+财务增强启用后，导入头已被结算分类或费用凭证引用时拒绝物理撤销（409），不改变库存；保留来源并用更正凭证处理，避免外键异常和审计来源丢失。新增关联先锁导入头，已撤销来源不能再引用。

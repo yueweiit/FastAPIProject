@@ -4,7 +4,7 @@
 
 ## inventory_batches
 
-来源：[models.py](../../../models.py) 的 `InventoryBatch`（源码第 88 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `InventoryBatch`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |

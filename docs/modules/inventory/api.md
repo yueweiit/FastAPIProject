@@ -23,3 +23,7 @@ GET 列表支持 product_id、keyword（名称/SKU/批次号，≤255）、page�
 GET 导出支持重复 batch_ids，或无 ID 时使用 product_id/keyword；有 ID 时以 ID 为准。示例：/batches/export?batch_ids=1&batch_ids=2。无可导出记录为404。
 
 商品不存在404，编辑他人批次403，已消耗批次400，编号冲突三次后409；数量金额无效422。响应含创建人、数量、剩余数、成本、所有单号及时间，见 [schemas.py](../../../schemas.py)；实际实现见 [batches.py](../../../routers/batches.py)。
+
+## 成本响应扩展
+
+财务开关启用后，批次unit_cost含追溯调整；base_unit_cost为原保存值，cost_adjustment_per_unit为每件补差，cost_status为actual/partial/unverified。原采购/费用字段仍为原始值，不代表已改写。成本调整及不可编辑约束见[财务增强](../financial-control/overview.md)。

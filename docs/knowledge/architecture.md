@@ -10,7 +10,7 @@ flowchart LR
     U -->|"同源 Cookie；写请求 CSRF"| A
     A --> T["templates/index.html"]
     A --> UP["/uploads 静态文件"]
-    A --> R["routers：认证、商品、批次、销售、主数据、报表"]
+    A --> R["routers：认证、商品、批次、销售、主数据、报表、财务增强"]
     R --> AU["auth.py：当前用户及角色"]
     R --> S["services：商品导入、FIFO、汇率、跌价、快照、OA"]
     AU --> SS["独立认证事务：会话、刷新、撤销"]
@@ -19,7 +19,7 @@ flowchart LR
     U -->|"授权与退出跳转"| EI
     R --> DB["database.py / AsyncSession"]
     S --> DB
-    DB --> M["外置 MySQL：19 张 ORM 表"]
+    DB --> M["外置 MySQL：27张ORM表，8张需显式启用"]
     S -->|"HTTPS 历史汇率"| FX["Frankfurter"]
     S -->|"SELECT，只读"| OA["外置 OA PostgreSQL"]
     A --> W["asyncio 月末快照检查"]
@@ -61,12 +61,26 @@ FIFO 的锁序为 product_id、arrived_at、id，MySQL/InnoDB 事务持锁直至
 
 ## 外部边界
 
-EIMS 负责身份，FIFO 继续用本地角色/店铺授权。授权码 + PKCE、RS256 和 app_user_id 严格匹配；提供方 Token 只在后端加密持久化，不共享数据库。HTTP 请求 10 秒超时、禁跟随重定向，Discovery/JWKS 缓存 5 分钟并固定同源端点。公网必须 HTTPS；配置缺失保留 hybrid 本地登录，SSO 复核失败拒绝当次访问。详见[认证模块](../modules/auth/overview.md)。
+EIMS 负责身份，本地负责角色/店铺；OA 为只读费用来源；汇率在导入时获取并固化；平台订单通过文件输入。调用方向、超时/重试、缓存和失败一致性统一见[系统集成](integrations.md)，避免各处重复维护协议参数。
 
-OA 服务使用独立 OA_DB_* 连接，并只执行 SELECT；账号是否实际只有读取权限待验证。办公费用、薪资和管理费用直接用于损益计算，当前没有 OA 数据缓存表。未完整配置时返回空数据；完整配置存在但查询失败时抛异常。依据：[oa_office_expenses.py](../../services/oa_office_expenses.py)。
+## 复用能力与容量边界
 
-汇率按币种并发抓取日期区间，通过 asyncio.to_thread 执行阻塞 HTTP，保存汇率、日期和来源于结算记录。仅网络获取成功不等同于财务批准其口径。依据：[exchange_rates.py](../../services/exchange_rates.py)、[销售流程](../modules/sales/workflow.md)。
+| 公共能力 | 直接依赖与修改影响 | 已有机制/限制 |
+| --- | --- | --- |
+| [auth.py](../../auth.py)、SessionStore | 所有受保护路由；页面 api/authHeaders 与直接 fetch | 认证和库存事务分开；共享库存例外不能由角色名推断 |
+| [fifo.py](../../services/fifo.py) | 手工销售、导入、撤销锁序；库存余额、成本及报表 | 有行锁及订单唯一占位；未见通用死锁自动重试机制，长批量事务的锁等待需实测 |
+| [sales.py](../../routers/sales.py) 的 _sale_import_context | 销售展示、人民币汇总、损益和产品线 | 保存汇率与分摊；改来源/币种必须联查下游报表，不能仅检查销售 API |
+| [inventory_provision_movements.py](../../services/inventory_provision_movements.py) | 07/09/10/12；商品规则、历史批次及 FIFO 明细 | 持有期间回放；按批次/日期前缀和与未知计数做期间查询，未知值继续传播 |
+| [reports.py](../../routers/reports.py) 的 _load_inventory_provision_data | 存货、损益、产品线及财务附件 | 同一会话按截止日复用回放，不是跨请求持久化缓存；一次加载相关批次/规则/销售，大历史区间资源需实测 |
+| [product_images.py](../../services/product_images.py)、[product_import.py](../../services/product_import.py) | 商品上传、模板、校验和确认 | 图片及商品 Excel 有明确大小/行数限制；不能推定其他文件入口沿用这些限制 |
+| 列表、导入和导出 | 商品/批次/销售页面及 openpyxl 导出 | 列表兼容无 page 的全量数组；销售 import_sales_file 使用 file.read 整体读取，Excel 在内存生成，StreamingResponse 不代表流式构建 |
+
+前端复用 api、authHeaders、formatApiError、escapeHtml 等局部函数，没有独立组件库；新增页面仍需核查直接 fetch 的认证/错误路径。运行模板与副本差异见[项目概况](project-overview.md)，文本规范见[国际化](internationalization.md)。
+
+来源审计包括销售成本明细、原始结算 JSON/文件行号、导入/撤销记录及人工损益最后修改人；财务增强新增独立操作审计表（默认关闭），既有商品/销售等全部操作并未因此统一纳入；商品导入预览/结果未持久化。撤销会删除业务明细，快照和动态回放用途不同。重复提交保护依各操作的唯一键、预览签名和事务实现，不能宣称全局幂等。详见[销售流程](../modules/sales/workflow.md)、[商品流程](../modules/products/workflow.md)。
+
+部署未声明任务队列、集中监控或性能基线。上述容量限制为源码可见边界，实际延迟/内存/并发上限待验证；风险及建议集中维护于[已有风险清单](../../PROJECT_ARCHITECTURE.md#9-当前已知风险)。
 
 ## 架构维护重点
 
-新增库存写入必须沿用事务行锁；增加权限过滤须同时检查列表、详情、汇总、导出及旧记录兼容路径。启动迁移和后台快照检查有数据库写入，不能通过启动服务做只读核验。07存货查询/导出改为按每日销售后库存累计金额，不再补建快照；原余额算法仍用于快照和店铺损益。数据库表结构和迁移差异见[数据库总览](database.md)，部署边界见[部署文档](deployment.md)。
+新增库存写入必须沿用事务行锁；增加权限过滤须同时检查列表、详情、汇总、导出及旧记录兼容路径。启动迁移和后台快照检查有数据库写入，不能通过启动服务做只读核验。当前07/09/10/12使用实际持有期间回放，销售当天先计提再转销；07两期余额从同一回放取得，不补建快照。原余额算法仅保留于自动快照等历史路径，不替代现行损益口径，详见[报表流程](../modules/reports/workflow.md)。数据库表结构和迁移差异见[数据库总览](database.md)，部署边界见[部署文档](deployment.md)。

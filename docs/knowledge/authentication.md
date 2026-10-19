@@ -57,3 +57,7 @@ EIMS 采用授权码 + PKCE S256，RS256 ID Token 验签并校验 issuer/audienc
 - 新认证表有写入和过期清理，启动会补 users.is_active；生产需先备份并核实结构。提供方退出/回调 URL 不得进入代理、CDN 或 APM 的完整查询日志。
 
 2026-10-13 增加统一登录、启停和会话保护，原业务角色/店铺矩阵保留。模块维护入口见[认证模块](../modules/auth/overview.md)，生产身份接入仍待验收。
+
+## 财务增强权限增量
+
+`/financial-control`除config外须显式启用。读取财务按店铺；admin可选店铺，operator/viewer只能绑定店铺；成本调整列表沿用共享库存例外。写入admin/operator，成本operator仅自己的批次，费用确认/反向仅admin，审计查询仅admin。其余版本保存、分类、回款/反向及来源选择允许绑定店铺operator；viewer只读。版本获取/比较/导出也逐次检查当前店铺权限。详见[财务API](../modules/financial-control/api.md)。

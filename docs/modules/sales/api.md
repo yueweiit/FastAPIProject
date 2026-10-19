@@ -18,9 +18,9 @@
 
 SaleCreate：product_id、order_no、quantity>0；store_id 可在模型层为空，但路由要求有效店铺，非管理员使用绑定店铺。selling_price/platform_fee 默认0且≥0，sold_at 可省略。订单号最大64、strip 后不能为空，前置查询已存在订单号返回400，并发占位/数据完整性冲突返回409且回滚；截至销售日可用库存不足返回400。到货日按自然日比较，不能使用销售日之后的批次。order_claim仅为数据库内部字段，不增加请求或响应字段。
 
-GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM；列表还支持 page/page_size。monthly-summary 按全部筛选结果汇总，不只是当前页，返回数量、人民币收入/成本/费用/毛利与 fx_missing_count。
+GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM；列表还支持 page/page_size。monthly-summary 按全部筛选结果汇总，不只是当前页，返回数量、人民币收入/成本/费用/毛利、fx_missing_count及新增settlement_event_count。未关联出库的退款/调整/赔付事件纳入金额，不增加销售单数或数量；同事件只计一次。
 
-SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页列表未指定 product_id 时还可能混入赔付费用行：record_type=other_expense、负 id、quantity=0；它不是普通 sales 主键，不能直接调用 GET /sales/{sale_id}。不分页列表和月度汇总不完全具有同样的赔付行合并行为。
+SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页/数组列表均包含独立财务事件：赔付record_type=other_expense，其他退款/调整为settlement_adjustment，负id、quantity=0；不是sales主键，不能调用GET /sales/{sale_id}。先合并完整结果再分页；月度统计采用相同事件取数。商品筛选仅归属明确单一product_id的事件；组合份额未定的事件保留全店汇总，不猜测商品分摊。
 
 ## 文件导入
 
@@ -39,3 +39,7 @@ SalesImportResponse 返回 success、行统计、sales_created、skipped_duplica
 imports 的 limit 默认20、1–100；can_rollback 为 UI 提示，后端重新校验角色、店铺和 completed 状态。rollback 无请求体；已撤销409，越店403，库存恢复异常409；返回恢复件数、删除销售和结算行数。
 
 请求/响应定义见 [schemas.py](../../../schemas.py)，实际异常和兼容行为见 [sales.py](../../../routers/sales.py)。不存在销售编辑/普通删除、单行确认、完整退款恢复或平台同步接口。
+
+## 成本追溯兼容扩展
+
+开关启用后total_cost、profit_cny及成本明细unit_cost含实际成本层，original_total_cost、cost_adjustment_cny、cost_status及明细base_unit_cost用于解释原值与调整。数据库原Sale.profit/total_cost和SaleCostDetail.unit_cost保持初始值；原币profit沿用旧契约。月度汇总同步成本层，归月不变。新接口见[财务增强API](../financial-control/api.md)。

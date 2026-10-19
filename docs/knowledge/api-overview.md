@@ -2,7 +2,7 @@
 
 ## 路由组织
 
-[main.py](../../main.py) 注册七组 APIRouter，当前源码共有 64 个路由端点（按 HTTP 方法与路径计数），另有首页和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
+[main.py](../../main.py) 注册八组APIRouter，当前源码共有86个路由端点（按HTTP方法与路径计数），另有首页、/financial-control.js和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
 
 | 前缀 | 数量 | 文档 | 实现 |
 | --- | ---: | --- | --- |
@@ -11,6 +11,7 @@
 | /batches | 5 | [库存 API](../modules/inventory/api.md) | [routers/batches.py](../../routers/batches.py) |
 | /sales | 9 | [销售 API](../modules/sales/api.md) | [routers/sales.py](../../routers/sales.py) |
 | /finance-masters | 16 | [主数据 API](../modules/finance-masters/api.md) | [routers/finance_masters.py](../../routers/finance_masters.py) |
+| /financial-control | 22 | [财务增强API](../modules/financial-control/api.md) | [routers/financial_control.py](../../routers/financial_control.py) |
 | /reports | 8 | [报表 API](../modules/reports/api.md) | [routers/reports.py](../../routers/reports.py) |
 
 默认 FastAPI 文档入口为 /docs、/redoc 和 /openapi.json，代码未显式关闭。2026-10-12 商品导入修改后，已在本机核对实际 OpenAPI；不代表服务器已更新。

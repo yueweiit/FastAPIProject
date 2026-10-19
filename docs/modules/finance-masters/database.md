@@ -4,7 +4,7 @@
 
 ## product_lines
 
-来源：[models.py](../../../models.py) 的 `ProductLine`（源码第 312 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `ProductLine`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -17,7 +17,7 @@
 
 ## stores
 
-来源：[models.py](../../../models.py) 的 `Store`（源码第 328 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `Store`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -41,7 +41,7 @@
 
 ## store_products
 
-来源：[models.py](../../../models.py) 的 `StoreProduct`（源码第 355 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `StoreProduct`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -66,7 +66,7 @@
 
 ## platform_sku_mappings
 
-来源：[models.py](../../../models.py) 的 `PlatformSkuMapping`（源码第 383 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `PlatformSkuMapping`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -85,7 +85,7 @@
 
 ## platform_sku_components
 
-来源：[models.py](../../../models.py) 的 `PlatformSkuComponent`（源码第 405 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `PlatformSkuComponent`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |

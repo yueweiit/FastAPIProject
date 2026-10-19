@@ -53,7 +53,7 @@ flowchart TD
 
 同一天多次规则变化会更新同一个 effective_date；若旧商品没有历史且创建日在今天之前，先按商品创建日记录修改前规则，再建立当天新规则。后续跌价按规则时间段累计，已累计计提不因变为稳健/增加安全库存简单清零。
 
-依据：[products.py](../../../routers/products.py) 的 update_product；[inventory_impairment.py](../../../services/inventory_impairment.py) 的 batch_impairments。商品日期使用 date.today，跨环境时区待核实。
+依据：[products.py](../../../routers/products.py) 的 update_product。现行报表由[inventory_provision_movements.py](../../../services/inventory_provision_movements.py)的 replay_inventory_provisions 使用规则历史；[inventory_impairment.py](../../../services/inventory_impairment.py) 的 batch_impairments 保留于快照等历史算法路径。商品日期使用 date.today，跨环境时区待核实。
 
 ## 查询、导出与删除
 

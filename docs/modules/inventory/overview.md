@@ -21,3 +21,5 @@
 - [数据库字段](database.md)
 - [模块 API](api.md)
 - [知识库总索引](../../knowledge/README.md)
+
+实际成本补差由[财务增强模块](../financial-control/overview.md)统一维护，默认关闭；启用后查询成本包含补差，原批次保存成本与FIFO数量不变。已有调整来源的批次不能直接改写或删除。

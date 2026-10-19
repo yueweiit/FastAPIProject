@@ -10,6 +10,7 @@
 | 月度销量/当前库存 | 当前主要报表导航未发现独立月度页，保留 API | monthly_report | 销售、商品、当前全局库存 |
 | 月末快照 | 无人工页面/公开 API | main.lifespan、_monthly_snapshot_worker、ensure_period_snapshot、create_period_snapshot | accounting_periods、inventory_period_snapshots |
 | 持有期间计提/转销 | 07/09/10/12共用 | _load_inventory_provision_data → replay_inventory_provisions | 批次、逐笔FIFO、规则历史、日内先计提后转销 |
+| 独立结算/人工期间 | 销售月度、损益/产品线/附件 | unlinked_settlement_events、manual_period_values、derive_manual_periods | services/financial_facts.py；结算、分摊、人工月记录 |
 | 原静态准备余额 | 自动快照及历史辅助 | batch_impairments | 不替代当前持有期间变动服务 |
 | OA 自动费用 | 损益自动项/默认薪资 | office_space_totals_by_application_date、china_salary_totals_by_store_and_application_date、shared_admin_totals_by_application_date | 外部 PostgreSQL |
 
@@ -19,7 +20,7 @@
 
 | 验证内容 | 现有测试 |
 | --- | --- |
-| 准备余额规则及商品历史（07/快照/损益共用） | [test_inventory_impairment_report.py](../../../tests/test_inventory_impairment_report.py) |
+| 原准备余额规则及商品历史（快照兼容/历史算法） | [test_inventory_impairment_report.py](../../../tests/test_inventory_impairment_report.py) |
 | 120/480验收、同日销售、跨月年、售完、规则及上限、月增提与账面差 | [test_inventory_provision_movements.py](../../../tests/test_inventory_provision_movements.py)、[test_provision_reporting.py](../../../tests/test_provision_reporting.py) |
 | 入库/出库成本、跨批次汇总、售完余额0、Excel公式缓存、两种导出和财务范围 | [test_inventory_cost_summary.py](../../../tests/test_inventory_cost_summary.py) |
 | 两份页面脚本语法及真实渲染函数的新增字段、未知合计、120/480和转义（DOM模拟） | [inventory_page_checks.cjs](../../../tests/inventory_page_checks.cjs)，`node tests/inventory_page_checks.cjs` |

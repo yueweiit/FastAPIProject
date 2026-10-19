@@ -25,6 +25,8 @@
 
 ## 验证选择
 
+用户可见文本、状态标签及导入/导出语言边界见[国际化规范](internationalization.md)；当前无通用翻译框架，不假设已有语言资源。外部接口改动先查[集成关系](integrations.md)，字段/状态变更先从[数据字典导航](data-dictionary.md)进入唯一维护入口。
+
 本节记录后续代码开发的验证要求，不表示知识库初始化执行了业务测试。
 
 | 影响范围 | 优先验证 |
@@ -36,6 +38,7 @@
 | FIFO/组合分摊/汇率/导入格式/订单防重 | test_sales_rules、test_fifo_concurrency、test_sales_integrity；必要时授权的mysql_sales_integrity本地InnoDB验证 |
 | 商品规则/跌价/快照/批次成本及SKU汇总 | test_inventory_provision_movements、test_provision_reporting、test_inventory_impairment_report（快照历史）、test_inventory_cost_summary、test_accounting_period_snapshots、test_accounting_period_removal；node tests/inventory_page_checks.cjs |
 | 店铺损益/OA/财务附件 | test_store_profit_loss_report、test_provision_reporting、test_oa_office_expenses、test_financial_attachments_export；node tests/profit_loss_page_checks.cjs |
+| 独立结算、人工年累计、缺失汇率及跨入口勾稽 | test_financial_facts（独立内存SQLite，不连接业务MySQL）；test_sales_rules；覆盖列表分页和Excel未知合计 |
 | 前端交互 | 核对模板与副本；在获准运行的环境检查分页、选择、表单、错误和导出 |
 | 纯文档 | 链接/代码路径/符号/表和路由覆盖检查，确认旧文件和业务代码未改动 |
 
@@ -65,3 +68,17 @@
 - SSO 使用独立认证事务/行锁，不能把认证锁延长到 FIFO；Cookie 写请求覆盖 api 与直接 fetch。app_user_id 只匹配本地 users.id，EIMS 角色不得提升本地权限；Token 只后端加密，认证 URL 不记录查询参数。
 
 新任务应从[项目 AGENTS.md](../../AGENTS.md)开始，用代码验证知识库内容；发现过期记录时更新对应唯一维护入口。
+
+## 文档静态核验方法
+
+1. 先记录 Git 状态；本任务只改 Markdown 时，结束用 `git diff --name-only`、`git status --short` 核查修改及新增范围，用 `git diff --check` 检查空白错误。
+2. 以 Python 标准库 AST 解析 main.py 的路由注册、routers 的方法/前缀/路径、models.py 的表/字段/外键，与模块 api.md/database.md 按方法+路径、表+字段逐项匹配；不导入应用来生成清单。
+3. 校验相对文件/目录链接及 Markdown 标题锚点；核对 code-map.md 中前后端符号。引用路径和符号优先于容易失效的源码行号。
+4. Mermaid 至少核对围栏、图类型及实体/流程是否与代码相符；未使用渲染器时必须明确只做结构检查，不能称为渲染验证通过。
+5. 仅扫描文档新增内容中的凭据/连接串风险，不读取实际 .env 或原始业务数据。历史测试数字保留其日期，不作为本轮已执行证据。
+
+## 财务增强回归
+
+- `.\.venv\Scripts\python.exe -m unittest tests.test_financial_controls tests.test_financial_facts -v`：独立内存SQLite，验证真实ORM财务链路，不启动main生命周期。
+- `node tests/financial_control_page_checks.cjs`：实际工作台函数的VM检查，含连续切换/过期响应/重复点击/金额字符串/表单变化/退出；不等于浏览器视觉验收。
+- `migrations/add_financial_controls.py --write-sql ...`只离线生成DDL；省略参数默认只读核验指定隔离库，显式apply才加表，前置授权与目标保护见[运行步骤](../../PROJECT_RUNBOOK.md#财务增强结构与启用)。不复用旧并发脚本启动全库迁移。

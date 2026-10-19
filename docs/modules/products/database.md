@@ -4,7 +4,7 @@
 
 ## products
 
-来源：[models.py](../../../models.py) 的 `Product`（源码第 42 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `Product`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |
@@ -18,7 +18,7 @@
 
 ## product_impairment_rules
 
-来源：[models.py](../../../models.py) 的 `ProductImpairmentRule`（源码第 65 行，行号可能随版本变化）。
+来源：[models.py](../../../models.py) 的 `ProductImpairmentRule`。
 
 | 字段 | ORM 类型 | 可空 | 含义 | 约束与默认 |
 | --- | --- | --- | --- | --- |

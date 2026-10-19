@@ -64,3 +64,7 @@ MySQL 数据和 uploads 图片分别备份；上传目录不是数据库备份�
 容器禁用 Uvicorn 访问日志，默认 access logger 也有认证查询脱敏；仍须核验实际 Nginx、CDN/WAF/APM 不记录授权/退出参数。生产 Cookie 使用 Secure/HttpOnly、无跨域 Domain，本地 HTTP 例外只允许 loopback；不要将生产公开来源配置复制到 8010。
 
 知识库初始化未执行运行操作；2026-10-13 SSO 实施在后续授权范围内已验证本地库并更新 8010，未安装依赖、操作生产迁移/部署或提交推送。
+
+## 财务增强配置
+
+Compose传递FIFO_FINANCIAL_CONTROLS_ENABLED，默认0。8张新表、开关启用/回滚、启动副作用与隔离库加表流程统一见[运行步骤](../../PROJECT_RUNBOOK.md#财务增强结构与启用)；本次未执行目标库或生产变更。已有财务记录后关闭开关会拒绝启动，不能用开关回退财务口径。

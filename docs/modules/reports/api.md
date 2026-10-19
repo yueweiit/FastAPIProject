@@ -49,7 +49,7 @@
 
 ## 损益保存契约
 
-StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks，以及可选update_scope（all/current，默认all）。金额单元StoreProfitLossCell有current/previous/ytd，可空；只保存允许的人工科目，自动/公式键忽略。默认all仍整体替换人工JSON，须提交完整要保留的值；current只替换本月人工列，保留数据库中已有previous/ytd，忽略请求中的比较期间值，未提交的本月人工科目清空为null。当前页面显式提交current，避免只编辑本月却清空比较值；OA薪资默认金额仅显示为输入框占位值，未人工填写时提交null，不会把本月/比较期间OA默认金额固化为人工值。已有报表保存时加行锁保护读取及合并。
+StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks，以及可选update_scope（all/current，默认all）。金额单元StoreProfitLossCell有current/previous/ytd，可空；只保存允许的人工科目，自动/公式键忽略。默认all仍整体替换人工JSON，须提交完整要保留的值；current只替换本月人工列，保留原previous/ytd存储并忽略请求比较输入，未提交的本月人工科目清空为null；metadata标记monthly后，响应比较列根据各月current及OA月默认计算，上月取实际月记录、年累计自动汇总。all模式明确输入的比较值保留兼容，缺少时才推导。当前页面显式提交current，避免只编辑本月却清空比较值；OA薪资默认金额仅显示为输入框占位值，未人工填写时提交null，不会把本月/比较期间OA默认金额固化为人工值。已有报表保存时加行锁保护读取及合并。
 
 remarks在两种scope下均为完整替换，只接受已定义科目、去空白后最多500字符。权限、店铺、月份校验不变；非法update_scope返回422。字段定义见[schemas.py](../../../schemas.py)，保存实现为[update_store_profit_loss](../../../routers/reports.py)。
 
@@ -59,6 +59,10 @@ remarks在两种scope下均为完整替换，只接受已定义科目、去空�
 
 独立存货导出是全局；财务附件保留已有工作表顺序，最后追加 07-存货SKU汇总表，admin 五张、非管理员四张且无跨店损益汇总。admin 单店损益为所选店铺、两种存货视图为全局、损益汇总和产品线为当前启用店铺范围；非管理员两种存货视图均按绑定店铺过滤。
 
-07存货查询/导出不再调用ensure_period_snapshot，仅读取并计算；应用启动与后台仍有迁移/快照写入，不能用启动代替只读验证。OA 完整配置的读取失败抛异常，汇率历史缺失在不同报表中处理不同，细节见[流程](workflow.md)。
+07存货查询/导出不再调用ensure_period_snapshot，仅读取并计算；应用启动与后台仍有迁移/快照写入，不能用启动代替只读验证。OA 完整配置的读取失败抛异常，汇率历史缺失统一传播到相应收入/费用、利润和跨店/产品线合计，细节见[流程](workflow.md)。
 
 输入日期不合规400，越店/无绑定403，无店铺404，框架校验422；并未定义统一报表外部数据错误格式。Excel为StreamingResponse，工作簿公式缓存已有处理。回归覆盖库存余额/本月增提、模拟会话、内存工作簿和权限；本地核验与生产部署分别记录，生产接口和原始历史完整性仍待验证。损益字段契约见[schemas.py](../../../schemas.py)。
+
+## 财务来源兼容扩展
+
+损益行增加input_source=manual/ledger（默认manual）；manual_value仍为原人工备选值，value是选定来源的计算结果。保存损益时不会覆盖ledger科目的原人工备选值。实际成本补差通过查询层进入现有存货/损益/产品线/Excel；新凭证、来源选择、版本/比较及冻结导出见[财务增强API](../financial-control/api.md)。

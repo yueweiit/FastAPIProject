@@ -27,12 +27,13 @@
 
 ```text
 main.py                 应用组装、生命周期、首页、静态图片
-database.py / models.py  异步会话与 19 张 ORM 表（含两张认证状态表）
+database.py / models.py  异步会话与 27张ORM表（8张财务增强表默认关闭）
 schemas.py / auth.py     数据契约、认证和角色依赖
 migrate.py              启动兼容迁移和历史记录修复
-routers/                七组 HTTP 路由，认证含本地与 EIMS 两组
+routers/                八组HTTP路由，认证含本地与 EIMS 两组
 services/               认证会话、EIMS、商品导入、FIFO、汇率、跌价、快照和 OA
 templates/index.html    实际运行首页，内嵌 CSS/JavaScript
+static/financial-control.js 财务工作台脚本与集中zh-CN文案
 index.html              页面副本；前端修改需核对两份文件
 tests/                  单元测试和本地 MySQL 并发验证脚本
 migrations/             历史字段迁移、批次创建人转移脚本
@@ -41,10 +42,10 @@ uploads/                运行期商品图片；Git 忽略、需单独持久化
 Dockerfile / docker-compose.yml
 .env.example            配置变量示例，不能代表实际环境
 docs/knowledge/         全局知识库
-docs/modules/           六个模块的业务、流程、代码、表和 API
+docs/modules/           七个模块的业务、流程、代码、表和 API
 ```
 
-源码路径均以仓库根目录为基准。实际请求入口为 Uvicorn `main:app`：`/` 读取模板，`/uploads` 公开提供图片，默认 FastAPI `/docs`、`/redoc`、`/openapi.json` 提供接口说明；路由由 `main.py` 的七次 `include_router` 注册。
+源码路径均以仓库根目录为基准。实际请求入口为 Uvicorn `main:app`：`/` 读取模板，`/uploads` 公开提供图片，默认 FastAPI `/docs`、`/redoc`、`/openapi.json` 提供接口说明；路由由 `main.py` 的八次 `include_router` 注册。
 
 当前两份 index.html 在归一化换行后仍有内容差异，以 templates/index.html 为运行依据。2026-10-12 商品导入按功能块同步两份页面，保留平台 SKU 懒加载等原有差异。
 
