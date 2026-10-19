@@ -200,9 +200,15 @@
             return write('fc-cost-form','POST','/cost-adjustments',payload);
         }
         if(action.startsWith('reverse-')||action==='cancel-expense') {
-            const note=prompt(ft('reason'));if(!note?.trim())return;
-            const paths={'reverse-cost':`/cost-adjustments/${target.dataset.id}/reverse`,'reverse-expense':`/expenses/${target.dataset.id}/reverse`,'reverse-receipt':`/receipts/${target.dataset.id}/reverse`,'cancel-expense':`/expenses/${target.dataset.id}/cancel`};
-            return write(action,'POST',paths[action],{request_key:key(action+target.dataset.id),note});
+            const serial=state.serial,scope=selection(),id=target.dataset.id;
+            const type={'reverse-cost':'cost','reverse-expense':'expense','reverse-receipt':'receipts','cancel-expense':'expense'}[action];
+            const note=await window.PageInteractions.reason({
+                title:`${ft(type)} · ${ft(action==='cancel-expense'?'cancel':'reverse')} #${id}`,message:ft('reason'),
+                confirmLabel:ft(action==='cancel-expense'?'cancel':'reverse'),
+            });
+            if(!note || serial!==state.serial || scope!==selection())return;
+            const paths={'reverse-cost':`/cost-adjustments/${id}/reverse`,'reverse-expense':`/expenses/${id}/reverse`,'reverse-receipt':`/receipts/${id}/reverse`,'cancel-expense':`/expenses/${id}/cancel`};
+            return write(action,'POST',paths[action],{request_key:key(action+id),note});
         }
         if(action==='post-expense') return write('post-expense','POST',`/expenses/${target.dataset.id}/post`,{});
         if(action==='create-expense'||action==='create-receipt') {

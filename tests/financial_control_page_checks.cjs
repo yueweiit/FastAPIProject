@@ -84,6 +84,27 @@ async function main(){
         equal(posts,1);d.resolve({id:1});await task;equal(t.state.busy,false);
     }
     {
+        for(const action of ['reverse-cost','reverse-expense','reverse-receipt','cancel-expense']) {
+            const t=setup(),decision=deferred();let posts=[];
+            t.context.window.PageInteractions={reason:()=>decision.promise};
+            t.context.api=(method,path,body)=>method==='POST'?(posts.push({path,body}),Promise.resolve({id:9})):Promise.resolve(response(path,7));
+            const target={dataset:{id:'42'}};
+            const task=t.dispatch(action,target);
+            equal(posts.length,0);target.dataset.id='99';decision.resolve('核对更正');await task;
+            equal(posts.length,1);equal(posts[0].path.includes('/42/'),true);equal(posts[0].body.note,'核对更正');
+        }
+        for(const change of ['cancel','scope','reset']) {
+            const t=setup(),decision=deferred();let posts=0;
+            t.context.window.PageInteractions={reason:()=>decision.promise};
+            t.context.api=async()=>{posts++;return {};};
+            const task=t.dispatch('reverse-expense',{dataset:{id:'42'}});
+            if(change==='scope')t.element('fc-store').value='8';
+            if(change==='reset')t.context.window.FinanceControl.reset();
+            decision.resolve(change==='cancel'?null:'核对更正');await task;
+            equal(posts,0);
+        }
+    }
+    {
         const t=setup(),form=t.element('fc-cost-form');
         form.formValues={amount:'123456.0001',currency:'CNY',exchange_rate:'1',category:'head_shipping',allocation_basis:'weight'};
         form.elements.is_final={checked:true};

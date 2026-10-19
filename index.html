@@ -207,6 +207,12 @@
         @media (max-width:900px) { .reports-layout { grid-template-columns:1fr; } .reports-sidebar { position:static; display:flex; overflow-x:auto; } .reports-sidebar button { width:auto; min-width:max-content; border-left:0; border-bottom:3px solid transparent; } .reports-sidebar button.active { border-bottom-color:var(--accent); } }
         .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
         .product-import-dialog { width:min(1080px,94vw); max-height:88vh; margin:auto; padding:24px; border:0; border-radius:12px; color:var(--ink); box-shadow:0 20px 70px rgba(17,30,50,.25); }
+        .page-action-dialog { width:min(520px,94vw); box-sizing:border-box; }
+        .page-action-dialog [hidden] { display:none; }
+        .page-action-dialog label { display:block; }
+        .page-action-dialog textarea { width:100%; margin-top:8px; box-sizing:border-box; }
+        .page-action-dialog [role=alert] { color:#b42318; }
+        .page-action-buttons { display:flex; justify-content:flex-end; gap:12px; margin-top:20px; }
         .product-import-dialog::backdrop { background:rgba(17,30,50,.45); }
         .product-import-heading, .product-import-toolbar, .product-import-actions, .product-import-summary { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
         .product-import-heading { justify-content:space-between; margin-bottom:10px; }
@@ -820,6 +826,7 @@ async function doLogout() {
 }
 
 function handleSessionExpired() {
+    window.PageInteractions?.cancel();
     if (document.getElementById('product-import-dialog').open) {
         document.getElementById('product-import-dialog').close();
     }
@@ -2225,15 +2232,20 @@ async function loadSalesImports() {
     }
 }
 
+let salesRollbackBusy = false;
 async function rollbackSalesImport(importBatchId) {
-    if (!confirm('确认撤销这次导入？销售记录将删除，已扣库存会恢复。')) return;
+    if (salesRollbackBusy) return;
+    salesRollbackBusy = true;
+    const userId = CURRENT_USER_ID;
     try {
+        if (!await window.PageInteractions.confirmSalesRollback() || userId !== CURRENT_USER_ID) return;
         const result = await api('POST', `/sales/imports/${importBatchId}/rollback`);
         showMsg(`撤销完成：恢复库存 ${result.restored_quantity} 件，删除销售 ${result.sales_removed} 条`);
         salesPage = 1;
         pendingConfirmationsPage = 1;
         refreshSalesWorkspace();
     } catch (e) { showMsg(e.message, false); }
+    finally { salesRollbackBusy = false; }
 }
 let salesPage = 1;
 let salesPageSize = 20;

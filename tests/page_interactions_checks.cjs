@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 let checks = 0;
 const equal = (a,b) => { assert.deepEqual(a,b); checks++; };
+const deferred = () => { let resolve; return {promise:new Promise(r=>resolve=r),resolve:v=>resolve(v)}; };
 function setup(file) {
     const html = fs.readFileSync(file,'utf8');
     const elements = new Map();
@@ -15,8 +16,8 @@ function setup(file) {
         api:async()=>{throw new Error('unexpected request');},showMsg:()=>{},loadBatches:()=>{},calcEditUnitCost:()=>{},
         refreshSalesWorkspace:()=>{context.refreshed=true;}});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),context);
-    vm.runInContext('let editingBatchId=null,currentBatchList=[];',context);
-    for(const name of ['createBatch','openEditBatch','closeEditBatch','saveEditBatch']) {
+    vm.runInContext('let editingBatchId=null,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
+    for(const name of ['createBatch','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source,`${file}: missing ${name}`);
         vm.runInContext(source[0],context);
@@ -53,6 +54,18 @@ async function main() {
             }
         }
     } finally { if(originalTZ===undefined) delete process.env.TZ;else process.env.TZ=originalTZ; }
-    console.log(JSON.stringify({checks,scope:'actual page functions; three browser timezones and date precision'}));
+    for(const file of ['templates/index.html','index.html']) {
+        const {context:c}=setup(file);let posts=0;
+        c.api=async()=>{posts++;return {restored_quantity:1,sales_removed:1};};
+        c.window.PageInteractions.confirmSalesRollback=async()=>null;
+        await c.rollbackSalesImport(12);equal(posts,0);
+        const decision=deferred();c.window.PageInteractions.confirmSalesRollback=()=>decision.promise;
+        const task=c.rollbackSalesImport(12);await c.rollbackSalesImport(12);
+        equal(posts,0);decision.resolve(true);await task;equal(posts,1);equal(c.refreshed,true);
+        const expired=deferred();c.window.PageInteractions.confirmSalesRollback=()=>expired.promise;
+        const stale=c.rollbackSalesImport(12);vm.runInContext('CURRENT_USER_ID=8',c);expired.resolve(true);await stale;
+        equal(posts,1);
+    }
+    console.log(JSON.stringify({checks,scope:'actual page functions; three browser timezones and async confirmation guards'}));
 }
 main().catch(e=>{console.error(e);process.exitCode=1;});
