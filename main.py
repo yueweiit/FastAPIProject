@@ -8,7 +8,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 
 from database import async_session, init_db
 from migrate import migrate
@@ -112,3 +112,9 @@ app.mount("/uploads", ProductImageFiles(directory=str(uploads_dir)), name="uploa
 async def root():
     html = (BASE_DIR / "templates" / "index.html").read_text(encoding="utf-8")
     return HTMLResponse(content=html)
+
+
+@app.get("/financial-control.js", include_in_schema=False)
+async def financial_control_script():
+    return FileResponse(BASE_DIR / "static" / "financial-control.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})

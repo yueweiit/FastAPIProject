@@ -604,6 +604,7 @@
                 <button class="active" data-report-view="inventory" onclick="openReportView('inventory', this)">存货跌价明细</button>
                 <button data-report-view="profit-loss" onclick="openReportView('profit-loss', this)">店铺损益表</button>
                 <button data-report-view="product-line" onclick="openReportView('product-line', this)">产品线毛利</button>
+                <button data-report-view="financial-control" data-finance-text="nav" onclick="openReportView('financial-control', this)"></button>
             </aside>
             <div>
                 <div id="report-pane-inventory" class="report-pane active card">
@@ -618,6 +619,7 @@
                     <div class="profit-loss-controls"><div class="form-row"><div id="profit-loss-store-group" class="form-group"><label for="profit-loss-store">店铺</label><select id="profit-loss-store" onchange="loadStoreProfitLoss()"></select></div><div class="form-group"><label for="profit-loss-month">核算月份</label><input id="profit-loss-month" type="month" onchange="loadStoreProfitLoss()"></div><div class="form-group" style="justify-content:flex-end"><button class="btn btn-secondary" type="button" onclick="loadStoreProfitLoss()">查询</button></div></div><div id="profit-loss-updated" class="profit-loss-updated"></div></div>
                     <div class="table-scroll profit-loss-table"><table><thead><tr><th>项目</th><th>本月金额</th><th>备注</th></tr></thead><tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody></table></div>
                 </div>
+                <div id="report-pane-financial-control" class="report-pane card"><div id="financial-control-root"></div></div>
                 <div id="report-pane-product-line" class="report-pane card">
                     <div class="flex-between"><h3>各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
                     <div class="table-scroll"><table class="report-data-table"><thead><tr><th>产品线/品类</th><th>SKU数量</th><th>本月营业收入</th><th>本月营业成本</th><th>本月毛利</th><th>本月毛利率</th><th>上月毛利率</th><th>环比变化</th><th>本年累计收入</th><th>本年累计毛利</th><th>累计毛利率</th><th>备注</th></tr></thead><tbody id="product-line-profit-tbody"></tbody></table></div>
@@ -825,6 +827,7 @@ function handleSessionExpired() {
     resetStoreProfitLossState();
     clearLegacyAuth();
     AUTH_CSRF = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
+    if (typeof window !== 'undefined') window.FinanceControl?.reset();
     document.querySelectorAll('#sec-sales tbody, #sec-reports tbody, #sec-reports tfoot, #users-tbody').forEach(node => node.innerHTML = '');
     document.getElementById('login-overlay').style.display = 'flex';
     showLogin();
@@ -2109,7 +2112,7 @@ async function loadSales() {
         tbody.innerHTML = list.map(s => {
             const p = productMap[s.product_id] || {};
             const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${Number(d.unit_cost).toFixed(2)}`).join('；') || '无批次明细';
-            const dateStr = s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || s.sold_at?.slice(0,10) || '-';
+            const dateStr = s.sold_at?.slice(0,10) || s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '-';
             const quantity = Number(s.quantity) || 0;
             const originalPrice = Number(s.selling_price) || 0;
             const totalCost = Number(s.total_cost) || 0;
@@ -2464,14 +2467,14 @@ function renderStoreProfitLoss(report) {
         const readOnlyClass = row.is_auto ? 'profit-loss-auto' : 'profit-loss-formula';
         const amountCells = ['current'].map(period => {
             const value = row.value?.[period];
-            if (row.kind === 'manual') {
+            if (row.kind === 'manual' && row.input_source !== 'ledger') {
                 const manualValue = row.manual_value?.[period];
                 const inputValue = manualValue === null || manualValue === undefined ? '' : escapeHtml(manualValue);
                 const defaultValue = inputValue === '' && value !== null && value !== undefined ? escapeHtml(value) : '';
                 const title = row.key === 'salary' ? '留空使用OA工资当前值；填写后作为人工覆盖' : (row.source || '人工填写');
                 return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" placeholder="${defaultValue}" ${editable ? '' : 'disabled'}></td>`;
             }
-            const title = row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
+            const title = row.input_source === 'ledger' ? (window.FinanceControl?.text('ledger') || row.source) : row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
             return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(title)}">${formatProfitLossAmount(value, row)}</td>`;
         }).join('');
         const remark = `<td class="profit-loss-remark"><input type="text" maxlength="500" data-profit-remark="${row.key}" value="${escapeHtml(row.remark || '')}" ${editable ? '' : 'disabled'}></td>`;
@@ -2574,6 +2577,7 @@ function openReportView(name, button) {
     if (name === 'inventory') loadInventoryImpairment();
     if (name === 'profit-loss') loadStoreProfitLoss();
     if (name === 'product-line') loadProductLineProfit();
+    if (name === 'financial-control' && typeof window !== 'undefined') window.FinanceControl?.open();
 }
 
 let inventoryImpairmentRequestId = 0;
@@ -2670,6 +2674,7 @@ async function loadProductLineProfit() {
 document.getElementById('inventory-impairment-date').value = new Date().toLocaleDateString('sv-SE');
 initializeAuth();
 </script>
+<script src="/financial-control.js" defer></script>
 </body>
 </html>
 
