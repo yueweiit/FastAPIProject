@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 
 from models import (
     InventoryBatch, InventoryCostAdjustment, InventoryCostAdjustmentLine, Sale, SaleCostDetail,
@@ -78,7 +78,15 @@ def record(row):
     return {item.key: getattr(row, item.key) for item in row.__mapper__.column_attrs}
 
 
-def audit(db, user, entity, action, *, before=None, store_id=None):
+async def audit(db, user, entity, action, *, before=None, store_id=None):
+    # MySQL不通过RETURNING回填默认值；先在当前事务中完成SQL和显式异步加载，
+    # 避免record()读取created_at/updated_at等过期列时触发隐式异步IO。
+    await db.flush()
+    unloaded = inspect(entity).unloaded.intersection(
+        item.key for item in entity.__mapper__.column_attrs
+    )
+    if unloaded:
+        await db.refresh(entity, attribute_names=sorted(unloaded))
     db.add(FinancialAuditEvent(store_id=store_id, entity_type=entity.__tablename__, entity_id=entity.id,
                               action=action, actor_id=user.id, before_values=json_safe(before or {}),
                               after_values=json_safe(record(entity))))
@@ -184,7 +192,7 @@ async def post_cost_adjustment(db, user, payload):
         db.add(InventoryCostAdjustmentLine(adjustment_id=row.id, **{key: line[key] for key in
                ("batch_id", "quantity", "allocation_weight", "amount_cny")}))
     await db.flush()
-    audit(db, user, row, "post")
+    await audit(db, user, row, "post")
     invalidate_finance_cache(db)
     return row
 
@@ -224,7 +232,7 @@ async def reverse_cost_adjustment(db, user, row_id, payload):
         db.add(InventoryCostAdjustmentLine(adjustment_id=result.id, batch_id=line.batch_id,
                quantity=line.quantity, allocation_weight=line.allocation_weight, amount_cny=-line.amount_cny))
     await db.flush()
-    audit(db, user, result, "reverse")
+    await audit(db, user, result, "reverse")
     invalidate_finance_cache(db)
     return result
 
@@ -249,7 +257,7 @@ async def create_expense(db, user, payload):
                            created_by=user.id, status="draft")
     db.add(row)
     await db.flush()
-    audit(db, user, row, "create", store_id=row.store_id)
+    await audit(db, user, row, "create", store_id=row.store_id)
     return row
 
 
@@ -268,7 +276,7 @@ async def post_expense(db, user, row_id):
         fail("expense_not_draft", "只有待确认费用可以确认。", 409)
     before = record(row)
     row.status, row.posted_by, row.posted_at = "posted", user.id, utcnow()
-    audit(db, user, row, "post", before=before, store_id=row.store_id)
+    await audit(db, user, row, "post", before=before, store_id=row.store_id)
     return row
 
 
@@ -297,7 +305,7 @@ async def reverse_expense(db, user, row_id, payload):
     result = FinancialExpense(**values)
     db.add(result)
     await db.flush()
-    audit(db, user, result, "reverse", store_id=result.store_id)
+    await audit(db, user, result, "reverse", store_id=result.store_id)
     return result
 
 
@@ -318,7 +326,7 @@ async def set_expense_source(db, user, payload):
         await db.flush()
     else:
         row.mode, row.updated_by = payload.mode, user.id
-    audit(db, user, row, "source_selection", before=before, store_id=row.store_id)
+    await audit(db, user, row, "source_selection", before=before, store_id=row.store_id)
     return row
 
 
@@ -386,7 +394,7 @@ async def create_receipt(db, user, payload):
     row = FinancialReceipt(**payload.model_dump(), amount_cny=money(payload.amount * payload.exchange_rate), created_by=user.id)
     db.add(row)
     await db.flush()
-    audit(db, user, row, "receipt", store_id=row.store_id)
+    await audit(db, user, row, "receipt", store_id=row.store_id)
     return row
 
 
@@ -412,7 +420,7 @@ async def reverse_receipt(db, user, row_id, payload):
     row = FinancialReceipt(**values)
     db.add(row)
     await db.flush()
-    audit(db, user, row, "reverse", store_id=row.store_id)
+    await audit(db, user, row, "reverse", store_id=row.store_id)
     return row
 
 
@@ -454,7 +462,7 @@ async def classify_settlement(db, user, entry_id, payload):
         await db.flush()
     else:
         row.breakdown, row.note, row.confirmed_by, row.confirmed_at = json_safe(values), payload.note, user.id, utcnow()
-    audit(db, user, row, "classify", before=before, store_id=entry.store_id)
+    await audit(db, user, row, "classify", before=before, store_id=entry.store_id)
     return row
 
 

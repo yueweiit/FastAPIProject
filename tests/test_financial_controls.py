@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import Base, get_db
 from models import (InventoryBatch, InventoryCostAdjustment, InventoryCostAdjustmentLine,
-                    FinancialExpense, FinancialExpenseSource, FinancialReportVersion, SettlementEntry,
+                    FinancialAuditEvent, FinancialExpense, FinancialExpenseSource, FinancialReportVersion, SettlementEntry,
                     Store, StoreProfitLossReport, User)
 from routers import financial_control
 from routers.products import _product_summary_stmt
@@ -55,8 +55,8 @@ class WritableFacade(facts.AsyncFacade):
     async def rollback(self):
         self.session.rollback()
 
-    async def refresh(self, value):
-        self.session.refresh(value)
+    async def refresh(self, value, **kwargs):
+        self.session.refresh(value, **kwargs)
 
 
 class FinancialControlsTests(facts.FinancialFactsTests):
@@ -84,6 +84,67 @@ class FinancialControlsTests(facts.FinancialFactsTests):
                       category="advertising", source_ref="广告账单1", amount="100")
         values.update(overrides)
         return ExpenseRequest(**values)
+
+    def require_loaded_record(self, original):
+        def checked(row):
+            columns = {item.key for item in row.__mapper__.column_attrs}
+            self.assertFalse(inspect(row).unloaded & columns,
+                             f"{row.__tablename__}: audit/response must not implicitly load columns")
+            return original(row)
+        return checked
+
+    async def test_financial_inserts_load_defaults_before_audit_without_returning(self):
+        # SQLite normally returns defaults eagerly, hiding MySQL's expired-column path.
+        self.engine.dialect.insert_returning = False
+        self.engine.dialect.update_returning = False
+        with patch.object(controls, "record", side_effect=self.require_loaded_record(controls.record)):
+            cost = await controls.post_cost_adjustment(self.db, self.user, self.cost())
+            expense = await controls.create_expense(self.db, self.user, self.expense())
+            source = await controls.set_expense_source(self.db, self.user, ExpenseSourceRequest(
+                store_id=7, report_month=date(2026, 9, 1), category="advertising", mode="ledger"))
+            receipt = await controls.create_receipt(self.db, self.user, ReceiptRequest(
+                request_key="defaults-receipt-001", store_id=7, payout_id="defaults-payout",
+                receipt_date=date(2026, 9, 20), source_ref="defaults-receipt", amount="1"))
+            classification = await controls.classify_settlement(self.db, self.user, 1,
+                SettlementClassificationRequest(breakdown={"tax": Decimal(10)}))
+            version = await save_version(self.db, self.admin, FinancialVersionRequest(
+                request_key="defaults-version-001", store_id=7, report_month=date(2026, 9, 1)))
+            await self.db.commit()
+            for row, field in ((cost, "created_at"), (expense, "created_at"), (source, "updated_at"),
+                               (receipt, "created_at"), (classification, "confirmed_at"), (version, "created_at")):
+                values = controls.record(row)
+                self.assertIsInstance(values[field], datetime)
+                audit = self.session.scalar(select(FinancialAuditEvent).where(
+                    FinancialAuditEvent.entity_type == row.__tablename__, FinancialAuditEvent.entity_id == row.id))
+                self.assertEqual(audit.after_values[field], str(values[field]))
+
+    async def test_source_update_audit_uses_persisted_onupdate_timestamp(self):
+        self.engine.dialect.insert_returning = False
+        self.engine.dialect.update_returning = False
+        source = await controls.set_expense_source(self.db, self.user, ExpenseSourceRequest(
+            store_id=7, report_month=date(2026, 9, 1), category="advertising", mode="ledger"))
+        source.updated_at = datetime(2000, 1, 1)
+        await self.db.commit()
+        with patch.object(controls, "record", side_effect=self.require_loaded_record(controls.record)):
+            updated = await controls.set_expense_source(self.db, self.user, ExpenseSourceRequest(
+                store_id=7, report_month=date(2026, 9, 1), category="advertising", mode="manual"))
+            await self.db.commit()
+            response = controls.record(updated)
+        audit = self.session.scalar(select(FinancialAuditEvent).where(
+            FinancialAuditEvent.entity_type == source.__tablename__).order_by(FinancialAuditEvent.id.desc()))
+        self.assertEqual(audit.before_values["updated_at"], "2000-01-01 00:00:00")
+        self.assertEqual(audit.after_values["updated_at"], str(response["updated_at"]))
+        self.assertNotEqual(response["updated_at"], datetime(2000, 1, 1))
+        self.assertEqual((audit.before_values["mode"], audit.after_values["mode"]), ("ledger", "manual"))
+
+    async def test_audit_failure_does_not_commit_flushed_voucher(self):
+        self.engine.dialect.insert_returning = False
+        with patch.object(controls, "FinancialAuditEvent", side_effect=RuntimeError("audit failure")):
+            with self.assertRaisesRegex(RuntimeError, "audit failure"):
+                await controls.create_expense(self.db, self.user, self.expense())
+        await self.db.rollback()
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(FinancialExpense)), 0)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(FinancialAuditEvent)), 0)
 
     async def test_late_cost_restates_original_sale_month_without_mutating_fifo(self):
         batch = self.session.get(InventoryBatch, 1)

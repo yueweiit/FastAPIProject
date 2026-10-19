@@ -142,7 +142,7 @@ async def cancel_expense(row_id: int, data: FinanceReversalRequest,
         controls.fail("expense_not_draft", "已确认费用请追加反向单，不能作废。", 409)
     before = controls.record(row)
     row.status, row.note = "cancelled", data.note
-    controls.audit(db, user, row, "cancel", before=before, store_id=row.store_id)
+    await controls.audit(db, user, row, "cancel", before=before, store_id=row.store_id)
     await commit(db)
     return controls.record(row)
 

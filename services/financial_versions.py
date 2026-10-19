@@ -97,7 +97,7 @@ async def save_version(db, user, payload):
         status="needs_review" if result["warnings"] else "confirmed")
     db.add(row)
     await db.flush()
-    audit(db, user, row, "capture_version", store_id=store.id)
+    await audit(db, user, row, "capture_version", store_id=store.id)
     return row
 
 
