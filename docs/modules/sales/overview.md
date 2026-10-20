@@ -4,7 +4,7 @@
 
 提供指定店铺的手工销售、FIFO 扣库和批次成本明细；导入旧三列 CSV 或 TikTok“订单详情”CSV/XLSX/XLSM；保存结算原始行、组合 SKU 组件分摊、历史汇率和导入批次；提供待确认查询/导出、文件撤销、销售分页与人民币月度汇总。
 
-写入/撤销仅 admin/operator；非管理员读取敏感数据按当前绑定店铺。operator 可撤销同店其他人的文件，并非只允许撤销本人文件。管理员导入可以未绑定店铺，生成记录 store_id 可空；手工销售必须选择有效店铺。依据：[routers/sales.py](../../../routers/sales.py)。
+写入/撤销仅 admin/operator；非管理员读取敏感数据按当前绑定店铺。operator 可撤销同店其他人的文件，并非只允许撤销本人文件。管理员文件导入必须明确选择有效店铺，运营自动归入当前绑定店铺且不能越店；新导入固化店铺，历史空归属不自动回填。手工销售仍有独立店铺选择。依据：[routers/sales.py](../../../routers/sales.py) 的 _resolve_import_store/import_sales_file。
 
 ## 核心业务规则
 

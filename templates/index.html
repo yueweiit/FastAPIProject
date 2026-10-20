@@ -77,6 +77,11 @@
         .sales-page-header { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:16px; padding:2px 2px 0; }
         .sales-page-header h2 { font-size:22px; color:var(--ink); }
         .sales-toolbar-actions { display:flex; align-items:center; gap:8px; }
+        .sales-toolbar-actions, .sales-import-controls { flex-wrap:wrap; }
+        .sales-import-controls { display:flex; align-items:center; gap:12px; }
+        .sales-import-controls .form-group { margin:0; min-width:180px; }
+        .sales-import-help { font-size:12px; color:var(--muted); }
+
         .sales-toolbar-actions .btn { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:9px 15px; border:1px solid transparent; border-radius:7px; font-size:13px; font-weight:700; cursor:pointer; }
         .sales-entry-card { padding:20px 22px; }
         .sales-entry-card .flex-between { align-items:flex-start; }
@@ -503,7 +508,13 @@
             </div>
             <div class="sales-toolbar-actions">
                 <button class="btn btn-secondary" onclick="refreshSalesWorkspace()">刷新数据</button>
-                <label class="btn btn-primary">导入订单详情<input type="file" id="import-csv" accept=".csv,.xlsx,.xlsm" style="display:none" onchange="importSalesFile(this)"></label>
+                <div id="sales-import-controls" class="sales-import-controls">
+                    <div class="form-group"><label for="sales-import-store" data-sales-import-text="importStore"></label>
+                        <select id="sales-import-store" disabled onchange="updateSalesImportControls()"></select>
+                        <span id="sales-import-store-help" class="sales-import-help"></span>
+                    </div>
+                    <label class="btn btn-primary"><span data-sales-import-text="importOrders"></span><input type="file" id="import-csv" accept=".csv,.xlsx,.xlsm" style="display:none" disabled onchange="importSalesFile(this)"></label>
+                </div>
             </div>
         </div>
         <div class="card sales-entry-card" id="sales-manual-entry-card">
@@ -826,6 +837,7 @@ async function doLogout() {
 }
 
 function handleSessionExpired() {
+    resetSalesImportState();
     window.PageInteractions?.cancel();
     if (document.getElementById('product-import-dialog').open) {
         document.getElementById('product-import-dialog').close();
@@ -2011,12 +2023,57 @@ async function loadSkuOptions() {
     await loadManualSaleStores();
 }
 
+let salesStoreRequestId = 0;
+let salesImportSessionId = 0;
+let salesImportBusy = false;
+let salesImportStoresReady = false;
+const salesImportText = key => window.PageInteractions.text(key);
+function updateSalesImportControls() {
+    const store = document.getElementById('sales-import-store');
+    store.disabled = salesImportBusy || !salesImportStoresReady || !isAdmin();
+    const input = document.getElementById('import-csv');
+    input.disabled = !isOperator() || salesImportBusy || !salesImportStoresReady || !store.value;
+    input.parentElement.setAttribute('aria-disabled', String(input.disabled));
+    input.parentElement.style.opacity = input.disabled ? '.55' : '';
+}
+function resetSalesImportState() {
+    salesStoreRequestId++;
+    salesImportSessionId++;
+    salesImportBusy = false;
+    salesImportStoresReady = false;
+    document.getElementById('sales-import-store').innerHTML = '';
+    document.getElementById('import-csv').value = '';
+    updateSalesImportControls();
+}
 async function loadManualSaleStores() {
-    const [stores, me] = await Promise.all([api('GET', '/finance-masters/stores?active_only=true'), api('GET', '/auth/me')]);
+    const requestId = ++salesStoreRequestId, userId = CURRENT_USER_ID, role = CURRENT_ROLE;
     const select = document.getElementById('s-store');
-    const allowed = isAdmin() ? stores : stores.filter(store => Number(store.id) === Number(me.store_id));
-    select.innerHTML = '<option value="">选择店铺</option>' + allowed.map(store => `<option value="${store.id}">${escapeHtml(store.name)}</option>`).join('');
-    if (!isAdmin() && me.store_id && allowed.length) select.value = String(me.store_id);
+    const importSelect = document.getElementById('sales-import-store');
+    const previous = importSelect.value;
+    salesImportStoresReady = false;
+    updateSalesImportControls();
+    document.querySelectorAll('[data-sales-import-text]').forEach(node => node.textContent = salesImportText(node.dataset.salesImportText));
+    const help = document.getElementById('sales-import-store-help');
+    help.textContent = salesImportText('importStoresLoading');
+    try {
+        const [stores, me] = await Promise.all([api('GET', '/finance-masters/stores?active_only=true'), api('GET', '/auth/me')]);
+        if (requestId !== salesStoreRequestId || userId !== CURRENT_USER_ID || role !== CURRENT_ROLE) return;
+        const allowed = isAdmin() ? stores : stores.filter(store => Number(store.id) === Number(me.store_id));
+        const options = allowed.map(store => `<option value="${store.id}">${escapeHtml(store.name)}</option>`).join('');
+        select.innerHTML = '<option value="">选择店铺</option>' + options;
+        importSelect.innerHTML = `<option value="">${escapeHtml(salesImportText('chooseImportStore'))}</option>` + options;
+        if (!isAdmin() && me.store_id && allowed.length) {
+            select.value = importSelect.value = String(me.store_id);
+        } else if (allowed.some(store => String(store.id) === previous)) {
+            importSelect.value = previous;
+        }
+        salesImportStoresReady = true;
+        help.textContent = salesImportText(isAdmin() ? 'importSelectHelp' : allowed.length ? 'importBoundHelp' : 'importNoBoundStore');
+        updateSalesImportControls();
+    } catch (error) {
+        if (requestId !== salesStoreRequestId || userId !== CURRENT_USER_ID || role !== CURRENT_ROLE) return;
+        help.textContent = error.message;
+    }
 }
 
 function refreshManualSaleOrderNo() {
@@ -2080,39 +2137,46 @@ async function createSale() {
 
 async function importSalesFile(input) {
     const file = input.files[0];
-    if (!file) return;
+    if (!file || salesImportBusy) return;
+    const storeId = Number(document.getElementById('sales-import-store').value);
+    if (!salesImportStoresReady || !Number.isInteger(storeId) || storeId <= 0 || !isOperator()) {
+        showMsg(salesImportText('chooseImportStore'), false); input.value = ''; return;
+    }
+    const sessionId = salesImportSessionId;
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('store_id', String(storeId));
+    salesImportBusy = true;
+    updateSalesImportControls();
     try {
         const res = await fetch('/sales/import', {
-            method: 'POST',
-            headers: authHeaders(),
-            body: formData,
+            method: 'POST', headers: authHeaders(), body: formData,
         });
+        if (sessionId !== salesImportSessionId) return;
+        if (res.status === 401) { handleSessionExpired(); return; }
         const data = await res.json();
+        if (sessionId !== salesImportSessionId) return;
         if (!res.ok) {
             const details = (data.errors || []).slice(0, 5).map(e => `第${e.row}行：${e.message}`).join('；');
             const suffix = (data.errors || []).length > 5 ? '；其余错误请修正文件后重试' : '';
-            throw new Error(details ? `${data.message || '导入失败'}：${details}${suffix}` : (data.detail || '导入失败'));
+            throw new Error(details ? `${data.message || salesImportText('importFailed')}：${details}${suffix}` : formatApiError(data.detail, salesImportText('importFailed')));
         }
         const warningText = data.warnings?.length ? `；提示${data.warnings.length}条` : '';
         const pendingText = data.pending_confirmation ? `；待确认${data.pending_confirmation}条` : '';
         showMsg(`导入完成：结算行${data.settlement_rows}条，销售扣库存${data.sales_created}条，重复跳过${data.skipped_duplicates}条${pendingText}${warningText}`);
         salesPage = 1;
-        loadSales();
-        loadBatches();
-        loadSalesImports();
+        refreshSalesWorkspace();
     } catch (e) {
-        showMsg(e.message, false);
+        if (sessionId === salesImportSessionId) showMsg(e.message, false);
     } finally {
-        input.value = '';
+        if (sessionId === salesImportSessionId) { salesImportBusy = false; input.value = ''; updateSalesImportControls(); }
     }
 }
 
 async function loadSales() {
     // 运营和管理员才显示销售表单和导入按钮
     document.getElementById('sales-manual-entry-card').style.display = isOperator() ? '' : 'none';
-    document.getElementById('import-csv').parentElement.style.display = isOperator() ? '' : 'none';
+    document.getElementById('sales-import-controls').style.display = isOperator() ? '' : 'none';
     await loadProductOptions();
     const productMap = {};
     allProducts.forEach(p => productMap[p.id] = p);

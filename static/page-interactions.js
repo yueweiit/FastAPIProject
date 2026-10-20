@@ -5,6 +5,10 @@
         confirm: '确认', cancel: '取消', reason: '更正原因', requiredReason: '请填写更正原因。',
         longReason: '更正原因不能超过1000字。', rollbackTitle: '撤销导入',
         rollbackMessage: '确认撤销这次导入？销售记录将删除，已扣库存会恢复。',
+        importStore: '导入店铺', chooseImportStore: '请选择导入店铺', importOrders: '导入订单详情',
+        importSelectHelp: '请选择这次文件所属店铺', importBoundHelp: '文件将归入账号绑定的店铺',
+        importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
+        importFailed: '导入失败',
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 
@@ -87,6 +91,7 @@
         });
     }
     window.PageInteractions = {
+        text,
         batchDateTimeInput, batchDateTimeValue,
         reason: options => request({...options, reason: true}),
         confirmSalesRollback: () => request({title: text('rollbackTitle'), message: text('rollbackMessage')}),

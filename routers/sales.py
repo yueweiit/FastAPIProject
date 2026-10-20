@@ -6,8 +6,9 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -672,20 +673,31 @@ def _import_error_response(
     return JSONResponse(status_code=400, content=response.model_dump(mode="json"))
 
 
+async def _resolve_import_store(db, user, store_id):
+    if user.role == "admin":
+        if store_id is None:
+            raise HTTPException(400, detail={"code": "import_store_required", "message": "请选择导入店铺"})
+    else:
+        if user.store_id is None:
+            raise HTTPException(400, detail="当前账号未绑定店铺，请联系管理员")
+        if store_id is not None and store_id != user.store_id:
+            raise HTTPException(403, detail={"code": "import_store_forbidden", "message": "只能导入到账号绑定的店铺"})
+        store_id = user.store_id
+    store = await db.get(Store, store_id)
+    if not store or not store.is_active:
+        raise HTTPException(400, detail={"code": "import_store_unavailable", "message": "导入店铺不存在或已停用"})
+    return store
+
+
 @router.post("/import", response_model=SalesImportResponse)
 async def import_sales_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
+    store_id: Annotated[int | None, Form(gt=0)] = None,
 ):
     """导入旧版三列 CSV 或 TikTok Shop“订单详情”工作表。"""
-    import_store = None
-    if user.role != "admin":
-        if user.store_id is None:
-            raise HTTPException(status_code=400, detail="当前账号未绑定店铺，请联系管理员")
-        import_store = await db.get(Store, user.store_id)
-        if not import_store or not import_store.is_active:
-            raise HTTPException(status_code=400, detail="当前账号绑定的店铺不存在或已停用")
+    import_store = await _resolve_import_store(db, user, store_id)
 
     content = await file.read()
     if not content:
@@ -1568,8 +1580,8 @@ def _group_pending_confirmations(entries):
             item["product_names"].add(entry.product_name.strip())
         if entry.sku_name:
             item["sku_names"].add(entry.sku_name.strip())
-        if entry.store and entry.store.name:
-            item["store_names"].add(entry.store.name.strip())
+        store_name = entry.store.name.strip() if entry.store and entry.store.name else ""
+        item["store_names"].add(store_name or "未关联店铺")
         if entry.source_file:
             item["source_files"].add(entry.source_file.strip())
         if entry.transaction_type:
