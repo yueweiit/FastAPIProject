@@ -37,6 +37,8 @@ list_batches 按 arrived_at、id 降序，可按 product_id 或商品名称/SKU/
 
 导出有 batch_ids 时优先按选择 ID，不叠加 keyword/product_id；没有 ID 才用筛选条件导出全部匹配记录。宽表独立滚动、分页和跨页选择仅为前端交互。依据：[模板](../../../templates/index.html)、[batches.py](../../../routers/batches.py) 的 list_batches、export_batches。
 
+批次Excel末尾展示“店铺（创建人当前绑定）”，与存货报表的创建人当前绑定口径一致；未知显示“未关联店铺”。批次本身仍无store_id，账号改绑会影响该展示，不应据此认定为店铺独占库存。原21列不移动；商品汇总可能包含多个店铺创建的批次，不猜测单一店铺。
+
 销售事务和撤销细节见[销售流程](../sales/workflow.md)。本次未创建或编辑任何批次。
 
 ## 实际成本补差

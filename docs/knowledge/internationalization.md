@@ -51,4 +51,4 @@
 
 [static/page-interactions.js](../../static/page-interactions.js) 的更正原因、校验、确认/取消及撤销说明也采用局部zh-CN字典和中文回退。批次业务日期按无时区填写值提交，保持自然日，不按浏览器区域或UTC偏移换日；这不表示其他模块已统一时区。
 
-销售文件导入的店铺标签、选择/绑定/加载提示和导入按钮通过同一字典的text入口维护，两份首页使用data-sales-import-text及salesImportText。新增API错误以稳定code/message返回。
+销售文件导入的店铺标签、选择/绑定/加载提示和导入按钮通过同一字典的text入口维护，两份首页使用data-sales-import-text及salesImportText。新增API错误以稳定code/message返回；Excel新增店铺列沿用当前中文导出契约，未来多语言导出仍待明确语言参数。

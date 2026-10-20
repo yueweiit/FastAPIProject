@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import InventoryBatch, Product, User, SaleCostDetail
+from models import InventoryBatch, Product, User, SaleCostDetail, Store
 from schemas import BatchCreate, BatchPageResponse, BatchResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
@@ -277,13 +277,21 @@ async def export_batches(
     products_result = await db.execute(select(Product).where(Product.id.in_(product_ids)))
     products = {product.id: product for product in products_result.scalars().all()}
 
+    # 与存货报表一致：展示创建人当前绑定店铺，不推断批次独占归属。
+    owner_ids = {batch.user_id for batch in batches if batch.user_id is not None}
+    store_names = {}
+    if owner_ids:
+        owner_rows = await db.execute(select(User.id, Store.name).outerjoin(
+            Store, Store.id == User.store_id).where(User.id.in_(owner_ids)))
+        store_names = {owner_id: name for owner_id, name in owner_rows.all()}
+
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "批次数据"
     headers = [
         "图片", "批次ID", "商品名称", "SKU", "批次号", "钉钉单号", "入库数", "剩余数",
         "采购价", "总金额", "头程运费", "头程运费钉钉单号", "尾程派送", "尾程派送费钉钉单号",
-        "其他成本", "其他成本钉钉单号", "单件成本", "头程发货时间", "入库时间", "创建时间", "创建人ID",
+        "其他成本", "其他成本钉钉单号", "单件成本", "头程发货时间", "入库时间", "创建时间", "创建人ID", "店铺（创建人当前绑定）",
     ]
     sheet.append(headers)
     header_fill = PatternFill("solid", fgColor="5B9BD5")
@@ -301,7 +309,10 @@ async def export_batches(
             batch.total_amount, batch.shipping_cost, batch.shipping_cost_no or "", batch.last_mile_cost,
             batch.last_mile_cost_no or "", batch.other_cost, batch.other_cost_no or "", batch.unit_cost,
             batch.shipping_date, batch.arrived_at, batch.created_at, batch.user_id,
+            store_names.get(batch.user_id) or "未关联店铺",
         ])
+        sheet.cell(row_index, len(headers)).data_type = "s"
+        sheet.cell(row_index, len(headers)).number_format = "@"
         image_path = None
         if product and product.image:
             candidate = (BASE_DIR / product.image.lstrip("/")).resolve()
@@ -332,7 +343,7 @@ async def export_batches(
     for column, width in {
         "A": 12, "B": 10, "C": 22, "D": 14, "E": 24, "F": 25, "G": 10, "H": 10,
         "I": 13, "J": 13, "K": 13, "L": 20, "M": 13, "N": 22, "O": 13, "P": 20,
-        "Q": 13, "R": 20, "S": 20, "T": 20, "U": 12,
+        "Q": 13, "R": 20, "S": 20, "T": 20, "U": 12, "V": 30,
     }.items():
         sheet.column_dimensions[column].width = width
     sheet.auto_filter.ref = sheet.dimensions

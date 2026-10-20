@@ -24,6 +24,8 @@ GET 列表支持 product_id、keyword（名称/SKU/批次号，≤255）、page�
 
 GET 导出支持重复 batch_ids，或无 ID 时使用 product_id/keyword；有 ID 时以 ID 为准。示例：/batches/export?batch_ids=1&batch_ids=2。无可导出记录为404。
 
+Excel保留原21列及顺序，在末尾追加“店铺（创建人当前绑定）”。通过批次user_id关联User.store_id/Store.name一次性读取，创建人缺失或未绑定时显示“未关联店铺”；名称按文本写入，不执行为Excel公式。该列不是固化批次归属，不改变共享读取/FIFO扣库范围，也不新增数据库字段。
+
 商品不存在404，编辑他人批次403，已消耗批次400，编号冲突三次后409；数量金额无效422。响应含创建人、数量、剩余数、成本、所有单号及时间，见 [schemas.py](../../../schemas.py)；实际实现见 [batches.py](../../../routers/batches.py)。
 
 ## 成本响应扩展

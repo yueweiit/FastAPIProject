@@ -133,6 +133,18 @@ class ImportStoreTests(unittest.IsolatedAsyncioTestCase):
         self.actor=SimpleNamespace(id=2,role='viewer',store_id=7)
         self.assertEqual((await self.upload(7)).status_code,403)
 
+    async def test_batch_export_appends_explicit_current_owner_store(self):
+        self.actor=SimpleNamespace(id=2,role='viewer',store_id=7)
+        response=await self.request('GET','/batches/export?batch_ids=1&batch_ids=2&batch_ids=3')
+        self.assertEqual(response.status_code,200)
+        sheet=load_workbook(io.BytesIO(response.content)).active
+        self.assertEqual((sheet['E1'].value,sheet['U1'].value),('批次号','创建人ID'))
+        self.assertEqual(sheet['V1'].value,'店铺（创建人当前绑定）')
+        self.assertEqual([sheet.cell(i,22).value for i in (2,3,4)],['未关联店铺','未关联店铺','店铺7'])
+        self.session.get(Store,7).name='=1+1'
+        self.session.commit()
+        sheet=load_workbook(io.BytesIO((await self.request('GET','/batches/export?batch_ids=1')).content)).active
+        self.assertEqual((sheet['V2'].value,sheet['V2'].data_type),('=1+1','s'))
 
     def test_pending_export_does_not_hide_missing_store_in_a_group(self):
         entry=SimpleNamespace(platform_sku_id='X',mapping_error='缺映射',quantity=1,product_name='',sku_name='',

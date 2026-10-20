@@ -79,7 +79,7 @@
 
 ## 财务增强回归
 
-- `.\.venv\Scripts\python.exe -m unittest tests.test_sales_import_store -v`：隔离SQLite/ASGI验证导入店铺校验、管理员/运营/查看者边界、批次/销售/待确认归属、待确认导出店铺；不是InnoDB锁验证。`node tests/sales_import_page_checks.cjs`验证两份实际页面店铺选择、重复导入防护、过期加载和会话切换，不代替真实浏览器验收。
+- `.\.venv\Scripts\python.exe -m unittest tests.test_sales_import_store -v`：隔离SQLite/ASGI验证导入店铺校验、管理员/运营/查看者边界、批次/销售/待确认归属、导出店铺及旧列兼容；不是InnoDB锁验证。`node tests/sales_import_page_checks.cjs`验证两份实际页面店铺选择、重复导入防护、过期加载和会话切换，不代替真实浏览器验收。
 
 - `node tests/page_interactions_checks.cjs`：两份实际页面新增/编辑批次函数在上海、UTC、墨西哥城三种进程时区的午夜边界与重复编辑；未改日期保留秒数；撤销取消、连点及会话切换不提交。页面内dialog的键盘/焦点/显示仍需真实浏览器验收。
 
