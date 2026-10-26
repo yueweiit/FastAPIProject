@@ -149,7 +149,7 @@ test_main.http          手工请求示例
 
 ## 6. 数据库表和业务关系
 
-批次修改权限与日志：运营和管理员均可编辑任意创建人的未出库且无成本调整来源批次；删除仍沿用创建人限制。新增默认启用的`batch_change_logs`保存身份和修改前后快照，与批次更新同事务，不随批次或账号删除级联清理。读取只允许admin/operator，页面与接口见[库存模块](docs/modules/inventory/overview.md)；结构准备见[运行说明](PROJECT_RUNBOOK.md#批次跨创建人编辑与修改日志)。
+批次修改权限与日志：运营/管理员可编辑任意历史批次，保留已售数；已售或已补差批次的数量/金额更正须启用财务增强，以cost_basis冻结原依据、追加差额追溯原销售月，不回写FIFO单价或旧月度版本。编辑与日志/凭证同事务，删除仍限未消耗且无补差；日志不级联删除。规则见[库存模块](docs/modules/inventory/overview.md)，结构准备见[运行说明](PROJECT_RUNBOOK.md#已出库批次编辑与成本重述)。
 
 当前 ORM 定义28张表（8张财务增强表默认关闭）；以下为FIFO核心的五张，其余为店铺、平台SKU、导入、结算、财务及两张认证状态表，完整字典见[数据库总览](docs/knowledge/database.md)：
 
@@ -276,11 +276,11 @@ DELETE /products/{id}         删除商品
 ```text
 POST   /batches               新建入库批次
 GET    /batches               查询批次
-PUT    /batches/{id}          修改未被消耗的批次
+PUT    /batches/{id}          修改历史批次，已售成本通过差额追溯
 DELETE /batches/{id}          删除未被消耗的批次
 ```
 
-批次列表和批次导出对全部已登录角色开放。`viewer` 只能查看和导出；`operator`/`admin`可编辑任意创建人的未消耗且无成本调整来源批次，每次保存追加日志。`operator`删除仍仅限自己创建的未消耗且无成本调整来源批次；`admin`可删除任意符合这些状态限制的批次。修改日志由`admin`/`operator`共享只读查询。
+批次列表/导出对全部已登录角色开放；viewer只读。operator/admin可跨创建人编辑，已售数/日期/版本由行锁内复查，数量和金额按成本重述规则执行，单号等资料不重置库存。operator删除仍限自己创建且未消耗、无补差批次，admin删除也受状态限制。日志仅admin/operator共享只读。
 
 ### 8.4 销售接口
 

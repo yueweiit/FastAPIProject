@@ -7,6 +7,7 @@
 | 审计/默认字段 | [financial_controls.py](../../../services/financial_controls.py)：audit、record | audit为异步；事务内flush并显式refresh未加载列，避免MySQL默认字段隐式IO |
 | 凭证/校验/分摊 | [financial_controls.py](../../../services/financial_controls.py)：prepare_cost_adjustment、validate_adjusted_cost、post_cost_adjustment、reverse_cost_adjustment | 固定锁序、当前读、整数余数分摊、原分配反向、唯一约束、audit |
 | 查询成本层 | [cost_layers.py](../../../services/cost_layers.py)：load_cost_layers、AdjustedBatch、sale_cost_context、adjusted_cost_expression | 分配/调整头；会话内缓存，写入后失效 |
+| 已售批次绝对金额更正 | [batch_edits.py](../../../services/batch_edits.py)：freeze_cost_basis、restate_costs；routers/batches.py | 原单位成本依据、保留已售数、批次锁、差额凭证/日志同事务；独立补差权限不变 |
 | 销售/库存/财务 | [sales.py](../../../routers/sales.py)、[batches.py](../../../routers/batches.py)、[products.py](../../../routers/products.py)、[reports.py](../../../routers/reports.py) | 原始FIFO＋补差、持有期间准备回放 |
 | 费用与来源 | financial_controls.create_expense、post_expense、reverse_expense、ledger_manual_periods | financial_facts.manual_period_values；原人工JSON保留 |
 | 分类/回款 | financial_controls.classify_settlement、create_receipt、reverse_receipt、reconciliation | 原结算差额；跨月付款ID核对 |

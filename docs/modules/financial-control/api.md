@@ -33,6 +33,8 @@
 
 request_key为8–64位ASCII字母数字下划线/横线，客户端同一提交重试保留，表单内容变化后更换。来源凭证号必填，建议含供应商/平台前缀，防止不同来源单号碰撞。重复请求内容不同返回409；同时并发首次提交可能由唯一约束返回409，应查询已有记录，不盲目生成新凭证。
 
+成本单重复提交仍验证当前批次权限。quantity模式的分配权重由首次入账数量固化：批次后来更正数量，相同request_key、单据内容及批次集合仍返回原单，不重摊金额、不更新原分配或新增审计。weight/volume/value模式仍比较显式weight；金额、核对状态、来源、其他单据内容或批次集合改变均返回409 idempotency_conflict。数量模式不使用客户端weight作为分摊依据。规则实现见[post_cost_adjustment](../../../services/financial_controls.py)。
+
 工作台优先使用crypto.randomUUID；非本机HTTP等缺少此方法的环境通过crypto.getRandomValues生成UUID v4，失败重试继续复用同一表单标识。两种安全随机接口都不可用时显示集中语言资源中的升级提示，不降级为Math.random。
 
 金额原币Decimal最多16位4小数；汇率18位8小数正数。CNY仅接受1或省略，外币不能省略；人民币结果四位HALF_UP，校验可存储范围。cost的amount是差额，可负或0；expenses与receipts金额均保留原币、固化汇率及amount_cny。日期不晚于当天，月份必须当月1日。

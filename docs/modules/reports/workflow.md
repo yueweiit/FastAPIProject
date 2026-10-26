@@ -62,6 +62,8 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 | 分摊人事财务 | OA 同名非零组件，按当前启用店铺数均分 |
 | 人员薪资 | OA 部门名精确匹配店铺名；已保存人工值优先 |
 
+批次数量/成本经历史编辑更正后，原FIFO单价不改写；_fifo_cost_components通过base_cost_components读取cost_basis冻结的原构成，再叠加各类差额。不能改用当前数量和最近目标费用重新分配旧FIFO成本，否则会重复或错配成本。当前查询追溯原销售月，旧FinancialReportVersion.payload保持原值；规则及结构前提见[库存流程](../inventory/workflow.md#编辑与删除)。
+
 关税、本地物流、代发、运费/其他收入、广告、税费等人工项按报表JSON保存；自动项与公式项不允许通过manual_values覆盖，不支持的键被忽略。PUT默认update_scope=all，仍完整替换manual_values/remarks；页面显式使用current，仅替换本月人工列并在metadata标记monthly。原比较值保留存储；读取时上月取上月记录的current，年累计按当年各月current汇总，OA薪资按月缺省/覆盖后汇总。旧all模式显式比较值保持兼容，缺失比较值才推导，未提交本月项清空为null。已有报表行锁保护读取及合并；响应同时提供最终计算值value和实际保存的manual_value，页面只用后者填入输入框，OA默认薪资显示为占位值，留空提交null并继续随OA重算。备注始终完整替换；空人工薪资可以回落到OA默认。UI只编辑本月列，API/Excel仍含三个期间，具体契约见[损益API](api.md#损益保存契约)。
 
 页面加载时清空旧报表并禁用保存；仅最新请求且店铺/月与控件一致的响应可展示。保存绑定已加载报表的店铺和月份，禁止重复提交；保存中切换条件会等待其结束再查询，旧保存成功响应不会覆盖新选择，保存失败始终提示原月份，避免未保存的修改静默丢失。会话过期使待处理报表请求失效。依据：[运行模板](../../../templates/index.html) 的 loadStoreProfitLoss、saveStoreProfitLoss、resetStoreProfitLossState；[页面模拟检查](../../../tests/profit_loss_page_checks.cjs)同时覆盖根目录副本。

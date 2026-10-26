@@ -13,7 +13,7 @@
 | `batch_no` | `String(64)` | 否 | 批次编号 | 唯一 |
 | `quantity` | `Integer` | 否 | 数量；业务含义见本表说明 | — |
 | `remaining_quantity` | `Integer` | 否 | 当前剩余可用数量 | — |
-| `unit_cost` | `DECIMAL(12, 4)` | 否 | 单件成本 | — |
+| `unit_cost` | `DECIMAL(12, 4)` | 否 | 原FIFO基准单价；有效成本另叠加调整层 | — |
 | `purchase_price` | `DECIMAL(12, 4)` | 否 | 采购单价 | — |
 | `dingtalk_order_no` | `String(64)` | 是 | 采购钉钉单号 | — |
 | `total_amount` | `DECIMAL(12, 4)` | 是 | 采购总金额 | — |
@@ -27,6 +27,7 @@
 | `shipping_date` | `DateTime` | 是 | 发货时间 | — |
 | `arrived_at` | `DateTime` | 否 | 到货时间 | — |
 | `created_at` | `DateTime` | 否 | 创建时间 | 数据库默认：func.now() |
+| `cost_basis` | `JSON` | 是 | 首次成本重述冻结的原quantity、unit_cost、四科目单位成本components | 默认空；仅服务端写入，后续不覆盖 |
 
 复合唯一约束与索引（ORM 声明）：
 
@@ -36,13 +37,13 @@
 
 ## 数据约束和归属
 
-quantity 为原始入库数量，remaining_quantity 为当前可用数量；数据库没有统一非负 CHECK，路由校验和 FIFO/撤销事务共同保证一致性。batch_no 唯一，按到货时间、ID 及商品/到货时间建索引。
+quantity为当前更正后的入库数量，remaining_quantity为当前余量；更正保留quantity−remaining_quantity及实际出库明细一致。cost_basis.quantity保留冻结时的原分摊依据，不随更正变化。数据库没有统一非负CHECK，路由/FIFO/撤销事务共同保证一致性。batch_no唯一。
 
-user_id 保存创建人，可为空；没有 store_id、仓库 ID、关税独立列。total_amount 的 ORM 注释“仅留档”滞后于实际逻辑，create/update 会据此计算 purchase_price。成本单号不参与计算。
+user_id保存创建人，可为空；没有store_id、仓库ID、关税独立列。total_amount用于计算purchase_price；成本单号不参与计算。已售成本重述的原构成由cost_basis独立冻结，不再按最近目标金额重新分配旧FIFO成本。
 
 sale_cost_details、inventory_period_snapshots 引用批次，不能随意改历史成本、删除批次或通过直接 UPDATE 修复库存。库存主数量与按历史销售重建的数量需勾稽，撤销会删除相关明细。依据：[batches.py](../../../routers/batches.py)、[models.py](../../../models.py)、[sales.py](../../../routers/sales.py)。
 
-`InventoryBatch.edit_version`是所有原始持久化列规范序列化后的SHA-256内容摘要，仅作为API编辑前置条件，不是数据库列或授权凭据。Decimal统一数值表示，日期保留微秒，财务调整展示仍委托原批次计算；不新增列或回填历史值。行锁内刷新并比较，防止旧表单覆盖中途修改；接口规则见[编辑并发保护](api.md#编辑并发保护)。
+InventoryBatch.edit_version是原持久化字段的基础摘要；AdjustedBatch另纳入调整明细指纹。均是API前置条件，不是数据库列或授权凭据。新cost_basis列是可空加法迁移，无历史回填，首次受保护成本编辑才冻结；DDL见[add_batch_cost_basis.py](../../../migrations/add_batch_cost_basis.py)，migrate.py兼容补列。原FIFO单价及财务调整分配的quantity不回写；接口见[编辑并发保护](api.md#编辑并发保护)。
 
 ## batch_change_logs
 

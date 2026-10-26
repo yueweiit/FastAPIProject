@@ -7,6 +7,7 @@
 | 搜索/分页 | loadBatches、searchBatches、renderBatchPage | list_batches | 批次、商品 |
 | 字段显示 | toggleBatchColumn、applyBatchColumnSelection | 无后端写入 | 浏览器列状态 |
 | 编辑/删除 | batchEditBlockedReason、openEditBatch、saveEditBatch、deleteBatch | _locked_batch、update_batch、delete_batch、ensure_batch_cost_editable | 原创建人、库存剩余数、成本调整当前读、InventoryBatch.edit_version |
+| 已售数量/成本更正 | openEditBatch、saveEditBatch | [batch_edits.py](../../../services/batch_edits.py)的freeze_cost_basis/restate_costs；base_cost_components、post_cost_adjustment | cost_basis、调整头/分配/财务审计；保留原FIFO单价 |
 | 修改日志 | openBatchLogs、PageInteractions.batchLogs | _batch_change_values、list_batch_change_logs | BatchChangeLog；批次更新与日志同事务 |
 | 选择/导出 | downloadBatchExport、exportBatch、exportAllBatches | export_batches | 批次、商品、uploads 图片 |
 | FIFO 消耗 | 销售页面 | lock_fifo_batches、fifo_sell | sales、sale_cost_details |
@@ -16,8 +17,10 @@
 
 相关测试为 [test_sales_rules.py](../../../tests/test_sales_rules.py)、[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py)；真实验证脚本 [mysql_fifo_concurrency.py](../../../tests/mysql_fifo_concurrency.py) 会写测试库，需要独立运行授权。历史批次字段/创建人转移脚本见 [migrations/](../../../migrations/)，不得默认执行。
 
-批次编辑回归：`python -m unittest tests.test_batch_edit -v` 使用真实路由和隔离内存 SQLite 验证权限、出库后拦截、四位小数、清空单号及数量/金额校验，不证明 InnoDB 并发锁；`node tests/batch_edit_page_checks.cjs` 执行两份首页的实际渲染/编辑函数，覆盖按钮限制、回填、重复提交、保存错误及刷新失败。日期边界沿用 `node tests/page_interactions_checks.cjs`。新增按钮/限制/保存提示集中于 [page-interactions.js](../../../static/page-interactions.js) 的 zh-CN 字典，未增加全站语言切换。
+批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、删除限制、有效金额回填、数量下限、追溯模式、重复提交和错误保留；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
 
-`test_batch_edit`另覆盖跨创建人编辑后原归属不变、编辑与日志原子回滚、成本调整阻断、删除权限保持、日志分页/保留及viewer拒绝。`node tests/batch_log_page_checks.cjs` 验证实际日志弹窗的分页、转义、空态/失败、退出及过期响应隔离。
+test_batch_restatement还覆盖原销售月成本增加、入库数量不重置已售数、售完不复活库存、旧月度版本保留/新版、未来FIFO只叠加一次、旧分配数量冲销及财务关闭/旧模式/金额越界拒绝。日志失败回滚数量、依据、所有成本凭证和财务审计。batch_log_page_checks.cjs仍验证日志弹窗分页/转义/过期响应。
 
-并发回归：`test_batch_edit`模拟RR旧快照，验证编辑与删除均按批次→调整行加锁，使用MySQL方言检查FOR UPDATE；验证两份旧表单的运费覆盖被409拦截且不记成功日志，刷新后可保存、日志前后衔接、ORM旧对象刷新、版本缺失/格式错误、成本展示不改变版本和POST兼容。SQLite/模拟会话不能证明真实InnoDB等待行为。页面检查另覆盖打开时固定版本、列表变化不替换版本、冲突保留输入和再次提交仍携带旧版本、重新打开才使用新版本。
+精度与重试回归：test_batch_restatement通过实际批次及财务路由验证非整除费用清零、再次保存/零额核对、真实负差拒绝；更正数量后的原成本单重试不新增分配、审计或日志，修改单据/批次/显式权重仍409，非创建人仍403。另验证数量增加后的旧凭证冲销不能将整批负成本舍为零；test_financial_controls验证最大INT数量下的-0.0001元仍拒绝及原有总成本下限。
+
+并发回归：test_batch_edit模拟RR旧快照，编辑锁内当前读调整层，删除锁内当前读来源；零额凭证也改变版本。旧表单409不覆盖成本、不追加日志；ORM旧对象刷新、缺失/错误版本及POST兼容仍覆盖。页面固定打开时版本，重试旧表单不自动更新版本。独立DDL脚本[add_batch_cost_basis.py](../../../migrations/add_batch_cost_basis.py)仅输出SQL，不执行迁移。

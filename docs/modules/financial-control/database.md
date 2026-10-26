@@ -104,7 +104,7 @@
 | id | INTEGER | 否 | 主键/自增 | 主键 |
 | adjustment_id | INTEGER | 否 | 索引；FK inventory_cost_adjustments.id | 调整头ID |
 | batch_id | INTEGER | 否 | 索引；FK inventory_batches.id | 原批次ID |
-| quantity | INTEGER | 否 | — | 原入库数量快照（分母） |
+| quantity | INTEGER | 否 | — | 凭证入账时批次数量快照（分母），批次数量更正后也不回写；冲销继续使用此值 |
 | allocation_weight | DECIMAL(20, 8) | 否 | — | 本次分摊依据数值 |
 | amount_cny | DECIMAL(16, 4) | 否 | — | 人民币金额/差额，四位 |
 

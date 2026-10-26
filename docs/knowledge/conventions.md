@@ -44,7 +44,9 @@
 
 批次编辑/日志：`test_batch_edit`使用真实路由和隔离SQLite验证跨创建人编辑、日志与批次原子提交、失败回滚、权限与保留；`node tests/batch_edit_page_checks.cjs`及`node tests/batch_log_page_checks.cjs`验证实际页面函数/日志弹窗。均不代表目标MySQL/InnoDB或生产验收；DDL生成脚本仅离线输出，不能当作迁移已执行。
 
-该批次回归还模拟认证旧快照，校验修改/删除的成本来源检查都是父批次锁后的FOR UPDATE当前读；验证过期edit_version不能覆盖运费且不追加成功日志、缺失版本不能绕过、刷新核对后可保存。页面测试固定打开时版本，409保留输入且不自动换版本重试；边界与命令维护于[库存代码映射](../modules/inventory/code-map.md)。
+批次回归模拟RR旧快照，校验编辑的调整层及删除来源检查都是父批次锁后的当前读；版本覆盖调整来源，零额补差也使旧表单失效。`test_batch_restatement`另覆盖已售数量/成本更正、未来FIFO不重复计费、旧月版本保留、原分配冲销、角色、日志整体回滚和关闭开关/旧客户端拒绝。页面版本固定及错误保留仍需验证；命令与边界见[库存代码映射](../modules/inventory/code-map.md)。
+
+成本精度/幂等修改还须运行`test_financial_controls`和`test_batch_restatement`：非整除费用清零与后续零额核对、最小负金额/数量增加后冲销的负成本防护；数量更正后的相同成本请求复用原凭证且不追加审计，内容/批次/显式权重冲突和创建人权限仍拒绝。普通SQLite不证明真实InnoDB等待或并发首次提交的唯一冲突行为。
 
 测试文件均位于 [tests/](../../tests/)。全量单元测试常用命令：
 
