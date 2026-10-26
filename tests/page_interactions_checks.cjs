@@ -17,7 +17,7 @@ function setup(file) {
         refreshSalesWorkspace:()=>{context.refreshed=true;}});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),context);
     context.isOperator=()=>true; context.isAdmin=()=>true;
-    vm.runInContext('let editingBatchId=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
+    vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
     for(const name of ['createBatch','batchEditBlockedReason','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source,`${file}: missing ${name}`);
@@ -41,7 +41,7 @@ async function main() {
                 equal(payload.arrived_at,'2026-09-01T00:15');
                 equal(payload.shipping_date,'2026-08-31T23:59');
                 // 含秒/小数秒的历史记录，不改日期时原样提交；重复编辑也不漂移。
-                const batch={...payload,id:12,remaining_quantity:5,arrived_at:'2026-09-01T00:15:37.123456',shipping_date:'2026-08-31T23:59:41'};
+                const batch={...payload,id:12,edit_version:'a'.repeat(64),remaining_quantity:5,arrived_at:'2026-09-01T00:15:37.123456',shipping_date:'2026-08-31T23:59:41'};
                 vm.runInContext(`currentBatchList=[${JSON.stringify(batch)}]`,c);
                 for(let i=0;i<2;i++) {
                     await c.openEditBatch(12);e('eb-qty').value='6';e('eb-total-amount').value='30';

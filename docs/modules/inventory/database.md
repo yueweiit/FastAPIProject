@@ -42,6 +42,8 @@ user_id 保存创建人，可为空；没有 store_id、仓库 ID、关税独立
 
 sale_cost_details、inventory_period_snapshots 引用批次，不能随意改历史成本、删除批次或通过直接 UPDATE 修复库存。库存主数量与按历史销售重建的数量需勾稽，撤销会删除相关明细。依据：[batches.py](../../../routers/batches.py)、[models.py](../../../models.py)、[sales.py](../../../routers/sales.py)。
 
+`InventoryBatch.edit_version`是所有原始持久化列规范序列化后的SHA-256内容摘要，仅作为API编辑前置条件，不是数据库列或授权凭据。Decimal统一数值表示，日期保留微秒，财务调整展示仍委托原批次计算；不新增列或回填历史值。行锁内刷新并比较，防止旧表单覆盖中途修改；接口规则见[编辑并发保护](api.md#编辑并发保护)。
+
 ## batch_change_logs
 
 来源：[models.py](../../../models.py) 的 `BatchChangeLog`；InnoDB/utf8mb4，独立于财务增强开关。应用只追加，不提供日志修改或删除接口；与批次修改同事务提交。

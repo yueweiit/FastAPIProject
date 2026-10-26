@@ -14,6 +14,8 @@
         batchEditRole: '当前账号没有批次编辑权限。',
         batchEditConsumed: '此批次已有出库记录，不能直接编辑；成本更正请通过成本补差处理。',
         batchEditSaved: '批次已更新。', batchEditRefreshFailed: '批次已更新，但列表刷新失败，请点击刷新。',
+        batchEditVersionRequired: '缺少批次编辑版本，请刷新页面后重新打开编辑。',
+        batchEditConflict: '批次已被其他操作修改，本次未保存。请先保留填写内容，关闭编辑并刷新列表，核对最新数据后重新编辑。',
         batchLogs: '日志', batchLogTitle: '批次修改日志', batchLogClose: '关闭',
         batchLogLoading: '正在加载日志…', batchLogEmpty: '暂无修改日志',
         batchLogNoChanges: '本次保存未更改字段', batchLogNull: '未填写',

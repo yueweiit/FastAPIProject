@@ -56,3 +56,5 @@
 批次操作列新增的编辑/删除标签、受限原因、编辑说明和保存反馈也通过 `PageInteractions.text` 的 `batch*` 键维护，语言缺失时回退 zh-CN。沿用已有表单标签；本次没有新增支持语言或变更导入/导出契约。
 
 批次修改日志弹窗复用该字典的`batchLog*`标签、字段映射、分页、空态和错误提示；日志绝对时间含UTC偏移，按浏览器语言/时区显示，快照金额按精确字符串展示，不将其转换成浮点数。历史发货/入库业务日期仍原样展示，不统一改动其他时间口径。
+
+批次并发编辑错误使用稳定码`batch_edit_conflict`、`batch_edit_version_required`；两份页面的formatApiError映射到该字典`batchEditConflict`、`batchEditVersionRequired`，服务端message保留为兼容回退。当前仅支持zh-CN，未增加语言或依赖。

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import InventoryBatch, Product, User, SaleCostDetail, Store, BatchChangeLog
-from schemas import BatchCreate, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
+from schemas import BatchCreate, BatchUpdate, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
 
@@ -127,7 +127,7 @@ async def create_batch(
 @router.put("/{batch_id}", response_model=BatchResponse)
 async def update_batch(
     batch_id: int,
-    data: BatchCreate,
+    data: BatchUpdate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
 ):
@@ -136,10 +136,19 @@ async def update_batch(
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
 
+    if data.edit_version is None:
+        raise HTTPException(428, detail={"code": "batch_edit_version_required",
+            "message": "缺少批次编辑版本，请刷新页面后重新打开编辑。"})
+
     # 检查是否已被消耗
     await ensure_batch_cost_editable(db, batch_id)
     if batch.remaining_quantity != batch.quantity:
         raise HTTPException(status_code=400, detail="批次已有出库记录，无法修改")
+
+    # 行锁内读取当前版本；排队的编辑必须携带打开表单时的版本，不能覆盖中途修改。
+    if data.edit_version != batch.edit_version:
+        raise HTTPException(409, detail={"code": "batch_edit_conflict",
+            "message": "批次已被其他操作修改，本次未保存。请先保留填写内容，关闭编辑并刷新列表，核对最新数据后重新编辑。"})
 
     before = _batch_change_values(batch)
     purchase_price, total_amount = _resolve_purchase_values(data, batch)
@@ -180,7 +189,7 @@ async def update_batch(
 def _batch_change_values(batch):
     # 复用响应契约序列化 Decimal/业务日期；不读取用户敏感字段或追溯成本层。
     return BatchResponse.model_validate(batch).model_dump(mode="json", exclude={
-        "base_unit_cost", "cost_adjustment_per_unit", "cost_status",
+        "base_unit_cost", "cost_adjustment_per_unit", "cost_status", "edit_version",
     })
 
 

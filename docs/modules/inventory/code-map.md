@@ -6,13 +6,13 @@
 | SKU 下拉 | loadBatchSkuOptions、loadProductOptions | list_product_options | products |
 | 搜索/分页 | loadBatches、searchBatches、renderBatchPage | list_batches | 批次、商品 |
 | 字段显示 | toggleBatchColumn、applyBatchColumnSelection | 无后端写入 | 浏览器列状态 |
-| 编辑/删除 | batchEditBlockedReason、openEditBatch、saveEditBatch、deleteBatch | _locked_batch、update_batch、delete_batch、ensure_batch_cost_editable | 原创建人、库存剩余数、成本调整当前读 |
+| 编辑/删除 | batchEditBlockedReason、openEditBatch、saveEditBatch、deleteBatch | _locked_batch、update_batch、delete_batch、ensure_batch_cost_editable | 原创建人、库存剩余数、成本调整当前读、InventoryBatch.edit_version |
 | 修改日志 | openBatchLogs、PageInteractions.batchLogs | _batch_change_values、list_batch_change_logs | BatchChangeLog；批次更新与日志同事务 |
 | 选择/导出 | downloadBatchExport、exportBatch、exportAllBatches | export_batches | 批次、商品、uploads 图片 |
 | FIFO 消耗 | 销售页面 | lock_fifo_batches、fifo_sell | sales、sale_cost_details |
 | 撤销恢复 | rollbackSalesImport | rollback_sales_import | 原批次、原成本明细 |
 
-来源：[templates/index.html](../../../templates/index.html)、[routers/batches.py](../../../routers/batches.py)、[routers/products.py](../../../routers/products.py)、[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/cost_layers.py](../../../services/cost_layers.py)。契约为 [schemas.py](../../../schemas.py) 的 BatchCreate/BatchResponse/BatchPageResponse。
+来源：[templates/index.html](../../../templates/index.html)、[routers/batches.py](../../../routers/batches.py)、[routers/products.py](../../../routers/products.py)、[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/cost_layers.py](../../../services/cost_layers.py)。契约为 [schemas.py](../../../schemas.py) 的 BatchCreate/BatchUpdate/BatchResponse/BatchPageResponse。
 
 相关测试为 [test_sales_rules.py](../../../tests/test_sales_rules.py)、[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py)；真实验证脚本 [mysql_fifo_concurrency.py](../../../tests/mysql_fifo_concurrency.py) 会写测试库，需要独立运行授权。历史批次字段/创建人转移脚本见 [migrations/](../../../migrations/)，不得默认执行。
 
@@ -20,4 +20,4 @@
 
 `test_batch_edit`另覆盖跨创建人编辑后原归属不变、编辑与日志原子回滚、成本调整阻断、删除权限保持、日志分页/保留及viewer拒绝。`node tests/batch_log_page_checks.cjs` 验证实际日志弹窗的分页、转义、空态/失败、退出及过期响应隔离。
 
-并发回归：`test_batch_edit`模拟RR旧快照，验证编辑与删除均按批次→调整行加锁，使用MySQL方言检查FOR UPDATE；另验证无字段变化的保存使用当前读刷新审计快照。SQLite/模拟会话不能证明真实InnoDB等待行为。
+并发回归：`test_batch_edit`模拟RR旧快照，验证编辑与删除均按批次→调整行加锁，使用MySQL方言检查FOR UPDATE；验证两份旧表单的运费覆盖被409拦截且不记成功日志，刷新后可保存、日志前后衔接、ORM旧对象刷新、版本缺失/格式错误、成本展示不改变版本和POST兼容。SQLite/模拟会话不能证明真实InnoDB等待行为。页面检查另覆盖打开时固定版本、列表变化不替换版本、冲突保留输入和再次提交仍携带旧版本、重新打开才使用新版本。

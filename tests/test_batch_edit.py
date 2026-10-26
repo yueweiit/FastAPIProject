@@ -71,7 +71,8 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
     async def save(self, **changes):
         payload = {'product_id': 42, 'quantity': 13, 'total_amount': '34.0054',
                    'shipping_cost': '161.8555', 'last_mile_cost': '0', 'other_cost': '0',
-                   'arrived_at': '2026-08-30T00:15:37', 'shipping_date': '2026-08-29T23:59:41'}
+                   'arrived_at': '2026-08-30T00:15:37', 'shipping_date': '2026-08-29T23:59:41',
+                   'edit_version': getattr(self.session.get(InventoryBatch, 12), 'edit_version', None)}
         payload.update(changes)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
             return await client.put('/batches/12', json=payload)
@@ -210,6 +211,78 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
         self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
+    async def test_stale_editor_cannot_overwrite_cost_or_append_a_log(self):
+        opened = (await self.request('GET', '/batches')).json()[0]
+        first = await self.save(shipping_cost='200.0000')
+        self.assertEqual(first.status_code, 200, first.text)
+        self.actor.id = 99
+        self.actor.username = 'second-editor'
+        # 第二个编辑框仅改单号，提交的运费还是打开时的旧值。
+        stale = await self.save(edit_version=opened['edit_version'], dingtalk_order_no='NEW')
+        self.assertEqual(stale.status_code, 409, stale.text)
+        self.assertEqual(stale.json()['detail']['code'], 'batch_edit_conflict')
+        batch = self.session.get(InventoryBatch, 12)
+        self.assertEqual(batch.shipping_cost, Decimal('200.0000'))
+        self.assertEqual(batch.dingtalk_order_no, 'OLD')
+        self.assertEqual(len(self.session.scalars(select(BatchChangeLog)).all()), 1)
+        # 重新读取并核对后保存，保留前一人的修改；新日志准确链接前后状态。
+        latest = (await self.request('GET', '/batches?page=1')).json()['items'][0]
+        self.assertNotEqual(latest['edit_version'], opened['edit_version'])
+        self.assertEqual(latest['edit_version'], first.json()['edit_version'])
+        saved = await self.save(edit_version=latest['edit_version'], shipping_cost='200.0000',
+                                dingtalk_order_no='NEW')
+        self.assertEqual(saved.status_code, 200, saved.text)
+        logs = self.session.scalars(select(BatchChangeLog).order_by(BatchChangeLog.id)).all()
+        self.assertEqual(logs[1].before_values, logs[0].after_values)
+        self.assertEqual(logs[1].after_values['shipping_cost'], '200.0000')
+        self.assertNotIn('edit_version', logs[1].after_values)
+
+    async def test_missing_or_invalid_version_cannot_bypass_conflict_check(self):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
+            missing = await client.put('/batches/12', json={'product_id': 42, 'quantity': 99})
+        self.assertEqual(missing.status_code, 428, missing.text)
+        response = await self.save(edit_version=None, quantity=99)
+        self.assertEqual(response.status_code, 428, response.text)
+        self.assertEqual(response.json()['detail']['code'], 'batch_edit_version_required')
+        invalid = await self.save(edit_version='invalid', quantity=99)
+        self.assertEqual(invalid.status_code, 422, invalid.text)
+        mismatch = await self.save(edit_version='0' * 64, quantity=99)
+        self.assertEqual(mismatch.status_code, 409, mismatch.text)
+        self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+
+    async def test_version_is_checked_against_locked_row_not_stale_identity_map(self):
+        batch = self.session.get(InventoryBatch, 12)
+        version = batch.edit_version
+        self.session.commit()
+        # 另一事务已提交，但本请求会话仍持有旧ORM对象。
+        with self.engine.begin() as connection:
+            connection.execute(InventoryBatch.__table__.update().where(
+                InventoryBatch.id == 12).values(shipping_cost=Decimal('200.0000')))
+        self.assertEqual(batch.shipping_cost, Decimal('161.8555'))
+        response = await self.save(edit_version=version)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(self.session.get(InventoryBatch, 12).shipping_cost, Decimal('200.0000'))
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+
+    async def test_version_uses_persisted_original_fields_even_with_cost_display_wrapper(self):
+        from schemas import BatchResponse
+        from services.cost_layers import AdjustedBatch
+        batch = self.session.get(InventoryBatch, 12)
+        original = BatchResponse.model_validate(batch)
+        adjusted = BatchResponse.model_validate(AdjustedBatch(batch, [(SimpleNamespace(
+            amount_cny=Decimal('13'), quantity=13), SimpleNamespace(
+                id=1, category='purchase', is_final=True, reverses_id=None))]))
+        self.assertNotEqual(adjusted.unit_cost, original.unit_cost)
+        self.assertEqual(adjusted.edit_version, original.edit_version)
+        # 相同金额不同小数位与 ORM 重新载入不应造成假冲突。
+        batch.last_mile_cost = Decimal('0.000000')
+        self.assertEqual(batch.edit_version, original.edit_version)
+        self.session.expire_all()
+        self.assertEqual(self.session.get(InventoryBatch, 12).edit_version, original.edit_version)
+        saved = await self.save(edit_version=original.edit_version)
+        self.assertEqual(saved.status_code, 200, saved.text)
+
     async def test_update_and_delete_use_current_cost_read_after_parent_lock(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
         session = self.session
@@ -267,6 +340,12 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(refresh_options[0], {'with_for_update': True})
         log = self.session.scalar(select(BatchChangeLog))
         self.assertEqual(log.before_values, log.after_values)
+
+    async def test_create_still_accepts_legacy_payload_without_edit_version(self):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
+            response = await client.post('/batches', json={'product_id': 42, 'quantity': 2, 'purchase_price': '3'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertRegex(response.json()['edit_version'], r'^[a-f0-9]{64}$')
 
 
 if __name__ == '__main__':

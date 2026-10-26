@@ -23,7 +23,9 @@ stateDiagram-v2
 
 _locked_batch 使用 FOR UPDATE 和 populate_existing，等待在途销售完成后读取最新数量。admin/operator 可编辑任意创建人的批次，operator 删除仍必须是原创建人；已有扣减直接返回 400。编辑重置 quantity/remaining_quantity、重算成本，未传总金额/单价时复用旧总金额；未传钉钉/费用单号则保留相应字段。编辑不更新 user_id、product_id 或 batch_no。
 
-update_batch 接收 BatchCreate，但不会把 data.product_id 写回原批次；不能将它描述为换商品功能。它没有完整历史成本明细/快照引用校验，恢复到未消耗后的历史外键仍可能阻止删除。不能只依据数量相等认定数据库删除安全。
+update_batch 接收 BatchUpdate（BatchCreate加edit_version），但不会把 data.product_id 写回原批次；不能将它描述为换商品功能。它没有完整历史成本明细/快照引用校验，恢复到未消耗后的历史外键仍可能阻止删除。不能只依据数量相等认定数据库删除安全。
+
+列表返回原始批次持久化字段的内容版本edit_version，页面在打开弹窗时固定保存该值。保存先锁定并刷新批次，再比对版本；其他人改过内容返回409（batch_edit_conflict），缺少版本返回428（batch_edit_version_required），均不修改数据或追加成功日志。冲突保留当前表单，需先保留填写内容，再关闭、刷新并核对后重新编辑；不得自动替换版本并重试旧表单。内容完全相同时版本可保持相同，不是每次保存递增的序号。算法位于InventoryBatch.edit_version，无新增库存字段或历史回填。
 
 批次列表的“操作”列固定在滚动区域右侧，提供导出、编辑、日志和满足原限制的删除入口。已有出库记录时编辑按钮禁用并提示原因；查看者仅显示导出。显示字段面板仍可显隐操作列。页面预检查不替代服务端行锁后的角色、最新剩余数及成本调整来源校验。
 
@@ -31,7 +33,7 @@ update_batch 接收 BatchCreate，但不会把 data.product_id 写回原批次�
 
 ### 修改日志
 
-每次成功的编辑保存（包括字段未变化的保存）在同一事务内向 batch_change_logs 追加记录：批次ID/编号、操作者ID/当时用户名/角色、UTC时间及修改前后完整批次快照。先 flush，再用refresh(with_for_update=True)当前读批次，确保金额快照是数据库实际四位小数；无字段变化时也不能退回RR旧快照。Decimal按字符串、业务日期按原值存JSON；快照不含展示调整层。日志失败则批次修改一起回滚，不允许只保存批次而漏记日志。实现见 update_batch、_batch_change_values。
+每次成功的编辑保存（包括字段未变化的保存）在同一事务内向 batch_change_logs 追加记录：批次ID/编号、操作者ID/当时用户名/角色、UTC时间及修改前后完整批次快照。先 flush，再用refresh(with_for_update=True)当前读批次，确保金额快照是数据库实际四位小数；无字段变化时也不能退回RR旧快照。Decimal按字符串、业务日期按原值存JSON；快照不含edit_version或展示调整层。日志失败则批次修改一起回滚，不允许只保存批次而漏记日志。实现见 update_batch、_batch_change_values。
 
 该表独立于财务增强开关，默认需建表；只提供 admin/operator 的分页读取，不提供修改/删除日志接口。日志不设批次/用户外键，保留当时身份和编号，后续账号改名、批次或账号删除不会级联丢失日志。不是防数据库管理员篡改机制；运行账号仍应按部署要求限制数据库权限。已有历史修改不反推或补造日志。新增表和生产准备步骤见 [运行说明](../../../PROJECT_RUNBOOK.md#批次跨创建人编辑与修改日志)。
 

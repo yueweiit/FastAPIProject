@@ -195,6 +195,11 @@ class BatchCreate(BaseModel):
     arrived_at: datetime | None = None
 
 
+class BatchUpdate(BatchCreate):
+    # 缺省保持可解析，路由返回明确的升级提示；不允许旧客户端绕过并发保护。
+    edit_version: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
 class BatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -220,6 +225,7 @@ class BatchResponse(BaseModel):
     base_unit_cost: Decimal | None = None
     cost_adjustment_per_unit: Decimal = Decimal(0)
     cost_status: str = "unverified"
+    edit_version: str
 
 
 class BatchPageResponse(BaseModel):

@@ -726,6 +726,8 @@ function formatApiError(detail, fallback) {
         }).join('；');
     }
     if (detail && typeof detail === 'object') {
+        const batchErrorKey = {batch_edit_version_required: 'batchEditVersionRequired', batch_edit_conflict: 'batchEditConflict'}[detail.code];
+        if (batchErrorKey) return window.PageInteractions?.text(batchErrorKey) || detail.message;
         return detail.message || JSON.stringify(detail);
     }
     return detail || fallback;
@@ -1728,6 +1730,7 @@ async function loadBatchSkuOptions() {
 }
 
 let editingBatchId = null;
+let editingBatchVersion = null;
 let batchEditSaving = false;
 let currentBatchList = [];
 const selectedBatchIds = new Set();
@@ -1900,7 +1903,9 @@ async function openEditBatch(id) {
     if (!b) return;
     const reason = batchEditBlockedReason(b);
     if (reason) { showMsg(reason, false); return; }
+    if (!b.edit_version) { showMsg(window.PageInteractions.text('batchEditVersionRequired'), false); return; }
     editingBatchId = id;
+    editingBatchVersion = b.edit_version;
     document.getElementById('edit-batch-label').textContent = b.batch_no;
     document.getElementById('eb-qty').value = b.quantity;
     document.getElementById('eb-total-amount').value = b.total_amount ?? (Number(b.purchase_price || 0) * Number(b.quantity || 0)).toFixed(4);
@@ -1924,6 +1929,7 @@ async function openEditBatch(id) {
 function closeEditBatch() {
     if (batchEditSaving) return;
     editingBatchId = null;
+    editingBatchVersion = null;
     document.getElementById('edit-batch-modal').style.display = 'none';
 }
 
@@ -1949,6 +1955,7 @@ async function saveEditBatch() {
     if (!batch) return;
     const reason = batchEditBlockedReason(batch);
     if (reason) { showMsg(reason, false); return; }
+    if (!editingBatchVersion) { showMsg(window.PageInteractions.text('batchEditVersionRequired'), false); return; }
     if (!document.getElementById('edit-batch-form').reportValidity()) return;
     const userId = CURRENT_USER_ID;
     const batchId = editingBatchId;
@@ -1958,6 +1965,7 @@ async function saveEditBatch() {
         const arrived = document.getElementById('eb-date').value;
         const shipdate = document.getElementById('eb-shipdate').value;
         await api('PUT', `/batches/${batchId}`, {
+            edit_version: editingBatchVersion,
             product_id: batch.product_id,
             quantity: +document.getElementById('eb-qty').value,
             dingtalk_order_no: document.getElementById('eb-dingtalk-order').value.trim() || null,

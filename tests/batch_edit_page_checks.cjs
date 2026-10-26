@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 let checks = 0;
 const ok = value => { assert(value); checks++; };
 const equal = (a, b) => { assert.deepEqual(a, b); checks++; };
-const fixture = {id: 12, product_id: 42, user_id: 7, batch_no: 'HISTORY-01', quantity: 13,
+const fixture = {id: 12, product_id: 42, user_id: 7, batch_no: 'HISTORY-01', quantity: 13, edit_version: 'a'.repeat(64),
   remaining_quantity: 13, total_amount: '34.0054', purchase_price: '2.6158', shipping_cost: '161.8555',
   last_mile_cost: '0', other_cost: '0', unit_cost: '15.0662', dingtalk_order_no: 'OLD',
   shipping_cost_no: 'HEAD', last_mile_cost_no: 'LAST', other_cost_no: 'OTHER',
@@ -24,9 +24,9 @@ function setup(file) {
     applyBatchColumnSelection: () => {}, renderPagination: () => {}, updateBatchSelectionState: () => {},
     loadBatches: async () => {}, calcEditUnitCost: () => {}});
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
-  vm.runInContext('let editingBatchId=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7;' +
+  vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7;' +
     'let batchTotal=1,batchPage=1,batchPageSize=20,visibleBatchColumns=new Set(),selectedBatchIds=new Set();', c);
-  for (const name of ['batchEditBlockedReason', 'renderBatchPage', 'openEditBatch', 'closeEditBatch', 'saveEditBatch']) {
+  for (const name of ['formatApiError', 'batchEditBlockedReason', 'renderBatchPage', 'openEditBatch', 'closeEditBatch', 'saveEditBatch']) {
     const source = html.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
     assert(source, name); vm.runInContext(source[0], c);
   }
@@ -63,6 +63,10 @@ async function verify(file) {
   ok(e('batches-tbody').innerHTML.includes('exportBatch'));
   await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
   c.isOperator = () => true; c.isAdmin = () => false; setBatch(fixture);
+  setBatch({...fixture, edit_version: undefined});
+  await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
+  equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditVersionRequired'));
+  setBatch(fixture);
   await c.openEditBatch(12);
   equal(e('eb-total-amount').value, '34.0054');
   equal(e('eb-ship').value, '161.8555');
@@ -75,9 +79,11 @@ async function verify(file) {
   for (const id of ['eb-dingtalk-order', 'eb-ship-no', 'eb-lastmile-no', 'eb-other-no']) e(id).value = '  ';
   await c.saveEditBatch(); equal(calls, 1); equal(target, ['PUT', '/batches/12']);
   equal(payload.product_id, 42); equal(payload.total_amount, '34.0054'); equal(payload.shipping_cost, '161.8555');
+  equal(payload.edit_version, fixture.edit_version);
   for (const key of ['dingtalk_order_no', 'shipping_cost_no', 'last_mile_cost_no', 'other_cost_no']) equal(payload[key], null);
   equal(payload.arrived_at, fixture.arrived_at); equal(payload.shipping_date, fixture.shipping_date);
   equal(e('edit-batch-modal').style.display, 'none'); equal(e('eb-save').disabled, false);
+  equal(vm.runInContext('editingBatchVersion', c), null);
   // 保存中不能重复提交、切换编辑目标或取消；请求使用点击时的批次。
   await c.openEditBatch(12);
   let finish; c.api = async () => { calls++; return new Promise(resolve => { finish = resolve; }); };
@@ -90,6 +96,22 @@ async function verify(file) {
   await c.saveEditBatch(); equal(e('eb-total-amount').value, '99.9999');
   equal(e('edit-batch-modal').style.display, ''); equal(messages.at(-1)[0], 'batch_has_cost_adjustments');
   equal(e('eb-save').disabled, false);
+  // 打开时捕获版本；列表对象被更新也不能把旧表单伪装成新版本重试。
+  setBatch({...fixture, edit_version: 'b'.repeat(64), shipping_cost: '200.0000'});
+  let conflictCalls = 0;
+  c.api = async (_method, _url, body) => {
+    conflictCalls++; payload = body;
+    throw Error(c.formatApiError({code: 'batch_edit_conflict', message: 'fallback'}, 'error'));
+  };
+  await c.saveEditBatch(); await c.saveEditBatch();
+  equal(conflictCalls, 2); equal(payload.edit_version, fixture.edit_version);
+  equal(payload.shipping_cost, '161.8555'); equal(e('eb-total-amount').value, '99.9999');
+  equal(vm.runInContext('editingBatchVersion', c), fixture.edit_version);
+  equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditConflict'));
+  equal(c.formatApiError({code: 'batch_edit_version_required'}, 'error'), c.window.PageInteractions.text('batchEditVersionRequired'));
+  c.closeEditBatch(); await c.openEditBatch(12);
+  equal(vm.runInContext('editingBatchVersion', c), 'b'.repeat(64));
+  equal(e('eb-ship').value, '200.0000');
   c.api = async () => fixture; c.loadBatches = async () => { throw Error('offline'); };
   await c.saveEditBatch(); equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditRefreshFailed'));
   equal(vm.runInContext('editingBatchId', c), null);

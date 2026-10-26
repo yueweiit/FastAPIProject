@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from hashlib import sha256
+import json
 
 from sqlalchemy import (
     Boolean,
@@ -157,6 +159,20 @@ class InventoryBatch(Base):
     period_snapshots: Mapped[list["InventoryPeriodSnapshot"]] = relationship(
         back_populates="batch"
     )
+
+    @property
+    def edit_version(self) -> str:
+        """原始持久化字段的内容版本；比较时必须先锁定并刷新批次。"""
+        values = {}
+        for column in self.__table__.columns:
+            value = getattr(self, column.key)
+            if isinstance(value, Decimal):
+                value = format(value.normalize(), "f")
+            elif isinstance(value, datetime):
+                value = value.isoformat(timespec="microseconds")
+            values[column.key] = value
+        encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class BatchChangeLog(Base):

@@ -5,7 +5,7 @@
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `POST /batches` | [create_batch](../../../routers/batches.py) | admin/operator | BatchCreate | BatchResponse |
-| `PUT /batches/{batch_id}` | [update_batch](../../../routers/batches.py) | admin/operator | batch_id、BatchCreate | BatchResponse |
+| `PUT /batches/{batch_id}` | [update_batch](../../../routers/batches.py) | admin/operator | batch_id、BatchUpdate（含edit_version） | BatchResponse |
 | `GET /batches/{batch_id}/logs` | [list_batch_change_logs](../../../routers/batches.py) | admin/operator | page≥1、page_size 1–100（默认20） | BatchChangeLogPageResponse |
 | `DELETE /batches/{batch_id}` | [delete_batch](../../../routers/batches.py) | admin/operator | batch_id | ok |
 | `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、keyword、page、page_size | list[BatchResponse] \| BatchPageResponse |
@@ -15,9 +15,15 @@
 
 必填 product_id、quantity，quantity>0。采购信息优先 total_amount（≥0）；没有该字段时兼容 purchase_price（≥0，默认0）。shipping_cost、last_mile_cost、other_cost 是整批费用，默认0；钉钉单号和三个成本单号可空，最大长度64。shipping_date、arrived_at 可省略。
 
-PUT 同样使用 BatchCreate，quantity 仍必填，费用省略会采用模型默认0；不是任意字段 PATCH。product_id 虽在请求里必填，但不会更换批次商品。可选单号通过 model_fields_set 判断是否保留；总金额/采购单价的复用规则见[流程](workflow.md)。
+PUT 使用继承 BatchCreate 的 BatchUpdate，额外要求提交打开编辑时的 `edit_version`。quantity 仍必填，费用省略会采用模型默认0；不是任意字段 PATCH。product_id 虽在请求里必填，但不会更换批次商品。可选单号通过 model_fields_set 判断是否保留；总金额/采购单价的复用规则见[流程](workflow.md)。POST不要求编辑版本，保持原创建契约。
 
 批次业务时间按无时区 DateTime 保存；页面请求示例为 `2026-09-01T00:15`，不转换为 UTC 的 `Z` 字符串。日期响应仍是既有 ISO 无时区字符串，未改变日期类型。日期未改动的编辑保留响应中的秒数/小数秒；历史数据不自动回填，见[批次日期规则](workflow.md#批次业务日期)。
+
+## 编辑并发保护
+
+BatchResponse 在创建、更新、数组列表和分页列表中统一新增 `edit_version`（64位小写十六进制不透明字符串）。它是原始持久化批次字段的内容摘要，不是递增序号或数据库列；财务追溯成本展示不影响其计算。客户端应原样保存打开编辑时的值，不能从旧表单重新计算或在失败后自动替换成新版本。
+
+PUT在目标批次行锁内刷新当前数据、复查消耗和成本调整来源，再比较版本。缺少或为null返回428，detail.code为`batch_edit_version_required`；格式无效返回422；与当前内容不同返回409，detail.code为`batch_edit_conflict`。失败不写批次、不追加成功修改日志。冲突后保留输入，关闭编辑、刷新列表并核对后重新编辑。旧页面/外部客户端必须升级并携带版本，不能通过省略版本继续覆盖。
 
 ## 查询和导出
 
@@ -27,7 +33,7 @@ GET 导出支持重复 batch_ids，或无 ID 时使用 product_id/keyword；有 
 
 Excel保留原21列及顺序，在末尾追加“店铺（创建人当前绑定）”。通过批次user_id关联User.store_id/Store.name一次性读取，创建人缺失或未绑定时显示“未关联店铺”；名称按文本写入，不执行为Excel公式。该列不是固化批次归属，不改变共享读取/FIFO扣库范围，也不新增数据库字段。
 
-商品或待修改批次不存在404，viewer写入/读日志及operator删除他人批次403，已消耗批次400，已有成本调整来源或编号冲突三次后409；数量金额无效422。响应含原创建人、数量、剩余数、成本、所有单号及时间，见 [schemas.py](../../../schemas.py)；实际实现见 [batches.py](../../../routers/batches.py)。
+商品或待修改批次不存在404，viewer写入/读日志及operator删除他人批次403，已消耗批次400，已有成本调整来源、编辑版本冲突或编号冲突三次后409；数量金额/版本格式无效422，编辑缺少版本428。响应含原创建人、数量、剩余数、成本、所有单号、时间和edit_version，见 [schemas.py](../../../schemas.py)；实际实现见 [batches.py](../../../routers/batches.py)。
 
 ## 修改日志
 
