@@ -1,11 +1,12 @@
 # 入库批次 API
 
-前缀 /batches，共 5 个端点。operator 编辑/删除还要求自己创建，admin 可操作任意未消耗批次；读取全局共享。
+前缀 /batches，共 6 个端点。admin/operator 可编辑任意创建人的未消耗批次并强制留痕；operator 删除仍要求自己创建。普通批次读取全局共享，修改日志仅 admin/operator 可读。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `POST /batches` | [create_batch](../../../routers/batches.py) | admin/operator | BatchCreate | BatchResponse |
 | `PUT /batches/{batch_id}` | [update_batch](../../../routers/batches.py) | admin/operator | batch_id、BatchCreate | BatchResponse |
+| `GET /batches/{batch_id}/logs` | [list_batch_change_logs](../../../routers/batches.py) | admin/operator | page≥1、page_size 1–100（默认20） | BatchChangeLogPageResponse |
 | `DELETE /batches/{batch_id}` | [delete_batch](../../../routers/batches.py) | admin/operator | batch_id | ok |
 | `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、keyword、page、page_size | list[BatchResponse] \| BatchPageResponse |
 | `GET /batches/export` | [export_batches](../../../routers/batches.py) | admin/operator/viewer | batch_ids、product_id、keyword | Excel 文件 |
@@ -16,7 +17,7 @@
 
 PUT 同样使用 BatchCreate，quantity 仍必填，费用省略会采用模型默认0；不是任意字段 PATCH。product_id 虽在请求里必填，但不会更换批次商品。可选单号通过 model_fields_set 判断是否保留；总金额/采购单价的复用规则见[流程](workflow.md)。
 
-批次业务时间按无时区 DateTime 保存；页面请求示例为 `2026-09-01T00:15`，不转换为 UTC 的 `Z` 字符串。响应仍是既有 ISO 无时区字符串，未新增字段或改变响应类型。日期未改动的编辑保留响应中的秒数/小数秒；历史数据不自动回填，见[批次日期规则](workflow.md#批次业务日期)。
+批次业务时间按无时区 DateTime 保存；页面请求示例为 `2026-09-01T00:15`，不转换为 UTC 的 `Z` 字符串。日期响应仍是既有 ISO 无时区字符串，未改变日期类型。日期未改动的编辑保留响应中的秒数/小数秒；历史数据不自动回填，见[批次日期规则](workflow.md#批次业务日期)。
 
 ## 查询和导出
 
@@ -26,7 +27,11 @@ GET 导出支持重复 batch_ids，或无 ID 时使用 product_id/keyword；有 
 
 Excel保留原21列及顺序，在末尾追加“店铺（创建人当前绑定）”。通过批次user_id关联User.store_id/Store.name一次性读取，创建人缺失或未绑定时显示“未关联店铺”；名称按文本写入，不执行为Excel公式。该列不是固化批次归属，不改变共享读取/FIFO扣库范围，也不新增数据库字段。
 
-商品不存在404，编辑他人批次403，已消耗批次400，编号冲突三次后409；数量金额无效422。响应含创建人、数量、剩余数、成本、所有单号及时间，见 [schemas.py](../../../schemas.py)；实际实现见 [batches.py](../../../routers/batches.py)。
+商品或待修改批次不存在404，viewer写入/读日志及operator删除他人批次403，已消耗批次400，已有成本调整来源或编号冲突三次后409；数量金额无效422。响应含原创建人、数量、剩余数、成本、所有单号及时间，见 [schemas.py](../../../schemas.py)；实际实现见 [batches.py](../../../routers/batches.py)。
+
+## 修改日志
+
+日志查询固定返回 `{items,total,page,page_size}`，按日志ID倒序，超过末页调整页码。items包含id、batch_id、batch_no、action（update）、actor_id、actor_username、actor_role、before_values、after_values、created_at（UTC偏移明确的ISO时间）；快照金额为精确字符串。没有记录时返回空页，批次删除后仍能按原ID读取保留日志；viewer返回403。没有日志更新/删除API。
 
 ## 成本响应扩展
 

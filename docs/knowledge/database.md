@@ -2,9 +2,9 @@
 
 ## 存储边界
 
-主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的27张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
+主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的28张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
 
-OA PostgreSQL 是外部只读数据源，不属于这27张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
+OA PostgreSQL 是外部只读数据源，不属于这28张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
 
 ## 表清单与唯一维护入口
 
@@ -18,6 +18,7 @@ OA PostgreSQL 是外部只读数据源，不属于这27张表；实际表名为 
 | products | Product | 共享商品、类型、安全库存 | [商品数据库](../modules/products/database.md) |
 | product_impairment_rules | ProductImpairmentRule | 商品跌价规则生效历史 | [商品数据库](../modules/products/database.md) |
 | inventory_batches | InventoryBatch | 数量、剩余数、成本、创建人 | [库存数据库](../modules/inventory/database.md) |
+| batch_change_logs | BatchChangeLog | 批次修改前后值、操作者和UTC时间 | [库存数据库](../modules/inventory/database.md) |
 | sales | Sale | 商品出库、店铺、售价、成本、费用、利润 | [销售数据库](../modules/sales/database.md) |
 | sale_cost_details | SaleCostDetail | 销售扣减原批次的审计明细 | [销售数据库](../modules/sales/database.md) |
 | sales_import_batches | SalesImportBatch | 文件导入统计与撤销记录 | [销售数据库](../modules/sales/database.md) |

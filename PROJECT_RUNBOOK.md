@@ -4,9 +4,18 @@
 
 > 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
 
-## 批次成本调整并发校验
+## 批次跨创建人编辑与修改日志
 
-编辑/删除先锁原批次，再由`ensure_batch_cost_editable`对成本调整行做FOR UPDATE当前读，避免认证建立的REPEATABLE READ旧快照漏掉之后提交的调整来源。保持父批次→调整行锁序，已有来源返回409，不能改写原批次。无需新增结构或回填，回归覆盖及实际验证边界见[库存代码映射](docs/modules/inventory/code-map.md)。
+2026-10-26起，admin/operator可编辑任意创建人的未出库批次，并在同一事务写入`batch_change_logs`。原创建人、商品和库存归属不变；已出库/已有成本调整来源不能直接修改，operator删除仍仅限原创建人。页面“日志”可只读查看操作者、修改时间及字段前后值；权限和事务细节见[库存流程](docs/modules/inventory/workflow.md#修改日志)。
+
+此表属于默认基础结构，**不依赖财务增强开关**。发布必须同时更新后端模型、路由、契约、共享交互脚本及两份页面；只改HTML无法完成授权和留痕。`init_db`会创建缺失日志表，但启动还包含其他既有副作用，不能用启动应用代替生产预检。
+
+1. 离线生成供审核的DDL（不连接数据库）：`python migrations/add_batch_change_logs.py --write-sql output/batch_change_logs.sql`。
+2. 正式更新前核实目标库，按既有流程备份并审核新表、InnoDB、utf8mb4、索引和数据库权限；经生产变更授权后再执行DDL及部署。本轮代码开发未操作生产结构或历史业务数据。
+3. 表为空时日志页显示暂无记录；不补造历史修改日志。日志保存失败必须让本次批次修改回滚，不能关闭日志校验强行保存。
+4. 日志无级联外键，账号改名/删除及批次删除后保留当时身份和批次编号。回退应用版本时保留新增表和日志；旧版可编辑批次但没有此留痕能力，勿让新旧写入进程长期混跑。
+
+成本调整并发校验：编辑/删除在批次锁内对成本调整行做FOR UPDATE当前读，避免认证建立的REPEATABLE READ旧快照漏检；日志落库前的refresh同样使用当前读。保持父批次→调整行锁序，回归边界见[库存代码映射](docs/modules/inventory/code-map.md)。
 
 ## 2026-10-16 修复及更新注意
 
@@ -102,7 +111,7 @@ Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执�
 main.py                 应用入口、生命周期、首页、静态 uploads
 database.py             .env、异步 MySQL 引擎、会话、建表
 auth.py                 Cookie/Bearer 认证、密码、角色与初始用户
-models.py               19 张 ORM 表，含两张认证状态表
+models.py               28 张 ORM 表，含批次修改日志；8 张财务增强表默认关闭
 schemas.py              Pydantic 请求和响应模型
 migrate.py              启动时自动执行的兼容迁移
 routers/auth.py         本地登录、建号、启停、角色/店铺和密码管理
@@ -122,7 +131,7 @@ docker-compose.yml      web 服务、8006:8000、uploads 挂载、MySQL 环境�
 
 ## 数据模型与业务规则
 
-数据库 ORM 定义了 19 张表。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
+数据库 ORM 定义了 28 张表（8 张财务增强表默认关闭）。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
 
 - `users`：用户名唯一、密码哈希、角色 `admin`、`operator`、`viewer`，非管理员可绑定一个店铺。
 - `products`：SKU 唯一、名称、图片路径。
@@ -151,7 +160,7 @@ FIFO 依据批次 `arrived_at`、批次 ID 升序，从 `remaining_quantity > 0`
 业务接口按 Cookie 会话（写请求带 CSRF）或允许模式下的传统 Bearer 鉴权；用户仍由管理员创建，EIMS 不自动建号。模式和16个认证接口见[认证 API](docs/modules/auth/api.md)。
 
 - `admin`：全部功能和用户管理。
-- `operator`：共享商品读写，批次写入受创建人/消耗状态约束，敏感销售和损益按当前店铺限制。
+- `operator`：共享商品读写，批次编辑可跨创建人并留日志，删除仍受创建人/消耗状态约束，敏感销售和损益按当前店铺限制。
 - `viewer`：可写共享商品/平台SKU；批次、销售及损益只读。完整权限和隔离例外以[权限矩阵](docs/knowledge/authentication.md)为准。
 
 主要接口：`/auth/*` 登录和用户管理；`/products` 商品和图片；`/products/options` 商品下拉框轻量数据；`/batches` 入库批次；`/batches/export?batch_ids=1&batch_ids=2` 导出一个或多个批次为带图片 Excel；`/sales` 销售和成本明细；`/reports/monthly?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD` 月度报表。
@@ -298,7 +307,7 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 
 2026-10-19新增[财务增强模块](docs/modules/financial-control/overview.md)。FIFO_FINANCIAL_CONTROLS_ENABLED默认0，Compose已传递；尚未对目标库执行加表、启用或部署。
 
-1. 先审核现有19表、8张新增表和外键/唯一约束/DECIMAL精度，备份并确认InnoDB、utf8mb4及会话REPEATABLE READ。保存版本会拒绝MySQL非REPEATABLE READ；不修改服务器隔离配置。
+1. 先审核基础业务/认证/批次日志表及8张财务增强表和外键/唯一约束/DECIMAL精度，备份并确认InnoDB、utf8mb4及会话REPEATABLE READ。保存版本会拒绝MySQL非REPEATABLE READ；不修改服务器隔离配置。
 2. 离线生成DDL（不连接数据库）：
 
    ```powershell

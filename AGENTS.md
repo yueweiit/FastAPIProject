@@ -5,7 +5,7 @@
 ## 项目与上下文入口
 
 - 系统是跨境电商 FIFO 库存及财务核算单体：FastAPI/Uvicorn、SQLAlchemy 2 异步 ORM、MySQL、Pydantic 2；前端为原生 HTML/CSS/JavaScript，没有独立前端构建项目。
-- `main.py` 注册八组路由（本地认证与 EIMS 各一组）；业务位于 `routers/`，算法/外部服务位于 `services/`，表/契约为 `models.py`、`schemas.py`。ORM含27张表（8张财务增强表默认关闭，实际库需核验）；EIMS认证、OA PostgreSQL只读取数与Frankfurter汇率是外部依赖。
+- `main.py` 注册八组路由（本地认证与 EIMS 各一组）；业务位于 `routers/`，算法/外部服务位于 `services/`，表/契约为 `models.py`、`schemas.py`。ORM含28张表（8张财务增强表默认关闭，实际库需核验）；EIMS认证、OA PostgreSQL只读取数与Frankfurter汇率是外部依赖。
 - 先读 [知识库索引](docs/knowledge/README.md)，再按任务读取对应模块的 `overview.md`、`workflow.md`、`code-map.md`，按需补读 `database.md`、`api.md`，不要每次加载全部模块。
 - 字段/状态变更查[数据字典导航](docs/knowledge/data-dictionary.md)，API 变更查[接口总览](docs/knowledge/api-overview.md)，外部调用查[集成关系](docs/knowledge/integrations.md)；公共能力影响范围见[架构](docs/knowledge/architecture.md)。
 - 当前为中文原生页面，尚无统一翻译资源或语言切换；新增可见文本先读[国际化规范](docs/knowledge/internationalization.md)，区分展示标签与状态编码、导入表头、OA 取数名称。按实际任务渐进建设，不默认引入依赖或迁移业务名称字段。

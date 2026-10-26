@@ -10,11 +10,21 @@
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
         batchExport: '导出', batchEdit: '编辑', batchDelete: '删除',
-        batchEditHelp: '操作列固定在右侧。管理员可编辑未出库批次，运营仅可编辑自己创建的未出库批次；已有成本补差的批次请通过成本补差更正。',
+        batchEditHelp: '管理员和运营可编辑未出库批次，每次保存均记录修改日志；删除仍仅限管理员或原创建人。已有成本补差的批次请通过成本补差更正。',
         batchEditRole: '当前账号没有批次编辑权限。',
-        batchEditOwner: '仅管理员或此批次的创建人可以编辑。',
         batchEditConsumed: '此批次已有出库记录，不能直接编辑；成本更正请通过成本补差处理。',
         batchEditSaved: '批次已更新。', batchEditRefreshFailed: '批次已更新，但列表刷新失败，请点击刷新。',
+        batchLogs: '日志', batchLogTitle: '批次修改日志', batchLogClose: '关闭',
+        batchLogLoading: '正在加载日志…', batchLogEmpty: '暂无修改日志',
+        batchLogNoChanges: '本次保存未更改字段', batchLogNull: '未填写',
+        batchLogField: '字段', batchLogBefore: '修改前', batchLogAfter: '修改后',
+        batchLogPrevious: '上一页', batchLogNext: '下一页',
+        batchLogFailed: '日志加载失败，请重新打开日志重试。',
+        batchLogFields: {quantity: '入库数量', remaining_quantity: '剩余数量', purchase_price: '采购单价',
+            total_amount: '采购总金额', unit_cost: '单件成本', dingtalk_order_no: '采购钉钉单号',
+            shipping_cost: '头程运费', shipping_cost_no: '头程运费单号', last_mile_cost: '尾程派送费',
+            last_mile_cost_no: '尾程派送费单号', other_cost: '其他成本', other_cost_no: '其他成本单号',
+            shipping_date: '头程发货时间', arrived_at: '入库时间'},
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 
@@ -96,11 +106,87 @@
             }
         });
     }
+    let logDialog, logTarget = null, logPage = 1, logTotal = 0, logSerial = 0, logFocus;
+    const logNode = selector => logDialog.querySelector(selector);
+    const logEscape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+    const logValue = value => logEscape(value == null ? text('batchLogNull') : value);
+    function closeBatchLogs() {
+        logSerial++; logTarget = null;
+        if (logDialog?.open) logDialog.close();
+        if (logDialog) {
+            logNode('[data-log-entries]').innerHTML = '';
+            logNode('[data-log-status]').textContent = '';
+            logNode('#batch-log-title').textContent = '';
+            logNode('[data-log-page]').textContent = '';
+        }
+        if (logFocus?.isConnected) logFocus.focus();
+    }
+    function initializeBatchLogs() {
+        if (logDialog) return;
+        logDialog = document.createElement('dialog');
+        logDialog.id = 'batch-log-dialog';
+        logDialog.className = 'product-import-dialog batch-log-dialog';
+        logDialog.setAttribute('aria-labelledby', 'batch-log-title');
+        logDialog.innerHTML = `<div class="product-import-heading"><h3 id="batch-log-title"></h3>
+            <button type="button" class="btn btn-secondary" data-log-close></button></div>
+            <p data-log-status role="status"></p><div data-log-entries></div>
+            <div class="page-action-buttons"><button type="button" class="btn btn-secondary" data-log-previous></button>
+            <span data-log-page></span><button type="button" class="btn btn-secondary" data-log-next></button></div>`;
+        document.body.appendChild(logDialog);
+        logNode('[data-log-close]').onclick = closeBatchLogs;
+        logNode('[data-log-previous]').onclick = () => loadBatchLogs(logPage - 1);
+        logNode('[data-log-next]').onclick = () => loadBatchLogs(logPage + 1);
+        logDialog.addEventListener('cancel', event => { event.preventDefault(); closeBatchLogs(); });
+    }
+    async function loadBatchLogs(page) {
+        const serial = ++logSerial, target = logTarget;
+        logNode('[data-log-status]').textContent = text('batchLogLoading');
+        logNode('[data-log-entries]').innerHTML = '';
+        logNode('[data-log-page]').textContent = '';
+        logNode('[data-log-previous]').disabled = true;
+        logNode('[data-log-next]').disabled = true;
+        try {
+            const result = await api('GET', `/batches/${target}/logs?page=${page}&page_size=20`);
+            if (serial !== logSerial || target !== logTarget || !logDialog.open) return;
+            logPage = result.page; logTotal = result.total;
+            const fields = text('batchLogFields');
+            logNode('[data-log-entries]').innerHTML = result.items.map(row => {
+                const before = row.before_values, after = row.after_values;
+                const changed = Object.keys({...before, ...after}).filter(key => before[key] !== after[key]);
+                const time = new Date(row.created_at).toLocaleString(document.documentElement.lang || 'zh-CN');
+                return `<article class="batch-change-log-entry"><p><strong>${logEscape(row.actor_username)} (#${row.actor_id})</strong> · ${logEscape(time)}</p>
+                    ${changed.length ? `<div class="table-scroll"><table><thead><tr><th>${text('batchLogField')}</th><th>${text('batchLogBefore')}</th><th>${text('batchLogAfter')}</th></tr></thead>
+                    <tbody>${changed.map(key => `<tr><td>${logEscape(fields[key] || key)}</td><td>${logValue(before[key])}</td><td>${logValue(after[key])}</td></tr>`).join('')}</tbody></table></div>` : `<p>${text('batchLogNoChanges')}</p>`}</article>`;
+            }).join('');
+            logNode('[data-log-status]').textContent = result.items.length ? '' : text('batchLogEmpty');
+            logNode('[data-log-page]').textContent = `${logPage} / ${Math.max(1, Math.ceil(logTotal / result.page_size))}`;
+            logNode('[data-log-previous]').disabled = logPage <= 1;
+            logNode('[data-log-next]').disabled = logPage * result.page_size >= logTotal;
+        } catch (error) {
+            if (serial !== logSerial || target !== logTarget || !logDialog.open) return;
+            logNode('[data-log-status]').textContent = `${text('batchLogFailed')} ${error.message}`;
+        }
+    }
+    async function batchLogs(id, batchNo) {
+        if (!isOperator()) return;
+        initializeBatchLogs();
+        if (!logDialog.open) logFocus = document.activeElement;
+        logTarget = id;
+        logNode('#batch-log-title').textContent = `${text('batchLogTitle')} · ${batchNo}`;
+        for (const [selector, key] of [['close', 'batchLogClose'], ['previous', 'batchLogPrevious'], ['next', 'batchLogNext']]) {
+            logNode(`[data-log-${selector}]`).textContent = text(key);
+        }
+        if (!logDialog.open) logDialog.showModal();
+        logNode('[data-log-close]').focus();
+        return loadBatchLogs(1);
+    }
     window.PageInteractions = {
         text,
         batchDateTimeInput, batchDateTimeValue,
         reason: options => request({...options, reason: true}),
         confirmSalesRollback: () => request({title: text('rollbackTitle'), message: text('rollbackMessage')}),
-        cancel: () => finish(null),
+        batchLogs,
+        cancel: () => { finish(null); closeBatchLogs(); },
     };
 })();

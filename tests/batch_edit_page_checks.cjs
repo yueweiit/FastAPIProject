@@ -42,8 +42,12 @@ async function verify(file) {
   ok(e('batches-tbody').innerHTML.includes('openEditBatch(12)'));
   ok(!e('batches-tbody').innerHTML.includes('disabled'));
   ok(e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
-  for (const [batch, reason] of [[{...fixture, user_id: 9}, 'batchEditOwner'],
-    [{...fixture, remaining_quantity: 0}, 'batchEditConsumed'],
+  setBatch({...fixture, user_id:9});c.renderBatchPage();
+  ok(!e('batches-tbody').innerHTML.includes('disabled'));
+  ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
+  ok(e('batches-tbody').innerHTML.includes('openBatchLogs(12)'));
+  await c.openEditBatch(12);equal(vm.runInContext('editingBatchId',c),12);c.closeEditBatch();
+  for (const [batch, reason] of [[{...fixture, remaining_quantity: 0}, 'batchEditConsumed'],
     [{...fixture, remaining_quantity: 12}, 'batchEditConsumed']]) {
     setBatch(batch); c.renderBatchPage();
     const body = e('batches-tbody').innerHTML;
@@ -55,6 +59,7 @@ async function verify(file) {
   equal(vm.runInContext('editingBatchId', c), 12); c.closeEditBatch();
   c.isOperator = () => false; c.renderBatchPage();
   ok(!e('batches-tbody').innerHTML.includes('openEditBatch'));
+  ok(!e('batches-tbody').innerHTML.includes('openBatchLogs'));
   ok(e('batches-tbody').innerHTML.includes('exportBatch'));
   await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
   c.isOperator = () => true; c.isAdmin = () => false; setBatch(fixture);

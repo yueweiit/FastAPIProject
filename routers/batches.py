@@ -14,8 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import InventoryBatch, Product, User, SaleCostDetail, Store
-from schemas import BatchCreate, BatchPageResponse, BatchResponse
+from models import InventoryBatch, Product, User, SaleCostDetail, Store, BatchChangeLog
+from schemas import BatchCreate, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
 
@@ -136,15 +136,12 @@ async def update_batch(
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
 
-    # operator只能改自己的
-    if user.role == "operator" and batch.user_id != user.id:
-        raise HTTPException(status_code=403, detail="无权修改此批次")
-
     # 检查是否已被消耗
     await ensure_batch_cost_editable(db, batch_id)
     if batch.remaining_quantity != batch.quantity:
         raise HTTPException(status_code=400, detail="批次已有出库记录，无法修改")
 
+    before = _batch_change_values(batch)
     purchase_price, total_amount = _resolve_purchase_values(data, batch)
 
     batch.quantity = data.quantity
@@ -166,9 +163,43 @@ async def update_batch(
     batch.arrived_at = data.arrived_at or batch.arrived_at
     batch.unit_cost = _calc_unit_cost(purchase_price, data.quantity, data.shipping_cost, data.last_mile_cost, data.other_cost)
 
+    # 先读取实际落库精度，再保存日志；两次写入在同一事务内，任何失败均不提交。
+    await db.flush()
+    # 无字段变化时可能没有UPDATE，仍须当前读，不能让refresh退回认证建立的旧快照。
+    await db.refresh(batch, with_for_update=True)
+    db.add(BatchChangeLog(
+        batch_id=batch.id, batch_no=batch.batch_no, action="update",
+        actor_id=user.id, actor_username=user.username, actor_role=user.role,
+        before_values=before, after_values=_batch_change_values(batch),
+    ))
     await db.commit()
     await db.refresh(batch)
     return batch
+
+
+def _batch_change_values(batch):
+    # 复用响应契约序列化 Decimal/业务日期；不读取用户敏感字段或追溯成本层。
+    return BatchResponse.model_validate(batch).model_dump(mode="json", exclude={
+        "base_unit_cost", "cost_adjustment_per_unit", "cost_status",
+    })
+
+
+@router.get("/{batch_id}/logs", response_model=BatchChangeLogPageResponse)
+async def list_batch_change_logs(
+    batch_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireOperator),
+):
+    """运营/管理员只读查看共享批次修改记录，批次删除后日志仍保留。"""
+    total = await db.scalar(select(func.count()).select_from(BatchChangeLog).where(
+        BatchChangeLog.batch_id == batch_id))
+    page = min(page, max(1, (total + page_size - 1) // page_size))
+    rows = (await db.execute(select(BatchChangeLog).where(
+        BatchChangeLog.batch_id == batch_id
+    ).order_by(BatchChangeLog.id.desc()).offset((page - 1) * page_size).limit(page_size))).scalars().all()
+    return BatchChangeLogPageResponse(items=rows, total=total, page=page, page_size=page_size)
 
 
 @router.delete("/{batch_id}")

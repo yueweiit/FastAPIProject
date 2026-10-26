@@ -19,7 +19,7 @@ flowchart LR
     U -->|"授权与退出跳转"| EI
     R --> DB["database.py / AsyncSession"]
     S --> DB
-    DB --> M["外置 MySQL：27张ORM表，8张需显式启用"]
+    DB --> M["外置 MySQL：28张ORM表，8张需显式启用"]
     S -->|"HTTPS 历史汇率"| FX["Frankfurter"]
     S -->|"SELECT，只读"| OA["外置 OA PostgreSQL"]
     A --> W["asyncio 月末快照检查"]
@@ -52,7 +52,7 @@ flowchart LR
 | 商品批量新增 | 只读预览 → 确认重新校验 → 新商品与当日规则统一提交；唯一键冲突整批回滚 | [product_import.py](../../services/product_import.py) 的 confirm_product_import |
 | 文件导入 | 校验/映射/汇率 → 按相同顺序锁全部涉及商品批次 → 逐行分配 → fifo_sell(commit=False) → 结算/分摊/导入批次一起提交 | [sales.py](../../routers/sales.py) 的 import_sales_file |
 | 导入撤销 | 锁导入批次及原库存批次 → 校验恢复数量 → 恢复库存 → 删除关联业务行 → 保留撤销批次状态 → 提交 | [sales.py](../../routers/sales.py) 的 rollback_sales_import |
-| 批次修改/删除 | 先锁目标批次，按创建人权限及是否消耗判断 | [batches.py](../../routers/batches.py) 的 _locked_batch |
+| 批次修改/删除 | 先锁并刷新目标批次，再以锁定当前读复查成本调整；编辑与修改日志同事务，删除保留创建人权限 | [batches.py](../../routers/batches.py) 的 _locked_batch、[cost_layers.py](../../services/cost_layers.py) 的 ensure_batch_cost_editable |
 | 月末快照 | snapshot_version 为 0 时生成，设为 1 并提交；已生成时不覆盖 | [accounting_periods.py](../../services/accounting_periods.py) |
 | EIMS 认证/刷新 | 独立 AsyncSession 原子消费 state；按会话行锁串行 Token 轮换；释放认证锁后才进入业务 | [auth_sessions.py](../../services/auth_sessions.py) |
 | 图片修改 | 文件写入/删除不受数据库事务回滚保护 | [products.py](../../routers/products.py) |

@@ -11,7 +11,7 @@
 | [project-overview.md](project-overview.md) | 项目定位、技术栈、入口、目录 |
 | [architecture.md](architecture.md) | 系统关系、启动生命周期、事务与外部依赖 |
 | [business-map.md](business-map.md) | 功能清单、模块依赖、尚未实现的目标 |
-| [database.md](database.md) | 27张ORM表（其中8张默认关闭）、关系图、迁移与数据边界 |
+| [database.md](database.md) | 28张ORM表（其中8张默认关闭）、关系图、迁移与数据边界 |
 | [data-dictionary.md](data-dictionary.md) | 模块字段字典导航、跨模块字段及状态编码 |
 | [api-overview.md](api-overview.md) | 路由、调用关系、分页、错误与导出 |
 | [authentication.md](authentication.md) | 登录、角色矩阵、店铺隔离和例外 |
@@ -61,7 +61,7 @@
 | 项目 | 已知源码事实 | 待验证内容 |
 | --- | --- | --- |
 | 实际环境 | Docker 声明 Python 3.13；MySQL 为主库 | 本机/服务器 Python、数据库版本、InnoDB、字符集、时区、实际端口和可达性 |
-| 数据库 | ORM 定义 19 表；本地新增两张 InnoDB 认证表和 users.is_active；启动迁移同时含 DDL 和历史修复 | 正式库字段、索引、外键、启动权限和历史数据 |
+| 数据库 | ORM 定义28表（8张财务增强表默认关闭）；批次修改新增基础日志表；启动迁移同时含DDL和历史修复 | 正式库字段、索引、外键、启动权限和历史数据；新增日志表结构准备 |
 | EIMS 接入 | 已实现 PKCE/RS256、后端加密 Token、Cookie/CSRF、绑定/启停、刷新与退出；本地验证通过 | 客户端注册/安全配置、正式用户绑定、门户 start 配合、真实撤权/刷新/退出及日志保护，见[接入说明](../modules/auth/eims-sso-setup.md) |
 | 权限 | 商品和平台 SKU 为共享数据；独立存货接口未按店铺过滤 | 这些权限是否符合业务；库存归属是否需要独立店铺字段 |
 | 财务口径 | 07/09/10/12按2026-10-15追加确认采用实际持有期间计提及销售转销，新增三项变动，账面=现存成本−期末准备；异常金额传播null | 真实历史规则/流水完整性、生产更新及其他成本分类；快照保留原算法；新口径、跨店及历史待核对边界见[变更记录](../development/2026-10-15-holding-period-impairment.md) |

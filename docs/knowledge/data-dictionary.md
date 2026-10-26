@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 认证 | users、auth_login_transactions、auth_sessions：本地身份、临时流程、会话 | [认证数据库](../modules/auth/database.md) |
 | 商品 | products、product_impairment_rules：商品与规则生效历史 | [商品数据库](../modules/products/database.md) |
-| 库存 | inventory_batches：到货数量、剩余数量、批次成本及创建人 | [库存数据库](../modules/inventory/database.md) |
+| 库存 | inventory_batches、batch_change_logs：数量、成本、原创建人及修改日志 | [库存数据库](../modules/inventory/database.md) |
 | 销售 | sales、sale_cost_details、sales_import_batches、settlement_entries、settlement_entry_allocations：出库、来源及分摊 | [销售数据库](../modules/sales/database.md) |
 | 财务主数据 | product_lines、stores、store_products、platform_sku_mappings、platform_sku_components：两套用途不同的映射 | [主数据数据库](../modules/finance-masters/database.md) |
 | 报表 | accounting_periods、inventory_period_snapshots、store_profit_loss_reports：快照标记、冻结结果及人工项 | [报表数据库](../modules/reports/database.md) |

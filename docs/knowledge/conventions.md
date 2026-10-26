@@ -42,6 +42,10 @@
 | 前端交互 | 核对模板与副本；在获准运行的环境检查分页、选择、表单、错误和导出 |
 | 纯文档 | 链接/代码路径/符号/表和路由覆盖检查，确认旧文件和业务代码未改动 |
 
+批次编辑/日志：`test_batch_edit`使用真实路由和隔离SQLite验证跨创建人编辑、日志与批次原子提交、失败回滚、权限与保留；`node tests/batch_edit_page_checks.cjs`及`node tests/batch_log_page_checks.cjs`验证实际页面函数/日志弹窗。均不代表目标MySQL/InnoDB或生产验收；DDL生成脚本仅离线输出，不能当作迁移已执行。
+
+该批次回归还模拟认证旧快照，校验修改/删除的成本来源检查都是父批次锁后的FOR UPDATE当前读；无字段变化的保存也用当前读刷新审计快照。边界与命令维护于[库存代码映射](../modules/inventory/code-map.md)。
+
 测试文件均位于 [tests/](../../tests/)。全量单元测试常用命令：
 
 ```powershell

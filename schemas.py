@@ -1,8 +1,8 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_serializer
 
 
 class FinancialMoneyRequest(BaseModel):
@@ -224,6 +224,33 @@ class BatchResponse(BaseModel):
 
 class BatchPageResponse(BaseModel):
     items: list[BatchResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class BatchChangeLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    batch_id: int
+    batch_no: str
+    action: str
+    actor_id: int
+    actor_username: str
+    actor_role: str
+    before_values: dict
+    after_values: dict
+    created_at: datetime
+
+    @field_serializer("created_at")
+    def serialize_time(self, value: datetime):
+        # 日志记录绝对时间；批次发货/入库日期仍沿用无时区业务日期。
+        return value.replace(tzinfo=timezone.utc).isoformat()
+
+
+class BatchChangeLogPageResponse(BaseModel):
+    items: list[BatchChangeLogResponse]
     total: int
     page: int
     page_size: int

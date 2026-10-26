@@ -8,13 +8,13 @@ from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, select, event
 from sqlalchemy.dialects import mysql
+from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import Base, get_db
-from models import InventoryBatch, Product, User
+from models import InventoryBatch, Product, User, BatchChangeLog, InventoryCostAdjustment, InventoryCostAdjustmentLine
 from routers import batches
 
 
@@ -24,8 +24,13 @@ class AsyncFacade:
         self.info = session.info
 
     async def scalar(self, statement): return self.session.scalar(statement)
+    async def get(self, model, key): return self.session.get(model, key)
+    async def execute(self, statement): return self.session.execute(statement)
+    def add(self, row): self.session.add(row)
+    async def flush(self): self.session.flush()
+    async def delete(self, row): self.session.delete(row)
     async def commit(self): self.session.commit()
-    async def refresh(self, row): self.session.refresh(row)
+    async def refresh(self, row, **options): self.session.refresh(row, **options)
 
 
 class BatchEditTests(unittest.IsolatedAsyncioTestCase):
@@ -45,7 +50,7 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
             dingtalk_order_no='OLD', shipping_cost_no='HEAD', last_mile_cost_no='LAST', other_cost_no='OTHER',
             shipping_date=datetime(2026, 8, 29, 23, 59, 41), arrived_at=datetime(2026, 8, 30, 0, 15, 37)))
         self.session.commit()
-        self.actor = SimpleNamespace(id=7, role='operator')
+        self.actor = SimpleNamespace(id=7, role='operator', username='batch-editor')
         self.app = FastAPI()
         self.app.include_router(batches.router)
 
@@ -84,12 +89,29 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(batch.shipping_date, datetime(2026, 8, 29, 23, 59, 41))
         for field in ('dingtalk_order_no', 'shipping_cost_no', 'last_mile_cost_no', 'other_cost_no'):
             self.assertIsNone(getattr(batch, field))
+        log = self.session.scalar(select(BatchChangeLog))
+        self.assertEqual((log.batch_id, log.actor_id, log.actor_username, log.actor_role),
+                         (12, 7, 'batch-editor', 'operator'))
+        self.assertEqual(log.before_values['quantity'], 13)
+        self.assertEqual(log.after_values['quantity'], 14)
+        self.assertEqual(log.before_values['total_amount'], '34.0054')
+        self.assertEqual(log.after_values['unit_cost'], '13.9901')
+        self.assertEqual(log.before_values['dingtalk_order_no'], 'OLD')
+        self.assertIsNone(log.after_values['dingtalk_order_no'])
+        self.assertNotIn('password_hash', log.before_values)
+        self.assertIsNotNone(log.created_at)
 
-    async def test_operator_cannot_edit_other_creators_batch(self):
+    async def test_operator_can_edit_other_creators_batch_without_changing_owner(self):
         self.actor.id = 99
+        self.actor.username = 'another-operator'
         response = await self.save(quantity=20)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
+        self.assertEqual(response.status_code, 200, response.text)
+        batch = self.session.get(InventoryBatch, 12)
+        self.assertEqual((batch.quantity, batch.remaining_quantity, batch.user_id), (20, 20, 7))
+        log = self.session.scalar(select(BatchChangeLog))
+        self.assertEqual((log.actor_id, log.actor_username), (99, 'another-operator'))
+        self.assertEqual(log.before_values['user_id'], 7)
+        self.assertEqual(log.after_values['user_id'], 7)
 
     async def test_admin_can_edit_other_creators_unsold_batch(self):
         self.actor.id = 99
@@ -101,6 +123,7 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
     async def test_viewer_cannot_bypass_page_and_submit(self):
         self.actor.role = 'viewer'
         self.assertEqual((await self.save()).status_code, 403)
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
     async def test_sale_after_list_load_is_rechecked_before_edit(self):
         batch = self.session.get(InventoryBatch, 12)
@@ -111,6 +134,7 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         batch = self.session.get(InventoryBatch, 12)
         self.assertEqual((batch.quantity, batch.remaining_quantity), (13, 12))
         self.assertEqual(batch.total_amount, Decimal('34.0054'))
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
     async def test_invalid_quantities_and_negative_costs_are_rejected(self):
         for change in ({'quantity': 0}, {'quantity': 1.5}, {'total_amount': '-1'}, {'shipping_cost': '-1'}):
@@ -118,10 +142,73 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.save(**change)).status_code, 422)
         self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
 
-
     async def request(self, method, path):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
             return await client.request(method, path)
+
+    async def test_log_insert_failure_rolls_back_the_batch_change(self):
+        def reject(_mapper, _connection, _target):
+            raise RuntimeError('simulated log write failure')
+        event.listen(BatchChangeLog, 'before_insert', reject)
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'simulated log write failure'):
+                await self.save(quantity=99)
+        finally:
+            event.remove(BatchChangeLog, 'before_insert', reject)
+        batch = self.session.get(InventoryBatch, 12)
+        self.assertEqual((batch.quantity, batch.remaining_quantity), (13, 13))
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+
+    async def test_logs_paginate_include_identity_and_survive_deletion(self):
+        await self.save(total_amount='35.0001')
+        self.actor.username = 'renamed-operator'
+        await self.save(total_amount='36.0001')
+        self.actor.id = 99
+        response = await self.request('GET', '/batches/12/logs?page_size=1')
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual((data['total'], data['page']), (2, 1))
+        newest = data['items'][0]
+        self.assertEqual(newest['actor_username'], 'renamed-operator')
+        self.assertEqual(newest['before_values']['total_amount'], '35.0001')
+        self.assertEqual(newest['after_values']['total_amount'], '36.0001')
+        self.assertTrue(newest['created_at'].endswith('+00:00'))
+        older = (await self.request('GET', '/batches/12/logs?page=99&page_size=1')).json()
+        self.assertEqual(older['page'], 2)
+        self.assertEqual(older['items'][0]['actor_username'], 'batch-editor')
+        # 编辑权限放开后，运营仍不可删除其他创建人的批次。
+        self.assertEqual((await self.request('DELETE', '/batches/12')).status_code, 403)
+        self.actor.role = 'admin'
+        self.assertEqual((await self.request('DELETE', '/batches/12')).status_code, 200)
+        self.assertIsNone(self.session.get(InventoryBatch, 12))
+        self.assertEqual((await self.request('GET', '/batches/12/logs')).json()['total'], 2)
+
+    async def test_viewer_cannot_read_logs_or_change_them(self):
+        await self.save()
+        self.actor.role = 'viewer'
+        self.assertEqual((await self.request('GET', '/batches/12/logs')).status_code, 403)
+        self.actor.role = 'admin'
+        for method in ('PUT', 'DELETE', 'POST'):
+            self.assertEqual((await self.request(method, '/batches/12/logs')).status_code, 405)
+        self.assertEqual((await self.request('GET', '/batches/999/logs')).json()['items'], [])
+        self.assertEqual((await self.request('GET', '/batches/12/logs?page_size=101')).status_code, 422)
+
+    async def test_cost_adjustment_still_blocks_edits_when_editing_other_owners_batch(self):
+        os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
+        self.session.add(InventoryCostAdjustment(id=1, request_key='batch-test-adjustment', source_ref='cost',
+            category='purchase', allocation_basis='quantity', amount=0, amount_cny=0, currency='CNY',
+            exchange_rate=1, document_date=datetime(2026, 9, 1).date(), rate_date=datetime(2026, 9, 1).date(),
+            is_final=True, created_by=7))
+        self.session.flush()
+        self.session.add(InventoryCostAdjustmentLine(adjustment_id=1, batch_id=12, quantity=13,
+            allocation_weight=13, amount_cny=0))
+        self.session.commit()
+        self.actor.id = 99
+        response = await self.save(quantity=99)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()['detail']['code'], 'batch_has_cost_adjustments')
+        self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
     async def test_update_and_delete_use_current_cost_read_after_parent_lock(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
@@ -153,6 +240,34 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([kind for kind, _sql in reads], ['batch', 'cost'])
                 self.assertTrue(all(sql.endswith('FOR UPDATE') for _kind, sql in reads), reads)
                 self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
+                self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+
+    async def test_current_cost_read_without_adjustments_allows_edit(self):
+        os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
+        response = await self.save(shipping_cost='200.0000')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(self.session.scalars(select(BatchChangeLog)).all()), 1)
+
+    async def test_unchanged_save_refreshes_with_current_read_for_audit_snapshot(self):
+        session = self.session
+        refresh_options = []
+
+        class RefreshFacade(AsyncFacade):
+            async def refresh(self, row, **options):
+                refresh_options.append(options)
+                await super().refresh(row, **options)
+        async def db():
+            try:
+                yield RefreshFacade(session)
+            finally:
+                session.rollback()
+        self.app.dependency_overrides[get_db] = db
+        response = await self.save()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(refresh_options[0], {'with_for_update': True})
+        log = self.session.scalar(select(BatchChangeLog))
+        self.assertEqual(log.before_values, log.after_values)
+
 
 if __name__ == '__main__':
     unittest.main()

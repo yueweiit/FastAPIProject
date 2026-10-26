@@ -32,7 +32,7 @@
         .table-scroll { overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:#fff; }
         #batches-table-scroll { max-height:min(62vh, 720px); overflow:auto; scrollbar-gutter:stable; }
         #batches-table-scroll thead th { position:sticky; top:0; z-index:2; }
-        #batches-table-scroll [data-batch-column="actions"] { position:sticky; right:0; min-width:180px; background:var(--surface); box-shadow:-5px 0 8px rgba(21,34,56,.08); z-index:1; }
+        #batches-table-scroll [data-batch-column="actions"] { position:sticky; right:0; min-width:228px; background:var(--surface); box-shadow:-5px 0 8px rgba(21,34,56,.08); z-index:1; }
         #batches-table-scroll thead [data-batch-column="actions"] { background:#f7f9fb; z-index:3; }
         #batches-table-scroll tr:hover [data-batch-column="actions"] { background:#fff8f9; }
         .batch-row-actions { display:flex; gap:4px; align-items:center; }
@@ -227,6 +227,9 @@
         .page-action-dialog [role=alert] { color:#b42318; }
         .page-action-buttons { display:flex; justify-content:flex-end; gap:12px; margin-top:20px; }
         .product-import-dialog::backdrop { background:rgba(17,30,50,.45); }
+        .batch-change-log-entry { padding:16px 0; border-bottom:1px solid var(--line); }
+        .batch-change-log-entry p { margin-bottom:10px; }
+        .batch-change-log-entry td { white-space:pre-wrap; overflow-wrap:anywhere; max-width:380px; }
         .product-import-heading, .product-import-toolbar, .product-import-actions, .product-import-summary { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
         .product-import-heading { justify-content:space-between; margin-bottom:10px; }
         .product-import-hint { color:var(--muted); font-size:13px; margin:0 0 18px; }
@@ -1796,7 +1799,6 @@ function updateBatchSelectionState() {
 function batchEditBlockedReason(batch) {
     const text = window.PageInteractions.text;
     if (!isOperator()) return text('batchEditRole');
-    if (!isAdmin() && Number(batch.user_id) !== CURRENT_USER_ID) return text('batchEditOwner');
     if (batch.remaining_quantity !== batch.quantity) return text('batchEditConsumed');
     return '';
 }
@@ -1807,6 +1809,7 @@ function renderBatchPage() {
     tbody.innerHTML = currentBatchList.map(b => {
         const p = b._product || {};
         const editReason = batchEditBlockedReason(b);
+        const canDelete = isOperator() && !editReason && (isAdmin() || Number(b.user_id) === CURRENT_USER_ID);
         const text = window.PageInteractions.text;
         return `<tr>
             <td><input type="checkbox" data-batch-select="${b.id}" ${selectedBatchIds.has(Number(b.id)) ? 'checked' : ''} onchange="toggleBatchSelection(${b.id}, this.checked)" aria-label="选择批次 ${b.batch_no}"></td>
@@ -1831,7 +1834,8 @@ function renderBatchPage() {
             <td data-batch-column="actions"><div class="batch-row-actions">
                 <button class="btn btn-secondary" onclick="exportBatch(${b.id})" title="${text('batchExport')}">${text('batchExport')}</button>
                 ${isOperator() ? `<span title="${escapeHtml(editReason || text('batchEdit'))}" ${editReason ? 'tabindex="0"' : ''}><button class="btn btn-secondary" onclick="openEditBatch(${b.id})" ${editReason ? 'disabled' : ''}>✏️ ${text('batchEdit')}</button></span>` : ''}
-                ${isOperator() && !editReason ? `<button class="btn btn-secondary" style="color:#e94560" onclick="deleteBatch(${b.id})" title="${text('batchDelete')}" aria-label="${text('batchDelete')}">🗑</button>` : ''}
+                ${isOperator() ? `<button class="btn btn-secondary" onclick="openBatchLogs(${b.id})">${text('batchLogs')}</button>` : ''}
+                ${canDelete ? `<button class="btn btn-secondary" style="color:#e94560" onclick="deleteBatch(${b.id})" title="${text('batchDelete')}" aria-label="${text('batchDelete')}">🗑</button>` : ''}
             </div>
             </td>
         </tr>`;
@@ -1885,6 +1889,11 @@ async function loadBatches() {
 }
 
 // ========== 批次编辑/删除 ==========
+function openBatchLogs(id) {
+    const batch = currentBatchList.find(item => item.id === id);
+    if (batch && isOperator()) return window.PageInteractions.batchLogs(id, batch.batch_no);
+}
+
 async function openEditBatch(id) {
     if (batchEditSaving) return;
     const b = currentBatchList.find(x => x.id === id);

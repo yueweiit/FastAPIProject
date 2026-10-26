@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
@@ -156,6 +156,28 @@ class InventoryBatch(Base):
     cost_details: Mapped[list["SaleCostDetail"]] = relationship(back_populates="batch")
     period_snapshots: Mapped[list["InventoryPeriodSnapshot"]] = relationship(
         back_populates="batch"
+    )
+
+
+class BatchChangeLog(Base):
+    """追加式批次修改记录；保留身份快照，不随批次或账号删除级联丢失。"""
+    __tablename__ = "batch_change_logs"
+    __table_args__ = (
+        Index("ix_batch_change_logs_batch_id_id", "batch_id", "id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(Integer)
+    batch_no: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(16), default="update")
+    actor_id: Mapped[int] = mapped_column(Integer)
+    actor_username: Mapped[str] = mapped_column(String(64))
+    actor_role: Mapped[str] = mapped_column(String(16))
+    before_values: Mapped[dict] = mapped_column(JSON)
+    after_values: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None)
     )
 
 
