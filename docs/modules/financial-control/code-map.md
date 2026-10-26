@@ -11,10 +11,10 @@
 | 费用与来源 | financial_controls.create_expense、post_expense、reverse_expense、ledger_manual_periods | financial_facts.manual_period_values；原人工JSON保留 |
 | 分类/回款 | financial_controls.classify_settlement、create_receipt、reverse_receipt、reconciliation | 原结算差额；跨月付款ID核对 |
 | 不可变版本 | [financial_versions.py](../../../services/financial_versions.py)：collect_payload、save_version、compare_version、version_workbook | 报表公共计算及Excel构建，冻结payload |
-| 页面 | [financial-control.js](../../../static/financial-control.js)：FinanceControl.open/reset/text | 原生fetch封装、CSRF、串号过滤旧响应、重复写入保护、集中zh-CN文案 |
+| 页面 | [financial-control.js](../../../static/financial-control.js)：FinanceControl.open/reset/text | 基础筛选与业务表单分开初始化；独立配置/店铺加载、批次失败提示及查询重试；原生fetch封装、CSRF、串号过滤旧响应、重复写入保护、集中zh-CN文案 |
 | 更正/确认弹窗 | [page-interactions.js](../../../static/page-interactions.js)：reason、confirmSalesRollback、cancel | 页面内dialog、必填原因、取消不提交；同时服务销售撤销；固定路径/page-interactions.js |
 | 契约/表 | [schemas.py](../../../schemas.py)、[models.py](../../../models.py) | Decimal；稳定内部状态；加法8表 |
 | DDL/核验 | [add_financial_controls.py](../../../migrations/add_financial_controls.py) | 离线SQL输出；默认只读；显式指定隔离库加表 |
-| 回归 | [test_financial_controls.py](../../../tests/test_financial_controls.py)、[financial_control_page_checks.cjs](../../../tests/financial_control_page_checks.cjs)、[mysql_financial_audit.py](../../../tests/mysql_financial_audit.py) | SQLite含关闭RETURNING的默认列读取/更新/回滚检查；VM不等于浏览器；MySQL脚本仅显式指定本机专用副本并回滚自建数据 |
+| 回归 | [test_financial_controls.py](../../../tests/test_financial_controls.py)、[financial_control_page_checks.cjs](../../../tests/financial_control_page_checks.cjs)、[mysql_financial_audit.py](../../../tests/mysql_financial_audit.py) | SQLite含关闭RETURNING的默认列读取/更新/回滚检查；VM覆盖开关关闭/启用、加载失败重试、批次失败、慢请求/重登及角色店铺范围，不等于浏览器或生产验收；MySQL脚本仅显式指定本机专用副本并回滚自建数据 |
 
 main.py注册第八组路由，并以固定路径返回/financial-control.js。两份首页只同步本次入口/只读费用/重置逻辑，原有无关差异保留。数据库默认不开新表；配置启用后init_db允许创建这些表，故必须在启用前审核结构与启动副作用。

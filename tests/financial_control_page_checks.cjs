@@ -9,9 +9,20 @@ const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {
 function setup() {
     const elements=new Map();
     const element=id=>{
-        if(!elements.has(id))elements.set(id,{value:'',textContent:'',innerHTML:'',style:{},disabled:false,
-            dataset:{},elements:{namedItem: name=>element(`${id}-${name}`)},
-            querySelectorAll:()=>[],appendChild:()=>{},addEventListener:()=>{},reportValidity:()=>true});
+        if(!elements.has(id)) {
+            const node={value:'',textContent:'',style:{},disabled:false,hidden:false,dataset:{},
+                elements:{namedItem: name=>element(`${id}-${name}`)},
+                querySelectorAll:()=>[],querySelector:()=>null,appendChild:()=>{},
+                listeners:{},addEventListener(type,handler){this.listeners[type]=handler;},reportValidity:()=>true};
+            Object.defineProperty(node,'innerHTML',{get(){return this.html||'';},set(value){
+                this.html=value;
+                if(id==='fc-store') {
+                    this.options=[...value.matchAll(/<option value="([^"]*)">([^<]*)<\/option>/g)].map(m=>({value:m[1],text:m[2]}));
+                    this.value=this.options[0]?.value||'';
+                }
+            }});
+            elements.set(id,node);
+        }
         return elements.get(id);
     };
     element('fc-store').value='7';element('fc-month').value='2026-09';
@@ -25,17 +36,136 @@ function setup() {
         FormData:class {constructor(form){return Object.entries(form.formValues);}},URLSearchParams,Date,Number,Error,
     };
     vm.createContext(context);vm.runInContext(source,context);
-    context.window.test.state.config={can_write:true,can_post:true,expense_categories:{advertising:'广告'},breakdown_categories:{tax:'税'}};
+    context.window.test.state.config={enabled:true,can_write:true,can_post:true,expense_categories:{advertising:'广告'},breakdown_categories:{tax:'税'}};
+    context.window.test.state.storesReady=true;
     return {context,element,...context.window.test};
 }
 const response=(path,store)=>path.includes('/overview')?{profit_layers:{a:store,b:store,c:store},warnings:[`store-${store}`]}:
     path.includes('/expenses')?{sources:{},items:[],total:0}:path.includes('/reconciliation')?{entries:[],payouts:[],receipts:[]}:[];
+function metadata(t,{enabled=true,role='admin',bound=7,stores=[{id:7,name:'店铺7'},{id:8,name:'店铺8'}],batches=[]}={}) {
+    t.context.isAdmin=()=>role==='admin';
+    return async(_method,path)=>path==='/financial-control/config'?{...t.state.config,enabled,
+        can_write:role!=='viewer',can_post:role==='admin',expense_categories:{advertising:'广告'},breakdown_categories:{tax:'税'}}:
+        path==='/finance-masters/stores'?stores:path==='/auth/me'?{id:1,store_id:bound}:
+        path.startsWith('/batches?')?{items:batches}:response(path,7);
+}
 async function main(){
     for(const file of ['templates/index.html','index.html']){
         const html=fs.readFileSync(file,'utf8');
         equal(html.includes('src="/financial-control.js"'),true);
         equal(html.includes('id="financial-control-root"'),true);
         equal(html.includes("row.input_source !== 'ledger'"),true);
+    }
+    {
+        const t=setup(),calls=[];t.state.config=null;t.element('fc-month').value='';t.element('fc-store').value='';
+        const api=metadata(t,{enabled:false});t.context.api=(method,path)=>{calls.push(path);return api(method,path);};
+        await t.open();
+        equal(t.element('fc-month').value,'2026-09');equal(t.element('fc-store').value,'7');
+        equal(t.element('fc-store').options.length,2);equal(t.element('fc-body').hidden,true);
+        equal(t.element('fc-notice').textContent.includes('尚未启用'),true);
+        await t.refresh();equal(t.element('fc-notice').textContent.includes('尚未启用'),true);
+        await assert.rejects(t.dispatch('preview-cost',{}),/尚未启用/);checks++;
+        equal(calls.some(path=>path.startsWith('/batches?')||path.includes('/overview')),false);
+        t.context.api=metadata(t);await t.dispatch('refresh',{});
+        equal(t.state.config.enabled,true);equal(t.element('fc-body').hidden,false);
+    }
+    {
+        const t=setup(),batch=deferred(),calls=[];t.state.config=null;t.element('fc-month').value='';
+        const api=metadata(t);t.context.api=(method,path)=>{calls.push(path);return path.startsWith('/batches?')?batch.promise:api(method,path);};
+        const first=t.open(),again=t.open();
+        equal(t.element('fc-month').value,'2026-09');
+        for(let n=0;n<10&&!calls.some(path=>path.startsWith('/batches?'));n++) await Promise.resolve();
+        equal(t.element('fc-store').value,'7');equal(t.element('fc-store').disabled,true);
+        const serial=t.state.serial;await t.refresh();equal(t.state.serial,serial);
+        t.element('fc-store').listeners.change();equal(t.state.serial,serial);
+        batch.resolve({items:[]});await Promise.all([first,again]);
+        equal(calls.filter(path=>path==='/financial-control/config').length,1);
+        equal(t.element('fc-overview').innerHTML.includes('store-7'),true);
+        equal(t.element('fc-store').disabled,false);equal(t.element('fc-body').hidden,false);
+    }
+    {
+        const t=setup(),api=metadata(t);t.state.config=null;
+        t.context.api=(method,path)=>path.startsWith('/batches?')?Promise.reject(new Error('batch unavailable')):api(method,path);
+        await t.open();equal(t.element('fc-store').value,'7');equal(t.element('fc-month').value,'2026-09');
+        equal(t.element('fc-overview').innerHTML.includes('store-7'),true);
+        equal(t.element('fc-notice').textContent.includes('batch unavailable'),true);
+        t.context.api=metadata(t);t.element('fc-store').value='8';t.element('fc-month').value='2026-08';
+        await t.open();equal(t.element('fc-store').value,'8');equal(t.element('fc-month').value,'2026-08');
+        equal(t.element('fc-notice').textContent.includes('batch unavailable'),false);
+    }
+    {
+        for(const failure of ['/financial-control/config','/finance-masters/stores']) {
+            const t=setup(),api=metadata(t);t.state.config=null;t.element('fc-month').value='';
+            t.context.api=(method,path)=>path===failure?Promise.reject(new Error('metadata unavailable')):api(method,path);
+            await t.context.window.FinanceControl.open();
+            equal(t.element('fc-month').value,'2026-09');equal(t.element('fc-body').hidden,true);
+            equal(t.element('fc-notice').textContent.includes('metadata unavailable'),true);
+            t.context.api=metadata(t);await t.dispatch('refresh',{});
+            equal(t.element('fc-store').value,'7');equal(t.element('fc-body').hidden,false);
+        }
+    }
+    {
+        for(const role of ['operator','viewer']) {
+            const t=setup();t.state.config=null;t.context.api=metadata(t,{role,bound:'8'});
+            await t.open();equal(t.element('fc-store').value,'8');equal(t.element('fc-store').disabled,true);
+            equal(t.element('fc-store').options.length,1);equal(t.element('fc-month').value,'2026-09');
+            equal(t.element('fc-cost-form').hidden,role==='viewer');
+        }
+        for(const bound of [null,999]) {
+            const t=setup();t.state.config=null;t.context.api=metadata(t,{role:'operator',bound});
+            await t.open();equal(t.element('fc-store').value,'');equal(t.element('fc-body').hidden,true);
+            equal(t.element('fc-notice').textContent.includes('未绑定'),true);
+        }
+        const t=setup();t.state.config=null;t.context.api=metadata(t,{stores:[]});
+        await t.open();equal(t.element('fc-store').value,'');equal(t.element('fc-body').hidden,true);
+        equal(t.element('fc-notice').textContent.includes('暂无店铺'),true);
+    }
+    {
+        const t=setup(),old=deferred();t.state.config=null;t.context.api=()=>old.promise;
+        const first=t.open();t.context.window.FinanceControl.reset();
+        t.context.api=metadata(t);await t.open();
+        old.resolve({enabled:false});await first;
+        equal(t.state.config.enabled,true);equal(t.element('fc-store').value,'7');
+        equal(t.element('fc-body').hidden,false);equal(t.state.loading,false);
+    }
+    {
+        const t=setup();t.state.config=null;t.context.api=metadata(t);
+        t.context.Date=class {toLocaleDateString(){return '2026-10-26';}};
+        await t.open();
+        const form=t.element('fc-expense-form'),date=form.elements.namedItem('expense_date');
+        equal(date.value,'2026-09-01');
+        date.value='2026-08-31';const originalKey=t.key('fc-expense-form');
+        // 普通刷新及切换导航后重新打开均不改写已填写的费用日期和重试标识。
+        await t.dispatch('refresh',{});await t.open();
+        equal(date.value,'2026-08-31');equal(t.key('fc-expense-form'),originalKey);
+        // 用户明确切月时仍设置该月默认日期，并为变化后的表单换请求标识。
+        t.element('fc-month').value='2026-08';await t.element('fc-month').listeners.change();
+        equal(date.value,'2026-08-01');equal(t.key('fc-expense-form')===originalKey,false);
+        t.element('fc-month').value='2026-10';await t.element('fc-month').listeners.change();
+        equal(date.value,'2026-10-26');
+    }
+    {
+        const t=setup();t.state.config=null;const api=metadata(t),requests=[];
+        t.context.api=async(method,path,body)=>{
+            if(method==='POST'&&path==='/financial-control/expenses') {
+                requests.push(JSON.parse(JSON.stringify(body)));
+                if(requests.length===1)throw new Error('response lost after commit');
+                return {id:42};
+            }
+            return api(method,path);
+        };
+        await t.open();
+        const form=t.element('fc-expense-form'),date=form.elements.namedItem('expense_date');
+        date.value='2026-08-31';
+        form.formValues={category:'advertising',source_ref:'retry-expense-001',amount:'123.0001',
+            currency:'CNY',exchange_rate:'1',settlement_entry_id:'',note:'保留原发生日期',
+            get expense_date(){return date.value;}};
+        await assert.rejects(t.dispatch('create-expense',{}),/response lost/);checks++;
+        const originalKey=requests[0].request_key;
+        await t.dispatch('refresh',{});
+        equal(date.value,'2026-08-31');equal(t.key('fc-expense-form'),originalKey);
+        await t.dispatch('create-expense',{});
+        equal(requests.length,2);equal(requests[1],requests[0]);equal(t.state.busy,false);
     }
     {
         const t=setup(),ids=[];

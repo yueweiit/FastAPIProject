@@ -4,6 +4,9 @@
     const messages = {'zh-CN': {
         nav: '成本、费用与核对', title: '成本、费用与月度版本', store: '店铺', month: '核算月份', refresh: '查询 / 刷新',
         disabled: '财务增强功能尚未启用，请联系管理员完成结构核验后启用。', loading: '正在加载…', empty: '暂无记录',
+        storesLoading: '正在加载店铺…', noStores: '暂无店铺，请先维护店铺资料。',
+        noBoundStore: '当前账号未绑定可用店铺，请联系管理员。', storesFailed: '店铺加载失败，请点击查询 / 刷新重试。',
+        batchesFailed: '批次选项加载失败，可点击查询 / 刷新重试',
         cost: '批次实际成本补差', costHelp: '填写本次差额，不是整张账单总额。已售部分追溯原销售月，未售部分加入库存；原确认版本保留。',
         source: '来源凭证号（含供应商 / 单号）', amount: '本次差额 / 金额', currency: '原币', rate: '人民币汇率（外币必填）',
         date: '凭证日期', rateDate: '汇率日期', category: '科目', purchase: '采购成本', head_shipping: '头程运费', last_mile: '尾程运费', other: '其他入库成本',
@@ -37,7 +40,8 @@
     const ft = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key] || key;
     const esc = value => escapeHtml(String(value ?? ''));
     const money = value => value == null ? '—' : Number(value).toLocaleString('zh-CN', {minimumFractionDigits: 2, maximumFractionDigits: 4});
-    const state = {serial: 0, busy: false, config: null, initialized: false, preview: null, keys: {}};
+    const state = {serial: 0, busy: false, config: null, initialized: false, preview: null, keys: {},
+        loading: false, opening: null, storesReady: false, formsReady: false, batchError: ''};
     const el = id => document.getElementById(`fc-${id}`);
     const uid = () => {
         const random = globalThis.crypto;
@@ -74,16 +78,9 @@
     }
     function initialize() {
         const root = document.getElementById('financial-control-root');
-        root.innerHTML = `<h3>${esc(ft('title'))}</h3><div class="form-row"><label>${esc(ft('store'))}<select id="fc-store"></select></label><label>${esc(ft('month'))}<input id="fc-month" type="month"></label>${button('refresh',ft('refresh'))}</div><p id="fc-notice" role="status"></p><div id="fc-body" hidden>
-        <div id="fc-overview"></div><details open><summary>${esc(ft('cost'))}</summary><p>${esc(ft('costHelp'))}</p>
-        <form id="fc-cost-form"><div class="form-row">${input('source_ref',ft('source'),'text','required maxlength="128"')}${select('category',ft('category'),Object.fromEntries(['purchase','head_shipping','last_mile','other'].map(k=>[k,ft(k)])))}${input('amount',ft('amount'),'text','required inputmode="decimal"')}${input('currency',ft('currency'),'text','value="CNY" required pattern="[A-Z]{3}"')}${input('exchange_rate',ft('rate'),'text','value="1" required inputmode="decimal"')}${input('document_date',ft('date'),'date','required')}${input('rate_date',ft('rateDate'),'date','required')}${select('allocation_basis',ft('basis'),Object.fromEntries(['quantity','weight','volume','value'].map(k=>[k,ft(k)])))}</div><div id="fc-allocations"></div><datalist id="fc-batches"></datalist>${button('add-batch',ft('addBatch'))}<label><input name="is_final" type="checkbox">${esc(ft('final'))}</label>${input('note',ft('note'),'text','maxlength="1000"')}<div>${button('preview-cost',ft('preview'))}${button('post-cost',ft('postCost'))}</div></form><div id="fc-cost-preview"></div><h4>${esc(ft('costList'))}</h4><div id="fc-cost-list"></div></details>
-        <details><summary>${esc(ft('expense'))}</summary><p>${esc(ft('expenseHelp'))}</p><form id="fc-expense-form"><div class="form-row">${select('category',ft('category'),state.config.expense_categories)}${input('expense_date',ft('expenseDate'),'date','required')}${input('source_ref',ft('source'),'text','required maxlength="128"')}${input('amount',ft('amount'),'text','required inputmode="decimal"')}${input('currency',ft('currency'),'text','value="CNY" required pattern="[A-Z]{3}"')}${input('exchange_rate',ft('rate'),'text','value="1" required')}${input('settlement_entry_id',ft('linked'),'number','min="1"')}${input('note',ft('note'),'text','maxlength="1000"')}</div>${button('create-expense',ft('createExpense'))}</form>
-        <form id="fc-source-form"><div class="form-row">${select('category',ft('category'),state.config.expense_categories)}${select('mode',ft('sourceMode'),{manual:ft('manual'),ledger:ft('ledger')})}${button('select-source',ft('changeSource'))}</div></form><p id="fc-expense-sources"></p><div id="fc-expenses"></div></details>
-        <details><summary>${esc(ft('reconciliation'))}</summary><p>${esc(ft('reconciliationHelp'))}</p><div id="fc-payouts"></div><h4>${esc(ft('billRows'))}</h4><div id="fc-entries"></div><form id="fc-classification-form"><div class="form-row"><label>${esc(ft('entry'))}<select name="entry_id" id="fc-classification-entry"></select></label>${Object.entries(state.config.breakdown_categories).map(([k,v])=>input(k,v,'text','value="0" inputmode="decimal"')).join('')}${input('note',ft('note'),'text','maxlength="1000"')}${button('classify',ft('classification'))}</div></form><form id="fc-receipt-form"><div class="form-row">${input('payout_id',ft('payout'),'text','required maxlength="128"')}${input('receipt_date',ft('receiptDate'),'date','required')}${input('source_ref',ft('source'),'text','required maxlength="128"')}${input('amount',ft('receiptAmount'),'text','required inputmode="decimal"')}${input('currency',ft('currency'),'text','value="CNY" required pattern="[A-Z]{3}"')}${input('exchange_rate',ft('rate'),'text','value="1" required')}${input('note',ft('note'),'text','maxlength="1000"')}${button('create-receipt',ft('receipt'))}</div></form><h4>${esc(ft('receipts'))}</h4><div id="fc-receipts"></div></details>
-        <details><summary>${esc(ft('versions'))}</summary><p>${esc(ft('versionHelp'))}</p><form id="fc-version-form">${input('note',ft('note'),'text','maxlength="1000"')}${button('capture',ft('capture'))}</form><div id="fc-versions"></div><div id="fc-comparison"></div></details></div>`;
-        root.querySelectorAll('label').forEach(label=>{label.style.display='inline-flex';label.style.flexDirection='column';label.style.gap='4px';label.style.margin='6px';});
-        root.querySelectorAll('details').forEach(item=>{item.style.borderTop='1px solid #e2e8f0';item.style.padding='16px 0';});
-        root.querySelectorAll('summary').forEach(item=>{item.style.cursor='pointer';item.style.fontWeight='700';});
+        root.innerHTML = `<h3>${esc(ft('title'))}</h3><div class="form-row"><label>${esc(ft('store'))}<select id="fc-store" disabled><option value="">${esc(ft('storesLoading'))}</option></select></label><label>${esc(ft('month'))}<input id="fc-month" type="month"></label>${button('refresh',ft('refresh'))}</div><p id="fc-notice" role="status"></p><div id="fc-body" hidden></div>`;
+        el('month').value=defaultProfitLossMonth();
+        decorate();
         root.onsubmit = event=>event.preventDefault();
         root.onclick = event=>{
             const target = event.target.closest('[data-action]');
@@ -100,9 +97,25 @@
         root.onchange = event=>{
             if(event.target.id==='fc-classification-entry') fillClassification();
         };
-        el('store').addEventListener('change',()=>{state.serial++;state.preview=null;refresh().catch(e=>notice(e.message,true));});
-        el('month').addEventListener('change',()=>{state.serial++;state.preview=null;setExpenseDate();refresh().catch(e=>notice(e.message,true));});
-        addBatch(); state.initialized=true;
+        el('store').addEventListener('change',()=>{state.preview=null;refresh().catch(e=>notice(e.message,true));});
+        el('month').addEventListener('change',()=>{state.preview=null;if(state.formsReady)setExpenseDate();refresh().catch(e=>notice(e.message,true));});
+        state.initialized=true;
+    }
+    function decorate() {
+        const root=document.getElementById('financial-control-root');
+        root.querySelectorAll('label').forEach(label=>{label.style.display='inline-flex';label.style.flexDirection='column';label.style.gap='4px';label.style.margin='6px';});
+        root.querySelectorAll('details').forEach(item=>{item.style.borderTop='1px solid #e2e8f0';item.style.padding='16px 0';});
+        root.querySelectorAll('summary').forEach(item=>{item.style.cursor='pointer';item.style.fontWeight='700';});
+    }
+    function initializeForms() {
+        el('body').innerHTML = `
+        <div id="fc-overview"></div><details open><summary>${esc(ft('cost'))}</summary><p>${esc(ft('costHelp'))}</p>
+        <form id="fc-cost-form"><div class="form-row">${input('source_ref',ft('source'),'text','required maxlength="128"')}${select('category',ft('category'),Object.fromEntries(['purchase','head_shipping','last_mile','other'].map(k=>[k,ft(k)])))}${input('amount',ft('amount'),'text','required inputmode="decimal"')}${input('currency',ft('currency'),'text','value="CNY" required pattern="[A-Z]{3}"')}${input('exchange_rate',ft('rate'),'text','value="1" required inputmode="decimal"')}${input('document_date',ft('date'),'date','required')}${input('rate_date',ft('rateDate'),'date','required')}${select('allocation_basis',ft('basis'),Object.fromEntries(['quantity','weight','volume','value'].map(k=>[k,ft(k)])))}</div><div id="fc-allocations"></div><datalist id="fc-batches"></datalist>${button('add-batch',ft('addBatch'))}<label><input name="is_final" type="checkbox">${esc(ft('final'))}</label>${input('note',ft('note'),'text','maxlength="1000"')}<div>${button('preview-cost',ft('preview'))}${button('post-cost',ft('postCost'))}</div></form><div id="fc-cost-preview"></div><h4>${esc(ft('costList'))}</h4><div id="fc-cost-list"></div></details>
+        <details><summary>${esc(ft('expense'))}</summary><p>${esc(ft('expenseHelp'))}</p><form id="fc-expense-form"><div class="form-row">${select('category',ft('category'),state.config.expense_categories)}${input('expense_date',ft('expenseDate'),'date','required')}${input('source_ref',ft('source'),'text','required maxlength="128"')}${input('amount',ft('amount'),'text','required inputmode="decimal"')}${input('currency',ft('currency'),'text','value="CNY" required pattern="[A-Z]{3}"')}${input('exchange_rate',ft('rate'),'text','value="1" required')}${input('settlement_entry_id',ft('linked'),'number','min="1"')}${input('note',ft('note'),'text','maxlength="1000"')}</div>${button('create-expense',ft('createExpense'))}</form>
+        <form id="fc-source-form"><div class="form-row">${select('category',ft('category'),state.config.expense_categories)}${select('mode',ft('sourceMode'),{manual:ft('manual'),ledger:ft('ledger')})}${button('select-source',ft('changeSource'))}</div></form><p id="fc-expense-sources"></p><div id="fc-expenses"></div></details>
+        <details><summary>${esc(ft('reconciliation'))}</summary><p>${esc(ft('reconciliationHelp'))}</p><div id="fc-payouts"></div><h4>${esc(ft('billRows'))}</h4><div id="fc-entries"></div><form id="fc-classification-form"><div class="form-row"><label>${esc(ft('entry'))}<select name="entry_id" id="fc-classification-entry"></select></label>${Object.entries(state.config.breakdown_categories).map(([k,v])=>input(k,v,'text','value="0" inputmode="decimal"')).join('')}${input('note',ft('note'),'text','maxlength="1000"')}${button('classify',ft('classification'))}</div></form><form id="fc-receipt-form"><div class="form-row">${input('payout_id',ft('payout'),'text','required maxlength="128"')}${input('receipt_date',ft('receiptDate'),'date','required')}${input('source_ref',ft('source'),'text','required maxlength="128"')}${input('amount',ft('receiptAmount'),'text','required inputmode="decimal"')}${input('currency',ft('currency'),'text','value="CNY" required pattern="[A-Z]{3}"')}${input('exchange_rate',ft('rate'),'text','value="1" required')}${input('note',ft('note'),'text','maxlength="1000"')}${button('create-receipt',ft('receipt'))}</div></form><h4>${esc(ft('receipts'))}</h4><div id="fc-receipts"></div></details>
+        <details><summary>${esc(ft('versions'))}</summary><p>${esc(ft('versionHelp'))}</p><form id="fc-version-form">${input('note',ft('note'),'text','maxlength="1000"')}${button('capture',ft('capture'))}</form><div id="fc-versions"></div><div id="fc-comparison"></div></details>`;
+        decorate();addBatch();state.formsReady=true;
     }
     function addBatch() {
         const row=document.createElement('div'); row.className='form-row';row.dataset.allocation='1';
@@ -133,14 +146,18 @@
         } finally {state.busy=false;fields.forEach(([node,disabled])=>node.disabled=disabled);}
     }
     async function refresh() {
-        const serial=++state.serial, scope=selection(), suffix=query();
+        if(state.loading)return;
+        if(!state.config?.enabled){notice(ft(state.config?'disabled':'failed'));return;}
+        if(!state.storesReady)return;
+        if(!el('store').value){notice(ft(isAdmin()?'noStores':'noBoundStore'),true);return;}
+        const scope=selection(), suffix=query(), serial=++state.serial;
         notice(ft('loading'));el('comparison').textContent='';
         for(const id of ['overview','expenses','expense-sources','payouts','entries','receipts','versions','cost-list','cost-preview'])el(id).textContent='';
         el('classification-entry').innerHTML='';state.entries=[];
         const tasks={overview:`overview?${suffix}`,expenses:`expenses?${suffix}`,reconciliation:`reconciliation?${suffix}`,versions:`versions?${suffix}`,costs:'cost-adjustments?limit=50'};
         const results=await Promise.allSettled(Object.entries(tasks).map(async([name,path])=>[name,await api('GET',`/financial-control/${path}`)]));
         if(serial!==state.serial || scope!==selection()) return;
-        const failures=[];
+        const failures=state.batchError?[state.batchError]:[];
         for(const result of results) {
             if(result.status==='rejected'){failures.push(result.reason.message);continue;}
             const [name,value]=result.value;
@@ -183,7 +200,11 @@
         delete state.keys['fc-expense-form'];
     }
     async function dispatch(action,target) {
-        if(action==='refresh') return refresh();
+        if(action==='refresh') return open();
+        if(state.loading)return;
+        if(!state.config?.enabled)throw new Error(ft(state.config?'disabled':'failed'));
+        if(!state.storesReady)throw new Error(ft('chooseStore'));
+        context();
         if(action==='add-batch') {state.preview=null;delete state.keys['fc-cost-form'];return addBatch();}
         if(action==='remove-batch') {target.closest('[data-allocation]').remove();state.preview=null;delete state.keys['fc-cost-form'];return;}
         if(action==='preview-cost') {
@@ -239,26 +260,71 @@
             const url=URL.createObjectURL(await response.blob()),link=document.createElement('a');link.href=url;link.download=`financial_version_${target.dataset.id}.xlsx`;link.click();URL.revokeObjectURL(url);
         }
     }
-    async function open() {
-        const serial=++state.serial;
-        if(!state.config){const config=await api('GET','/financial-control/config');if(serial!==state.serial)return;state.config=config;}
-        if(serial!==state.serial)return;
-        if(!state.initialized)initialize();
-        if(!state.config.enabled){notice(ft('disabled'));return;}
-        el('body').hidden=false;
-        const [stores,me,batches]=await Promise.all([api('GET','/finance-masters/stores'),api('GET','/auth/me'),api('GET','/batches?page=1&page_size=100')]);
-        if(serial!==state.serial)return;
-        const previous=el('store').value;
-        el('store').innerHTML=stores.filter(s=>isAdmin()||s.id===me.store_id).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
-        if([...el('store').options].some(o=>o.value===previous))el('store').value=previous;
-        el('month').value=el('month').value||defaultProfitLossMonth();
-        el('batches').innerHTML=batches.items.filter(b=>isAdmin()||b.user_id===me.id).map(b=>`<option value="${b.id}">${esc(b.batch_no)}</option>`).join('');
-        const current=new Date().toLocaleDateString('sv-SE');
-        for(const form of ['cost-form','expense-form','receipt-form'])el(form).querySelectorAll('input[type=date]').forEach(i=>{if(!i.value)i.value=current;});
-        setExpenseDate();
-        permission();return refresh();
+    function updateFilters() {
+        el('store').disabled=state.loading||!state.storesReady||!el('store').value||!isAdmin();
+        el('month').disabled=state.loading;
+        const button=document.getElementById('financial-control-root').querySelector('[data-action="refresh"]');
+        if(button)button.disabled=state.loading||state.busy;
     }
-    function reset() {state.serial++;state.config=null;state.preview=null;state.keys={};state.initialized=false;const root=document.getElementById('financial-control-root');if(root)root.innerHTML='';}
+    async function load() {
+        if(!state.initialized)initialize();
+        const serial=++state.serial;
+        state.loading=true;state.storesReady=false;state.batchError='';
+        el('month').value=el('month').value||defaultProfitLossMonth();
+        el('body').hidden=true;updateFilters();notice(ft('loading'));
+        let ready=false;
+        try {
+            const [config,lookup]=await Promise.allSettled([
+                api('GET','/financial-control/config'),
+                Promise.all([api('GET','/finance-masters/stores'),api('GET','/auth/me')]),
+            ]);
+            if(serial!==state.serial)return;
+            state.config=config.status==='fulfilled'?config.value:null;
+            if(state.config&&!state.formsReady)initializeForms();
+            if(lookup.status==='fulfilled') {
+                const [stores,me]=lookup.value,previous=el('store').value;
+                const allowed=stores.filter(s=>isAdmin()||Number(s.id)===Number(me.store_id));
+                const preferred=[previous,document.getElementById('profit-loss-store')?.value,me.store_id];
+                const chosen=preferred.map(id=>allowed.find(s=>String(s.id)===String(id))).find(Boolean)||allowed[0];
+                el('store').innerHTML=allowed.length?allowed.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join(''):
+                    `<option value="">${esc(ft(isAdmin()?'noStores':'noBoundStore'))}</option>`;
+                el('store').value=chosen?String(chosen.id):'';state.storesReady=true;
+            } else {
+                el('store').innerHTML=`<option value="">${esc(ft('storesFailed'))}</option>`;
+            }
+            if(!state.config){notice(config.reason?.message||ft('failed'),true);return;}
+            if(!state.config.enabled){notice(ft('disabled'));return;}
+            if(lookup.status==='rejected'){notice(lookup.reason?.message||ft('storesFailed'),true);return;}
+            if(!el('store').value){notice(ft(isAdmin()?'noStores':'noBoundStore'),true);return;}
+            permission();
+            try {
+                const batches=await api('GET','/batches?page=1&page_size=100');
+                if(serial!==state.serial)return;
+                const me=lookup.value[1];
+                el('batches').innerHTML=batches.items.filter(b=>isAdmin()||Number(b.user_id)===Number(me.id))
+                    .map(b=>`<option value="${b.id}">${esc(b.batch_no)}</option>`).join('');
+            } catch(error) {
+                if(serial!==state.serial)return;
+                el('batches').innerHTML='';state.batchError=`${ft('batchesFailed')}：${error.message}`;
+            }
+            const current=new Date().toLocaleDateString('sv-SE');
+            // 刷新基础资料不改变未提交的费用日期或同一请求的重试标识。
+            if(!el('expense-form').elements.namedItem('expense_date').value)setExpenseDate();
+            for(const form of ['cost-form','receipt-form'])el(form).querySelectorAll('input[type=date]').forEach(i=>{if(!i.value)i.value=current;});
+            el('body').hidden=false;ready=true;
+        } finally {
+            if(serial===state.serial){state.loading=false;updateFilters();}
+        }
+        if(ready&&serial===state.serial)return refresh();
+    }
+    function open() {
+        if(state.opening)return state.opening;
+        const pending=load().finally(()=>{if(state.opening===pending)state.opening=null;});
+        state.opening=pending;return pending;
+    }
+    function reset() {state.serial++;state.config=null;state.preview=null;state.keys={};state.initialized=false;
+        state.loading=false;state.opening=null;state.storesReady=false;state.formsReady=false;state.batchError='';
+        const root=document.getElementById('financial-control-root');if(root)root.innerHTML='';}
     document.querySelectorAll('[data-finance-text]').forEach(node=>node.textContent=ft(node.dataset.financeText));
     window.FinanceControl={open:()=>open().catch(e=>notice(e.message,true)),reset,text:ft};
 })();
