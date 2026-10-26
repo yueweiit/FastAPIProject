@@ -9,6 +9,12 @@
         importSelectHelp: '请选择这次文件所属店铺', importBoundHelp: '文件将归入账号绑定的店铺',
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
+        batchExport: '导出', batchEdit: '编辑', batchDelete: '删除',
+        batchEditHelp: '操作列固定在右侧。管理员可编辑未出库批次，运营仅可编辑自己创建的未出库批次；已有成本补差的批次请通过成本补差更正。',
+        batchEditRole: '当前账号没有批次编辑权限。',
+        batchEditOwner: '仅管理员或此批次的创建人可以编辑。',
+        batchEditConsumed: '此批次已有出库记录，不能直接编辑；成本更正请通过成本补差处理。',
+        batchEditSaved: '批次已更新。', batchEditRefreshFailed: '批次已更新，但列表刷新失败，请点击刷新。',
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 

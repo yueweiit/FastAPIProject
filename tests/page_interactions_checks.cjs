@@ -9,15 +9,16 @@ function setup(file) {
     const html = fs.readFileSync(file,'utf8');
     const elements = new Map();
     const element = id => {
-        if (!elements.has(id)) elements.set(id,{value:'',dataset:{},style:{},textContent:''});
+        if (!elements.has(id)) elements.set(id,{value:'',dataset:{},style:{},textContent:'',reportValidity:()=>true});
         return elements.get(id);
     };
     const context = vm.createContext({window:{},document:{getElementById:element,documentElement:{lang:'zh-CN'}},
         api:async()=>{throw new Error('unexpected request');},showMsg:()=>{},loadBatches:()=>{},calcEditUnitCost:()=>{},
         refreshSalesWorkspace:()=>{context.refreshed=true;}});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),context);
-    vm.runInContext('let editingBatchId=null,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
-    for(const name of ['createBatch','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {
+    context.isOperator=()=>true; context.isAdmin=()=>true;
+    vm.runInContext('let editingBatchId=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
+    for(const name of ['createBatch','batchEditBlockedReason','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source,`${file}: missing ${name}`);
         vm.runInContext(source[0],context);
@@ -40,13 +41,13 @@ async function main() {
                 equal(payload.arrived_at,'2026-09-01T00:15');
                 equal(payload.shipping_date,'2026-08-31T23:59');
                 // 含秒/小数秒的历史记录，不改日期时原样提交；重复编辑也不漂移。
-                const batch={...payload,id:12,arrived_at:'2026-09-01T00:15:37.123456',shipping_date:'2026-08-31T23:59:41'};
+                const batch={...payload,id:12,remaining_quantity:5,arrived_at:'2026-09-01T00:15:37.123456',shipping_date:'2026-08-31T23:59:41'};
                 vm.runInContext(`currentBatchList=[${JSON.stringify(batch)}]`,c);
                 for(let i=0;i<2;i++) {
                     await c.openEditBatch(12);e('eb-qty').value='6';e('eb-total-amount').value='30';
                     await c.saveEditBatch();
                     equal(payload.arrived_at,batch.arrived_at);equal(payload.shipping_date,batch.shipping_date);
-                    vm.runInContext(`currentBatchList=[${JSON.stringify({...batch,...payload})}]`,c);
+                    vm.runInContext(`currentBatchList=[${JSON.stringify({...batch,...payload,remaining_quantity:payload.quantity})}]`,c);
                 }
                 await c.openEditBatch(12);e('eb-date').value='2026-10-01T00:01';e('eb-shipdate').value='';
                 await c.saveEditBatch();

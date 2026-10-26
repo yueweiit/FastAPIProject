@@ -32,6 +32,14 @@
         .table-scroll { overflow-x:auto; border:1px solid var(--line); border-radius:9px; background:#fff; }
         #batches-table-scroll { max-height:min(62vh, 720px); overflow:auto; scrollbar-gutter:stable; }
         #batches-table-scroll thead th { position:sticky; top:0; z-index:2; }
+        #batches-table-scroll [data-batch-column="actions"] { position:sticky; right:0; min-width:180px; background:var(--surface); box-shadow:-5px 0 8px rgba(21,34,56,.08); z-index:1; }
+        #batches-table-scroll thead [data-batch-column="actions"] { background:#f7f9fb; z-index:3; }
+        #batches-table-scroll tr:hover [data-batch-column="actions"] { background:#fff8f9; }
+        .batch-row-actions { display:flex; gap:4px; align-items:center; }
+        .batch-row-actions .btn { font-size:11px; padding:3px 8px; }
+        .batch-row-actions button:disabled { opacity:.45; cursor:not-allowed; }
+        #batch-edit-help { color:var(--muted); font-size:12px; margin:0 0 12px; }
+        #edit-batch-modal .form-row { grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
         #batches-table-scroll::-webkit-scrollbar { width:12px; height:12px; }
         #batches-table-scroll::-webkit-scrollbar-thumb { background:#9da8b7; border:3px solid transparent; border-radius:999px; background-clip:padding-box; }
         #batches-table-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
@@ -416,22 +424,24 @@
         <!-- 编辑弹窗 -->
         <div id="edit-batch-modal" class="card edit-modal" style="display:none;border:2px solid #e94560">
             <div class="flex-between"><h3>✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditBatch()">× 取消</button></div>
+            <form id="edit-batch-form" onsubmit="event.preventDefault(); saveEditBatch()">
             <div class="form-row">
-                <div class="form-group"><label>数量</label><input id="eb-qty" type="number"></div>
-                <div class="form-group"><label>总金额</label><input id="eb-total-amount" type="number" min="0" step="0.01"></div>
+                <div class="form-group"><label>数量</label><input id="eb-qty" type="number" min="1" step="1" required></div>
+                <div class="form-group"><label>总金额</label><input id="eb-total-amount" type="number" min="0" step="0.0001" required></div>
                 <div class="form-group"><label>采购单价（自动计算）</label><input id="eb-price" type="number" step="0.01" readonly></div>
                 <div class="form-group"><label>钉钉单号</label><input id="eb-dingtalk-order" type="text" maxlength="64"></div>
-                <div class="form-group"><label>头程运费</label><input id="eb-ship" type="number" step="0.01"></div>
+                <div class="form-group"><label>头程运费</label><input id="eb-ship" type="number" min="0" step="0.0001"></div>
                 <div class="form-group"><label>头程运费钉钉单号（可选）</label><input id="eb-ship-no" type="text" maxlength="64"></div>
-                <div class="form-group"><label>尾程派送费</label><input id="eb-lastmile" type="number" step="0.01"></div>
+                <div class="form-group"><label>尾程派送费</label><input id="eb-lastmile" type="number" min="0" step="0.0001"></div>
                 <div class="form-group"><label>尾程派送费钉钉单号（可选）</label><input id="eb-lastmile-no" type="text" maxlength="64"></div>
-                <div class="form-group"><label>其他成本</label><input id="eb-other" type="number" step="0.01"></div>
+                <div class="form-group"><label>其他成本</label><input id="eb-other" type="number" min="0" step="0.0001"></div>
                 <div class="form-group"><label>其他成本钉钉单号（可选）</label><input id="eb-other-no" type="text" maxlength="64"></div>
                 <div class="form-group"><label>头程发货时间</label><input id="eb-shipdate" type="datetime-local"></div>
-                <div class="form-group"><label>入库时间</label><input id="eb-date" type="datetime-local"></div>
-                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditBatch()">保存</button></div>
+                <div class="form-group"><label>入库时间</label><input id="eb-date" type="datetime-local" required></div>
+                <div class="form-group" style="justify-content:flex-end"><button id="eb-save" type="submit" class="btn btn-primary">保存</button></div>
             </div>
             <div id="eb-calc" class="cost-detail"></div>
+            </form>
         </div>
         <div class="card">
             <div class="flex-between">
@@ -481,6 +491,7 @@
                     <button type="button" class="btn btn-secondary" onclick="clearBatchSearch()">清空</button>
                 </div>
             </div>
+            <p id="batch-edit-help"></p>
             <div class="table-scroll" id="batches-table-scroll">
             <table class="batch-table">
                 <thead><tr><th><input type="checkbox" id="batch-select-all" onchange="toggleAllBatchSelection(this.checked)" aria-label="全选批次"></th><th data-batch-column="image">图片</th><th data-batch-column="product_name">产品名称</th><th data-batch-column="sku">SKU</th><th data-batch-column="batch_no">批次号</th><th data-batch-column="dingtalk_order_no">钉钉单号</th><th data-batch-column="quantity">入库数</th><th data-batch-column="remaining_quantity">剩余</th><th data-batch-column="purchase_price">采购价</th><th data-batch-column="total_amount">总金额</th><th data-batch-column="shipping_cost">头程运费</th><th data-batch-column="shipping_cost_no">头程运费钉钉单号</th><th data-batch-column="last_mile_cost">尾程派送</th><th data-batch-column="last_mile_cost_no">尾程派送费钉钉单号</th><th data-batch-column="other_cost">其他成本</th><th data-batch-column="other_cost_no">其他成本钉钉单号</th><th data-batch-column="unit_cost">单件成本</th><th data-batch-column="shipping_date">头程发货</th><th data-batch-column="arrived_at">入库时间</th><th data-batch-column="actions">操作</th></tr></thead>
@@ -1714,6 +1725,7 @@ async function loadBatchSkuOptions() {
 }
 
 let editingBatchId = null;
+let batchEditSaving = false;
 let currentBatchList = [];
 const selectedBatchIds = new Set();
 let batchPage = 1;
@@ -1781,12 +1793,21 @@ function updateBatchSelectionState() {
     selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
 }
 
+function batchEditBlockedReason(batch) {
+    const text = window.PageInteractions.text;
+    if (!isOperator()) return text('batchEditRole');
+    if (!isAdmin() && Number(batch.user_id) !== CURRENT_USER_ID) return text('batchEditOwner');
+    if (batch.remaining_quantity !== batch.quantity) return text('batchEditConsumed');
+    return '';
+}
+
 function renderBatchPage() {
     const tbody = document.getElementById('batches-tbody');
     const pageCount = Math.max(1, Math.ceil(batchTotal / batchPageSize));
     tbody.innerHTML = currentBatchList.map(b => {
         const p = b._product || {};
-        const canEdit = b.remaining_quantity === b.quantity && (isAdmin() || Number(b.user_id) === CURRENT_USER_ID);
+        const editReason = batchEditBlockedReason(b);
+        const text = window.PageInteractions.text;
         return `<tr>
             <td><input type="checkbox" data-batch-select="${b.id}" ${selectedBatchIds.has(Number(b.id)) ? 'checked' : ''} onchange="toggleBatchSelection(${b.id}, this.checked)" aria-label="选择批次 ${b.batch_no}"></td>
             <td data-batch-column="image">${p.image ? `<img src="${p.image}" style="height:36px;border-radius:4px">` : '-'}</td>
@@ -1807,10 +1828,11 @@ function renderBatchPage() {
             <td data-batch-column="unit_cost"><strong>¥${b.unit_cost}</strong></td>
             <td data-batch-column="shipping_date">${b.shipping_date?.slice(0,16) || '-'}</td>
             <td data-batch-column="arrived_at">${b.arrived_at?.slice(0,16) || '-'}</td>
-            <td data-batch-column="actions" style="display:flex;gap:4px">
-                <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="exportBatch(${b.id})" title="导出此批次">导出</button>
-                ${isOperator() && canEdit ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditBatch(${b.id})">✏️</button>` : ''}
-                ${isOperator() && canEdit ? `<button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteBatch(${b.id})">🗑</button>` : ''}
+            <td data-batch-column="actions"><div class="batch-row-actions">
+                <button class="btn btn-secondary" onclick="exportBatch(${b.id})" title="${text('batchExport')}">${text('batchExport')}</button>
+                ${isOperator() ? `<span title="${escapeHtml(editReason || text('batchEdit'))}" ${editReason ? 'tabindex="0"' : ''}><button class="btn btn-secondary" onclick="openEditBatch(${b.id})" ${editReason ? 'disabled' : ''}>✏️ ${text('batchEdit')}</button></span>` : ''}
+                ${isOperator() && !editReason ? `<button class="btn btn-secondary" style="color:#e94560" onclick="deleteBatch(${b.id})" title="${text('batchDelete')}" aria-label="${text('batchDelete')}">🗑</button>` : ''}
+            </div>
             </td>
         </tr>`;
     }).join('') || `<tr><td colspan="${Math.max(visibleBatchColumns.size + 1, 1)}" class="empty">暂无批次</td></tr>`;
@@ -1835,6 +1857,7 @@ document.addEventListener('click', event => {
 });
 
 async function loadBatches() {
+    document.getElementById('batch-edit-help').textContent = window.PageInteractions.text('batchEditHelp');
     document.querySelector('#sec-batches .card:first-child').style.display = isOperator() ? '' : 'none';
     document.getElementById('edit-batch-modal').style.display = 'none';
     await loadBatchSkuOptions();
@@ -1863,12 +1886,15 @@ async function loadBatches() {
 
 // ========== 批次编辑/删除 ==========
 async function openEditBatch(id) {
+    if (batchEditSaving) return;
     const b = currentBatchList.find(x => x.id === id);
     if (!b) return;
+    const reason = batchEditBlockedReason(b);
+    if (reason) { showMsg(reason, false); return; }
     editingBatchId = id;
     document.getElementById('edit-batch-label').textContent = b.batch_no;
     document.getElementById('eb-qty').value = b.quantity;
-    document.getElementById('eb-total-amount').value = b.total_amount ?? (Number(b.purchase_price || 0) * Number(b.quantity || 0)).toFixed(2);
+    document.getElementById('eb-total-amount').value = b.total_amount ?? (Number(b.purchase_price || 0) * Number(b.quantity || 0)).toFixed(4);
     document.getElementById('eb-price').value = b.purchase_price;
     document.getElementById('eb-dingtalk-order').value = b.dingtalk_order_no || '';
     document.getElementById('eb-ship').value = b.shipping_cost;
@@ -1887,6 +1913,7 @@ async function openEditBatch(id) {
 }
 
 function closeEditBatch() {
+    if (batchEditSaving) return;
     editingBatchId = null;
     document.getElementById('edit-batch-modal').style.display = 'none';
 }
@@ -1908,27 +1935,44 @@ function calcEditUnitCost() {
 }
 
 async function saveEditBatch() {
+    if (batchEditSaving || editingBatchId === null) return;
+    const batch = currentBatchList.find(item => item.id === editingBatchId);
+    if (!batch) return;
+    const reason = batchEditBlockedReason(batch);
+    if (reason) { showMsg(reason, false); return; }
+    if (!document.getElementById('edit-batch-form').reportValidity()) return;
+    const userId = CURRENT_USER_ID;
+    const batchId = editingBatchId;
+    batchEditSaving = true;
+    document.getElementById('eb-save').disabled = true;
     try {
         const arrived = document.getElementById('eb-date').value;
         const shipdate = document.getElementById('eb-shipdate').value;
-        const b = await api('PUT', `/batches/${editingBatchId}`, {
-            product_id: 1, // 不会被修改
+        await api('PUT', `/batches/${batchId}`, {
+            product_id: batch.product_id,
             quantity: +document.getElementById('eb-qty').value,
-            dingtalk_order_no: document.getElementById('eb-dingtalk-order').value.trim() || undefined,
-            total_amount: document.getElementById('eb-total-amount').value === '' ? undefined : +document.getElementById('eb-total-amount').value,
-            shipping_cost: +document.getElementById('eb-ship').value || 0,
-            shipping_cost_no: document.getElementById('eb-ship-no').value.trim() || undefined,
-            last_mile_cost: +document.getElementById('eb-lastmile').value || 0,
-            last_mile_cost_no: document.getElementById('eb-lastmile-no').value.trim() || undefined,
-            other_cost: +document.getElementById('eb-other').value || 0,
-            other_cost_no: document.getElementById('eb-other-no').value.trim() || undefined,
+            dingtalk_order_no: document.getElementById('eb-dingtalk-order').value.trim() || null,
+            total_amount: document.getElementById('eb-total-amount').value,
+            shipping_cost: document.getElementById('eb-ship').value || '0',
+            shipping_cost_no: document.getElementById('eb-ship-no').value.trim() || null,
+            last_mile_cost: document.getElementById('eb-lastmile').value || '0',
+            last_mile_cost_no: document.getElementById('eb-lastmile-no').value.trim() || null,
+            other_cost: document.getElementById('eb-other').value || '0',
+            other_cost_no: document.getElementById('eb-other-no').value.trim() || null,
             shipping_date: window.PageInteractions.batchDateTimeValue(shipdate, document.getElementById('eb-shipdate').dataset.originalValue),
             arrived_at: window.PageInteractions.batchDateTimeValue(arrived, document.getElementById('eb-date').dataset.originalValue),
         });
-        showMsg(`批次 ${b.batch_no} 更新成功`);
+        if (userId !== CURRENT_USER_ID) return;
+        batchEditSaving = false;
         closeEditBatch();
-        loadBatches();
-    } catch (e) { showMsg(e.message, false); }
+        showMsg(window.PageInteractions.text('batchEditSaved'));
+        try { await loadBatches(); }
+        catch { showMsg(window.PageInteractions.text('batchEditRefreshFailed'), false); }
+    } catch (e) { if (userId === CURRENT_USER_ID) showMsg(e.message, false); }
+    finally {
+        batchEditSaving = false;
+        document.getElementById('eb-save').disabled = false;
+    }
 }
 
 async function deleteBatch(id) {

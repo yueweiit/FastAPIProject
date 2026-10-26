@@ -25,6 +25,10 @@ _locked_batch 使用 FOR UPDATE 和 populate_existing，等待在途销售完成
 
 update_batch 接收 BatchCreate，但不会把 data.product_id 写回原批次；不能将它描述为换商品功能。它没有完整历史成本明细/快照引用校验，恢复到未消耗后的历史外键仍可能阻止删除。不能只依据数量相等认定数据库删除安全。
 
+批次列表的“操作”列固定在滚动区域右侧，提供导出、编辑和满足原限制的删除入口。运营看到不可编辑批次时，编辑按钮禁用，并通过提示说明创建人或出库限制；查看者仅显示导出。显示字段面板仍可显隐操作列。页面预检查不替代服务端行锁后的权限、最新剩余数及成本调整来源校验。
+
+编辑弹窗可更正数量、采购总金额、三类整批费用、四种单号及发货/入库时间，不能改商品和批次号。数量为正整数，金额非负且支持四位小数；金额以字符串提交，由服务端 Decimal 计算。清空单号显式传 null，未修改日期保留原始精度。保存期间禁用保存按钮并阻止重复提交/切换目标；保存失败保留表单，保存成功后若列表刷新失败，单独提示已保存并要求刷新。
+
 ### 批次业务日期
 
 shipping_date、arrived_at 为无时区业务时间，页面新增/编辑直接提交 datetime-local 的填写值，不调用 Date/toISOString 转换到 UTC。回显使用原日期时间；未修改日期时提交原值，保留历史秒数及小数秒，避免每次编辑扣减浏览器时区偏移、跨日改变 FIFO 和库龄。实现见 [page-interactions.js](../../../static/page-interactions.js) 的 batchDateTimeInput/batchDateTimeValue 及两份首页的 createBatch/openEditBatch/saveEditBatch。
@@ -39,7 +43,7 @@ list_batches 按 arrived_at、id 降序，可按 product_id 或商品名称/SKU/
 
 批次Excel末尾展示“店铺（创建人当前绑定）”，与存货报表的创建人当前绑定口径一致；未知显示“未关联店铺”。批次本身仍无store_id，账号改绑会影响该展示，不应据此认定为店铺独占库存。原21列不移动；商品汇总可能包含多个店铺创建的批次，不猜测单一店铺。
 
-销售事务和撤销细节见[销售流程](../sales/workflow.md)。本次未创建或编辑任何批次。
+销售事务和撤销细节见[销售流程](../sales/workflow.md)。
 
 ## 实际成本补差
 
