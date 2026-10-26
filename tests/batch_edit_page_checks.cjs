@@ -47,13 +47,15 @@ async function verify(file) {
   ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
   ok(e('batches-tbody').innerHTML.includes('openBatchLogs(12)'));
   await c.openEditBatch(12);equal(vm.runInContext('editingBatchId',c),12);c.closeEditBatch();
-  for (const [batch, reason] of [[{...fixture, remaining_quantity: 0}, 'batchEditConsumed'],
-    [{...fixture, remaining_quantity: 12}, 'batchEditConsumed']]) {
+  for (const batch of [{...fixture, remaining_quantity: 0}, {...fixture, remaining_quantity: 12}]) {
     setBatch(batch); c.renderBatchPage();
     const body = e('batches-tbody').innerHTML;
-    ok(body.includes('disabled') && body.includes(c.window.PageInteractions.text(reason)));
+    ok(!body.includes('disabled') && body.includes('openEditBatch(12)'));
     ok(!body.includes('deleteBatch(12)'));
-    await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
+    await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), 12);
+    equal(e('eb-qty').min, Math.max(1, fixture.quantity - batch.remaining_quantity));
+    equal(e('batch-edit-notice').textContent, c.window.PageInteractions.text('batchEditRestatement'));
+    c.closeEditBatch();
   }
   setBatch({...fixture, user_id: 9}); c.isAdmin = () => true; await c.openEditBatch(12);
   equal(vm.runInContext('editingBatchId', c), 12); c.closeEditBatch();
@@ -63,6 +65,10 @@ async function verify(file) {
   ok(e('batches-tbody').innerHTML.includes('exportBatch'));
   await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
   c.isOperator = () => true; c.isAdmin = () => false; setBatch(fixture);
+  setBatch({...fixture, shipping_cost: '100.0000', edit_values: {shipping_cost:'200.0000',
+    total_amount:'34.0054', purchase_price:'2.6158', last_mile_cost:'0', other_cost:'0'}});
+  c.renderBatchPage(); ok(e('batches-tbody').innerHTML.includes('¥200.0000'));
+  await c.openEditBatch(12); equal(e('eb-ship').value, '200.0000'); c.closeEditBatch();
   setBatch({...fixture, edit_version: undefined});
   await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
   equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditVersionRequired'));
@@ -80,6 +86,7 @@ async function verify(file) {
   await c.saveEditBatch(); equal(calls, 1); equal(target, ['PUT', '/batches/12']);
   equal(payload.product_id, 42); equal(payload.total_amount, '34.0054'); equal(payload.shipping_cost, '161.8555');
   equal(payload.edit_version, fixture.edit_version);
+  equal(payload.cost_edit_mode, 'restate');
   for (const key of ['dingtalk_order_no', 'shipping_cost_no', 'last_mile_cost_no', 'other_cost_no']) equal(payload[key], null);
   equal(payload.arrived_at, fixture.arrived_at); equal(payload.shipping_date, fixture.shipping_date);
   equal(e('edit-batch-modal').style.display, 'none'); equal(e('eb-save').disabled, false);

@@ -14,7 +14,7 @@ from models import (
     Store, FinancialExpense, FinancialExpenseSource, FinancialReceipt, SettlementEntry,
     SettlementClassification, FinancialAuditEvent, SalesImportBatch, User,
 )
-from services.cost_layers import COST_CATEGORIES, category_adjustments, load_cost_layers, invalidate_finance_cache
+from services.cost_layers import COST_CATEGORIES, base_cost_components, category_adjustments, load_cost_layers, invalidate_finance_cache
 from services.finance_config import financial_controls_enabled
 
 ZERO = Decimal(0)
@@ -109,20 +109,29 @@ def same_request(row, payload, names):
         fail("idempotency_conflict", "同一请求标识对应的内容已改变，请重新核对。", 409)
 
 
-def validate_adjusted_cost(batch, category, layers, amount):
+def validate_adjusted_cost(batch, category, layers, amount, *, quantity=None):
     parts = category_adjustments(layers)
-    quantity = Decimal(batch.quantity)
-    base = {"purchase": batch.purchase_price, "head_shipping": batch.shipping_cost / quantity,
-            "last_mile": batch.last_mile_cost / quantity, "other": batch.other_cost / quantity}
-    if base[category] + parts[category] + amount / quantity < 0:
+    quantity = Decimal(batch.quantity if quantity is None else quantity)
+    base = base_cost_components(batch)
+    # 回到本分配行金额后以四位小数判断，避免重复除法把清零尾差判负。
+    # 数量增大后按较大数量投影再舍入，不能让冲回旧的小数量凭证时，
+    # 当前整批的真实负成本被舍为零；原quantity仍是差额分母。
+    scale = max(Decimal(batch.quantity), quantity) / quantity
+    component_amount = (((base[category] + parts[category]) * quantity + amount) * scale).quantize(
+        MONEY, rounding=ROUND_HALF_UP)
+    total_amount = (((batch.unit_cost + sum(parts.values(), ZERO)) * quantity + amount) * scale).quantize(
+        MONEY, rounding=ROUND_HALF_UP)
+    if component_amount < 0:
         fail("negative_component_cost", "调整后该成本项目不能为负数。")
-    if batch.unit_cost + sum(parts.values(), ZERO) + amount / quantity < 0:
+    if total_amount < 0:
         fail("negative_total_cost", "调整后总成本不能为负数，请核对原成本舍入尾差。")
 
 
-async def prepare_cost_adjustment(db, user, payload, *, lock=False, validate_amount=True):
+async def prepare_cost_adjustment(db, user, payload, *, lock=False, validate_amount=True, shared_batch_edit=False):
     require_enabled()
     payload.source_ref = payload.source_ref.strip()
+    if shared_batch_edit and user.role not in {"admin", "operator"}:
+        fail("batch_forbidden", "当前角色不能更正批次成本。", 403)
     ids = [line.batch_id for line in payload.allocations]
     if len(set(ids)) != len(ids):
         fail("duplicate_batch", "同一调整单不能重复选择批次。")
@@ -135,7 +144,7 @@ async def prepare_cost_adjustment(db, user, payload, *, lock=False, validate_amo
     batches = list((await db.execute(stmt)).scalars().all())
     if len(batches) != len(ids):
         fail("batch_not_found", "选择的批次不存在。", 404)
-    if user.role != "admin" and any(batch.user_id != user.id for batch in batches):
+    if not shared_batch_edit and user.role != "admin" and any(batch.user_id != user.id for batch in batches):
         fail("batch_forbidden", "只能调整自己创建的批次。", 403)
     layers = await load_cost_layers(db, ids, lock=lock)
     requested = {item.batch_id: item for item in payload.allocations}
@@ -173,16 +182,24 @@ async def prepare_cost_adjustment(db, user, payload, *, lock=False, validate_amo
     return batches, lines, amount_cny
 
 
-async def post_cost_adjustment(db, user, payload):
+async def post_cost_adjustment(db, user, payload, *, shared_batch_edit=False):
     require_enabled()
     existing = await db.scalar(select(InventoryCostAdjustment).where(InventoryCostAdjustment.request_key == payload.request_key))
-    batches, lines, amount_cny = await prepare_cost_adjustment(db, user, payload, lock=True, validate_amount=existing is None)
+    batches, lines, amount_cny = await prepare_cost_adjustment(db, user, payload, lock=True,
+        validate_amount=existing is None, shared_batch_edit=shared_batch_edit)
     if existing:
         same_request(existing, payload, ("source_ref", "category", "allocation_basis", "amount", "currency",
                                          "exchange_rate", "rate_date", "document_date", "is_final", "note"))
         old = (await db.execute(select(InventoryCostAdjustmentLine).where(
             InventoryCostAdjustmentLine.adjustment_id == existing.id))).scalars().all()
-        if sorted((x.batch_id, x.allocation_weight) for x in old) != sorted((x["batch_id"], x["allocation_weight"]) for x in lines):
+        if payload.allocation_basis == "quantity":
+            # 件数权重来自首次入账时的数量快照，不是请求内容；后续批次更正
+            # 不能改变同一请求的含义。显式权重仍按原值逐批次核对。
+            unchanged = sorted(x.batch_id for x in old) == sorted(x["batch_id"] for x in lines)
+        else:
+            unchanged = sorted((x.batch_id, x.allocation_weight) for x in old) == sorted(
+                (x["batch_id"], x["allocation_weight"]) for x in lines)
+        if not unchanged:
             fail("idempotency_conflict", "重复请求的批次分配已改变。", 409)
         return existing
     row = InventoryCostAdjustment(**payload.model_dump(exclude={"allocations"}), amount_cny=amount_cny, created_by=user.id)
@@ -223,7 +240,9 @@ async def reverse_cost_adjustment(db, user, row_id, payload):
     layers = await load_cost_layers(db, {batch.id for batch in batches})
     saved_lines = {line.batch_id: line for line in lines}
     for batch in batches:
-        validate_adjusted_cost(batch, row.category, layers.get(batch.id, []), -saved_lines[batch.id].amount_cny)
+        line = saved_lines[batch.id]
+        validate_adjusted_cost(batch, row.category, layers.get(batch.id, []), -line.amount_cny,
+                               quantity=line.quantity)
     result = InventoryCostAdjustment(**request.model_dump(exclude={"allocations"}),
                                     amount_cny=-row.amount_cny, reverses_id=row.id, created_by=user.id)
     db.add(result)

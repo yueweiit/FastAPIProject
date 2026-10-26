@@ -196,8 +196,10 @@ class BatchCreate(BaseModel):
 
 
 class BatchUpdate(BatchCreate):
+    quantity: int = Field(..., gt=0, le=2_147_483_647)
     # 缺省保持可解析，路由返回明确的升级提示；不允许旧客户端绕过并发保护。
     edit_version: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    cost_edit_mode: Literal["restate"] | None = None
 
 
 class BatchResponse(BaseModel):
@@ -226,6 +228,7 @@ class BatchResponse(BaseModel):
     cost_adjustment_per_unit: Decimal = Decimal(0)
     cost_status: str = "unverified"
     edit_version: str
+    edit_values: dict[str, Decimal] | None = None
 
 
 class BatchPageResponse(BaseModel):

@@ -278,6 +278,17 @@ class FinancialControlsTests(facts.FinancialFactsTests):
                 category="head_shipping", amount="-0.0001", source_ref="运费退款", request_key="rounding-shipping"))
         self.assertEqual(raised.exception.detail["code"], "negative_total_cost")
 
+    async def test_negative_minimum_cost_is_rejected_even_for_large_quantity(self):
+        batch = self.session.get(InventoryBatch, 1)
+        batch.quantity, batch.remaining_quantity = 2_147_483_647, 2_147_483_643
+        batch.purchase_price = batch.unit_cost = Decimal(0)
+        await self.db.commit()
+        with self.assertRaises(HTTPException) as raised:
+            await controls.post_cost_adjustment(self.db, self.user, self.cost(
+                category="purchase", amount="-0.0001", source_ref="最小金额负成本"))
+        self.assertEqual(raised.exception.detail["code"], "negative_component_cost")
+        self.assertEqual(self.session.scalars(select(InventoryCostAdjustment)).all(), [])
+
     async def test_expense_source_is_exclusive_and_drafts_mask_profit_until_posted(self):
         report = StoreProfitLossReport(store_id=7, report_month=date(2026, 9, 1),
             manual_values={"advertising": {"current": "500"}}, report_metadata={"manual_period_mode": "monthly"})

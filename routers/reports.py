@@ -46,7 +46,7 @@ from services.inventory_provision_movements import ProvisionSale, replay_invento
 from services.financial_facts import (
     manual_period_values, unlinked_settlement_events, valid_rate,
 )
-from services.cost_layers import load_cost_layers, category_adjustments, unit_adjustment, AdjustedBatch
+from services.cost_layers import load_cost_layers, base_cost_components, category_adjustments, unit_adjustment, AdjustedBatch
 from services.inventory_impairment import (
     InventoryLayer,
     ImpairmentRule,
@@ -337,12 +337,10 @@ def _add_period_value(
 def _fifo_cost_components(detail: SaleCostDetail, batch: InventoryBatch, layers=()) -> tuple[Decimal, Decimal, Decimal]:
     """按原批次成本构成分配已保存的FIFO成本，尾差留在最后一个非零科目。"""
     quantity = Decimal(detail.quantity)
-    divisor = Decimal(batch.quantity or 1)
-    source_parts = (
-        batch.purchase_price * quantity,
-        (batch.shipping_cost + batch.last_mile_cost) * quantity / divisor,
-        batch.other_cost * quantity / divisor,
-    )
+    parts = base_cost_components(batch)
+    source_parts = (parts["purchase"] * quantity,
+                    (parts["head_shipping"] + parts["last_mile"]) * quantity,
+                    parts["other"] * quantity)
     saved_cost = detail.unit_cost * quantity
     source_total = sum(source_parts, Decimal("0"))
     if source_total <= 0:

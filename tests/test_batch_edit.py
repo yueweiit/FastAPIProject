@@ -128,17 +128,21 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sale_after_list_load_is_rechecked_before_edit(self):
         batch = self.session.get(InventoryBatch, 12)
+        opened_version = batch.edit_version
         batch.remaining_quantity = 12
         self.session.commit()
-        response = await self.save(quantity=20)
-        self.assertEqual(response.status_code, 400)
+        response = await self.save(quantity=20, edit_version=opened_version)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()['detail']['code'], 'batch_edit_conflict')
         batch = self.session.get(InventoryBatch, 12)
         self.assertEqual((batch.quantity, batch.remaining_quantity), (13, 12))
         self.assertEqual(batch.total_amount, Decimal('34.0054'))
         self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
     async def test_invalid_quantities_and_negative_costs_are_rejected(self):
-        for change in ({'quantity': 0}, {'quantity': 1.5}, {'total_amount': '-1'}, {'shipping_cost': '-1'}):
+        for change in ({'quantity': 0}, {'quantity': 1.5}, {'quantity': 2_147_483_648},
+                       {'total_amount': '-1'}, {'shipping_cost': '-1'}, {'total_amount': '1e50'},
+                       {'quantity': 1, 'total_amount': '99999999', 'shipping_cost': '1'}):
             with self.subTest(change=change):
                 self.assertEqual((await self.save(**change)).status_code, 422)
         self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
@@ -194,8 +198,9 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.request('GET', '/batches/999/logs')).json()['items'], [])
         self.assertEqual((await self.request('GET', '/batches/12/logs?page_size=101')).status_code, 422)
 
-    async def test_cost_adjustment_still_blocks_edits_when_editing_other_owners_batch(self):
+    async def test_cost_adjustment_invalidates_an_older_batch_edit_version(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
+        opened_version = self.session.get(InventoryBatch, 12).edit_version
         self.session.add(InventoryCostAdjustment(id=1, request_key='batch-test-adjustment', source_ref='cost',
             category='purchase', allocation_basis='quantity', amount=0, amount_cny=0, currency='CNY',
             exchange_rate=1, document_date=datetime(2026, 9, 1).date(), rate_date=datetime(2026, 9, 1).date(),
@@ -205,11 +210,46 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
             allocation_weight=13, amount_cny=0))
         self.session.commit()
         self.actor.id = 99
-        response = await self.save(quantity=99)
+        response = await self.save(quantity=99, edit_version=opened_version)
         self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.json()['detail']['code'], 'batch_has_cost_adjustments')
+        self.assertEqual(response.json()['detail']['code'], 'batch_edit_conflict')
         self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
         self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+
+    async def test_edit_loads_adjustments_with_current_read_before_version_check(self):
+        # 已提交的零额来源也必须使旧版本失效；普通快照读会漏掉它并错误接受旧表单。
+        os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
+        opened_version = self.session.get(InventoryBatch, 12).edit_version
+        self.session.add(InventoryCostAdjustment(id=1, request_key='current-read-edit', source_ref='source',
+            category='purchase', allocation_basis='quantity', amount=0, amount_cny=0, currency='CNY',
+            exchange_rate=1, document_date=datetime(2026, 9, 1).date(), rate_date=datetime(2026, 9, 1).date(),
+            is_final=True, created_by=7))
+        self.session.flush()
+        self.session.add(InventoryCostAdjustmentLine(adjustment_id=1, batch_id=12, quantity=13,
+            allocation_weight=13, amount_cny=0))
+        self.session.commit()
+        session = self.session
+        locked_reads = []
+        class SnapshotFacade(AsyncFacade):
+            async def execute(self, statement):
+                sql = str(statement.compile(dialect=mysql.dialect()))
+                if 'inventory_cost_adjustment_lines' in sql:
+                    locked_reads.append(sql)
+                    if statement._for_update_arg is None:
+                        statement = statement.where(False)
+                return await super().execute(statement)
+        async def db():
+            try:
+                yield SnapshotFacade(session)
+            finally:
+                session.rollback()
+        self.app.dependency_overrides[get_db] = db
+        response = await self.save(quantity=99, edit_version=opened_version)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()['detail']['code'], 'batch_edit_conflict')
+        self.assertEqual(len(locked_reads), 1)
+        self.assertTrue(locked_reads[0].endswith('FOR UPDATE'))
+        self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
 
     async def test_stale_editor_cannot_overwrite_cost_or_append_a_log(self):
         opened = (await self.request('GET', '/batches')).json()[0]
@@ -271,10 +311,10 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         batch = self.session.get(InventoryBatch, 12)
         original = BatchResponse.model_validate(batch)
         adjusted = BatchResponse.model_validate(AdjustedBatch(batch, [(SimpleNamespace(
-            amount_cny=Decimal('13'), quantity=13), SimpleNamespace(
+            id=55, amount_cny=Decimal('13'), quantity=13), SimpleNamespace(
                 id=1, category='purchase', is_final=True, reverses_id=None))]))
         self.assertNotEqual(adjusted.unit_cost, original.unit_cost)
-        self.assertEqual(adjusted.edit_version, original.edit_version)
+        self.assertNotEqual(adjusted.edit_version, original.edit_version)
         # 相同金额不同小数位与 ORM 重新载入不应造成假冲突。
         batch.last_mile_cost = Decimal('0.000000')
         self.assertEqual(batch.edit_version, original.edit_version)
@@ -283,10 +323,10 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         saved = await self.save(edit_version=original.edit_version)
         self.assertEqual(saved.status_code, 200, saved.text)
 
-    async def test_update_and_delete_use_current_cost_read_after_parent_lock(self):
+    async def test_delete_uses_current_cost_read_after_parent_lock(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
         session = self.session
-        for method in ('PUT', 'DELETE'):
+        for method in ('DELETE',):
             with self.subTest(method=method):
                 reads = []
 

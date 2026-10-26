@@ -1,5 +1,5 @@
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
 import re
 from pathlib import Path
@@ -14,13 +14,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import InventoryBatch, Product, User, SaleCostDetail, Store, BatchChangeLog
+from models import InventoryBatch, Product, User, Sale, SaleCostDetail, Store, BatchChangeLog
 from schemas import BatchCreate, BatchUpdate, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
+from services.finance_config import financial_controls_enabled
+from services.batch_edits import freeze_cost_basis, restate_costs
 
 router = APIRouter(prefix="/batches", tags=["入库管理"])
 BASE_DIR = Path(__file__).parent.parent
+MAX_BATCH_MONEY = Decimal("99999999.9999")
 
 
 def _calc_unit_cost(price, qty, ship, last_mile, other):
@@ -131,7 +134,7 @@ async def update_batch(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
 ):
-    """编辑批次 - 只能改未被销售消耗的批次"""
+    """编辑共享批次；已售数量保留，受保护成本通过追加差额追溯。"""
     batch = await _locked_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
@@ -140,57 +143,112 @@ async def update_batch(
         raise HTTPException(428, detail={"code": "batch_edit_version_required",
             "message": "缺少批次编辑版本，请刷新页面后重新打开编辑。"})
 
-    # 检查是否已被消耗
-    await ensure_batch_cost_editable(db, batch_id)
-    if batch.remaining_quantity != batch.quantity:
-        raise HTTPException(status_code=400, detail="批次已有出库记录，无法修改")
+    layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
+    current = AdjustedBatch(batch, layers)
 
     # 行锁内读取当前版本；排队的编辑必须携带打开表单时的版本，不能覆盖中途修改。
-    if data.edit_version != batch.edit_version:
+    if data.edit_version != current.edit_version:
         raise HTTPException(409, detail={"code": "batch_edit_conflict",
             "message": "批次已被其他操作修改，本次未保存。请先保留填写内容，关闭编辑并刷新列表，核对最新数据后重新编辑。"})
 
-    before = _batch_change_values(batch)
-    purchase_price, total_amount = _resolve_purchase_values(data, batch)
+    consumed = batch.quantity - batch.remaining_quantity
+    if consumed < 0 or batch.remaining_quantity < 0:
+        raise HTTPException(409, detail={"code": "batch_quantity_inconsistent", "message": "批次数量异常，请先核对库存流水。"})
+    # 使用当前读，避免销售刚提交而本请求仍读到旧的出库明细快照。
+    sales = (await db.execute(select(SaleCostDetail.quantity, Sale.sold_at).join(
+        Sale, Sale.id == SaleCostDetail.sale_id).where(SaleCostDetail.batch_id == batch_id)
+        .order_by(SaleCostDetail.id).with_for_update())).all()
+    if sum(row.quantity for row in sales) != consumed:
+        raise HTTPException(409, detail={"code": "batch_quantity_inconsistent", "message": "批次余量与销售明细不一致，请先核对库存流水。"})
+    if data.quantity < consumed:
+        raise HTTPException(409, detail={"code": "batch_quantity_below_sold", "sold_quantity": consumed,
+            "message": f"入库数量不能小于已出库数量（{consumed}）。"})
+    arrived = data.arrived_at or batch.arrived_at
+    if sales and arrived.date() > min(row.sold_at.date() for row in sales):
+        raise HTTPException(409, detail={"code": "batch_arrival_after_sale", "message": "入库日期不能晚于该批次最早销售日期。"})
 
-    batch.quantity = data.quantity
-    batch.remaining_quantity = data.quantity
-    batch.purchase_price = purchase_price
+    before = _batch_change_values(batch, layers)
+    _, total_amount = _resolve_purchase_values(data, batch)
+    effective = current.edit_values or {key: getattr(batch, key) for key in (
+        "total_amount", "purchase_price", "shipping_cost", "last_mile_cost", "other_cost")}
+    if data.total_amount is None and "purchase_price" not in data.model_fields_set:
+        total_amount = effective["total_amount"]
+        if total_amount is None:
+            total_amount = effective["purchase_price"] * batch.quantity
+    target = {"purchase": total_amount, "head_shipping": data.shipping_cost,
+              "last_mile": data.last_mile_cost, "other": data.other_cost}
+    if any(value > MAX_BATCH_MONEY for value in target.values()):
+        raise HTTPException(422, detail={"code": "batch_cost_out_of_range",
+            "message": "更正后的金额或成本差额超出字段范围，请核对入库数量和金额。"})
+    target = {key: value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP) for key, value in target.items()}
+    current_total = effective["total_amount"]
+    if current_total is None:
+        current_total = effective["purchase_price"] * batch.quantity
+    old_target = {"purchase": current_total, "head_shipping": effective["shipping_cost"],
+                  "last_mile": effective["last_mile_cost"], "other": effective["other_cost"]}
+    changed_categories = {key for key in target if target[key] != old_target[key].quantize(
+        Decimal("0.0001"), rounding=ROUND_HALF_UP)}
+    if data.quantity != batch.quantity:
+        changed_categories = set(target)
+    changed = bool(changed_categories)
+    protected = consumed > 0 or bool(layers) or batch.cost_basis is not None
+    if protected and changed and not financial_controls_enabled():
+        raise HTTPException(503, detail={"code": "batch_cost_controls_required",
+            "message": "已出库批次修改数量或成本需要先准备财务结构并启用成本追溯功能；单号等资料仍可修改。"})
+    if protected and changed and data.cost_edit_mode != "restate":
+        raise HTTPException(428, detail={"code": "batch_restatement_mode_required",
+            "message": "当前页面或调用方未声明成本追溯编辑模式，请更新后重新打开编辑，避免覆盖已确认成本。"})
+    if protected and changed:
+        freeze_cost_basis(batch)
+    if not protected or changed:
+        batch.quantity = data.quantity
+        batch.remaining_quantity = data.quantity - consumed
+        batch.purchase_price = target["purchase"] / Decimal(data.quantity)
+        batch.total_amount = target["purchase"]
+        batch.shipping_cost = target["head_shipping"]
+        batch.last_mile_cost = target["last_mile"]
+        batch.other_cost = target["other"]
+        if protected:
+            await restate_costs(db, user, batch, layers, target, data.edit_version, changed_categories)
+        else:
+            batch.unit_cost = _calc_unit_cost(batch.purchase_price, data.quantity,
+                batch.shipping_cost, batch.last_mile_cost, batch.other_cost)
+            if batch.unit_cost > MAX_BATCH_MONEY:
+                raise HTTPException(422, detail={"code": "batch_cost_out_of_range",
+                    "message": "更正后的金额或成本差额超出字段范围，请核对入库数量和金额。"})
     if "dingtalk_order_no" in data.model_fields_set:
         batch.dingtalk_order_no = data.dingtalk_order_no or None
-    batch.total_amount = total_amount
-    batch.shipping_cost = data.shipping_cost
     if "shipping_cost_no" in data.model_fields_set:
         batch.shipping_cost_no = data.shipping_cost_no or None
-    batch.last_mile_cost = data.last_mile_cost
     if "last_mile_cost_no" in data.model_fields_set:
         batch.last_mile_cost_no = data.last_mile_cost_no or None
-    batch.other_cost = data.other_cost
     if "other_cost_no" in data.model_fields_set:
         batch.other_cost_no = data.other_cost_no or None
     batch.shipping_date = data.shipping_date
-    batch.arrived_at = data.arrived_at or batch.arrived_at
-    batch.unit_cost = _calc_unit_cost(purchase_price, data.quantity, data.shipping_cost, data.last_mile_cost, data.other_cost)
+    batch.arrived_at = arrived
 
     # 先读取实际落库精度，再保存日志；两次写入在同一事务内，任何失败均不提交。
     await db.flush()
     # 无字段变化时可能没有UPDATE，仍须当前读，不能让refresh退回认证建立的旧快照。
     await db.refresh(batch, with_for_update=True)
+    after_layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
     db.add(BatchChangeLog(
         batch_id=batch.id, batch_no=batch.batch_no, action="update",
         actor_id=user.id, actor_username=user.username, actor_role=user.role,
-        before_values=before, after_values=_batch_change_values(batch),
+        before_values=before, after_values=_batch_change_values(batch, after_layers),
     ))
+    response = BatchResponse.model_validate(AdjustedBatch(batch, after_layers))
     await db.commit()
-    await db.refresh(batch)
-    return batch
+    return response
 
 
-def _batch_change_values(batch):
-    # 复用响应契约序列化 Decimal/业务日期；不读取用户敏感字段或追溯成本层。
-    return BatchResponse.model_validate(batch).model_dump(mode="json", exclude={
+def _batch_change_values(batch, layers=()):
+    values = BatchResponse.model_validate(AdjustedBatch(batch, layers)).model_dump(mode="json", exclude={
         "base_unit_cost", "cost_adjustment_per_unit", "cost_status", "edit_version",
     })
+    # 日志保留当时页面的实际金额，原始成本依据另存cost_basis且不接受客户端覆盖。
+    values.update(values.pop("edit_values") or {})
+    return values
 
 
 @router.get("/{batch_id}/logs", response_model=BatchChangeLogPageResponse)
@@ -343,11 +401,13 @@ async def export_batches(
 
     for row_index, batch in enumerate(batches, start=2):
         product = products.get(batch.product_id)
+        costs = batch.edit_values if isinstance(batch, AdjustedBatch) and batch.edit_values else {
+            key: getattr(batch, key) for key in ("purchase_price", "total_amount", "shipping_cost", "last_mile_cost", "other_cost")}
         sheet.append([
             "", batch.id, product.name if product else "", product.sku if product else "", batch.batch_no,
-            batch.dingtalk_order_no or "", batch.quantity, batch.remaining_quantity, batch.purchase_price,
-            batch.total_amount, batch.shipping_cost, batch.shipping_cost_no or "", batch.last_mile_cost,
-            batch.last_mile_cost_no or "", batch.other_cost, batch.other_cost_no or "", batch.unit_cost,
+            batch.dingtalk_order_no or "", batch.quantity, batch.remaining_quantity, costs["purchase_price"],
+            costs["total_amount"], costs["shipping_cost"], batch.shipping_cost_no or "", costs["last_mile_cost"],
+            batch.last_mile_cost_no or "", costs["other_cost"], batch.other_cost_no or "", batch.unit_cost,
             batch.shipping_date, batch.arrived_at, batch.created_at, batch.user_id,
             store_names.get(batch.user_id) or "未关联店铺",
         ])

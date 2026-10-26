@@ -1,5 +1,6 @@
-"""不修改原批次/出库成本；已确认补差作为追溯成本层参与查询。"""
-from decimal import Decimal
+"""不改写原FIFO基准/出库单价；已入账补差作为追溯成本层参与查询。"""
+from decimal import Decimal, ROUND_HALF_UP
+from hashlib import sha256
 
 from sqlalchemy import Numeric, cast, func, select
 
@@ -8,6 +9,30 @@ from services.finance_config import financial_controls_enabled
 
 ZERO = Decimal(0)
 COST_CATEGORIES = ("purchase", "head_shipping", "last_mile", "other")
+
+
+def base_cost_components(batch):
+    """原始单位成本依据；重述过数量后不能再用当前数量除原整批运费。"""
+    basis = getattr(batch, "cost_basis", None)
+    if basis:
+        return {key: Decimal(basis["components"][key]) for key in COST_CATEGORIES}
+    quantity = Decimal(batch.quantity or 1)
+    return {"purchase": batch.purchase_price, "head_shipping": batch.shipping_cost / quantity,
+            "last_mile": batch.last_mile_cost / quantity, "other": batch.other_cost / quantity}
+
+
+def editable_cost_values(batch, layers):
+    parts = base_cost_components(batch)
+    delta = category_adjustments(layers)
+    quantity = Decimal(batch.quantity)
+    totals = {key: ((parts[key] + delta[key]) * quantity).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+              for key in COST_CATEGORIES}
+    # 除法尾差舍入成零时清除负号，编辑框和日志不展示“-0.0000”。
+    totals = {key: value.copy_abs() if not value else value for key, value in totals.items()}
+    return {"total_amount": totals["purchase"],
+            "purchase_price": totals["purchase"] / quantity,
+            "shipping_cost": totals["head_shipping"], "last_mile_cost": totals["last_mile"],
+            "other_cost": totals["other"]}
 
 
 async def load_cost_layers(db, batch_ids, *, lock=False):
@@ -68,6 +93,15 @@ class AdjustedBatch:
         self.cost_adjustment_per_unit = unit_adjustment(layers)
         self.unit_cost = original.unit_cost + self.cost_adjustment_per_unit
         self.cost_status = cost_state(layers)
+        self.edit_values = editable_cost_values(original, layers) if layers or getattr(original, "cost_basis", None) else None
+
+    @property
+    def edit_version(self):
+        if not self.layers:
+            return self.original.edit_version
+        # 财务凭证也会改变编辑框中的实际金额；必须使旧表单版本失效。
+        manifest = ";".join(f"{line.id}:{line.quantity}:{line.amount_cny}" for line, _ in self.layers)
+        return sha256(f"{self.original.edit_version}:{manifest}".encode()).hexdigest()
 
     def __getattr__(self, key):
         return getattr(self.original, key)

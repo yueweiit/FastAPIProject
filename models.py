@@ -138,10 +138,10 @@ class InventoryBatch(Base):
     batch_no: Mapped[str] = mapped_column(String(64), unique=True)
     quantity: Mapped[int] = mapped_column(Integer)  # 入库数量
     remaining_quantity: Mapped[int] = mapped_column(Integer)  # 剩余数量（FIFO扣减）
-    unit_cost: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # 单件成本
+    unit_cost: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # FIFO基准单价，已售重述不回写
     purchase_price: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # 采购单价
     dingtalk_order_no: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 钉钉单号
-    total_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 4), nullable=True)  # 入库总金额，仅留档
+    total_amount: Mapped[Decimal | None] = mapped_column(DECIMAL(12, 4), nullable=True)  # 采购总金额，用于计算单价
     shipping_cost: Mapped[Decimal] = mapped_column(DECIMAL(12, 4), default=0)  # 头程运费（整批）
     shipping_cost_no: Mapped[str | None] = mapped_column(String(64), nullable=True)  # 头程运费单号
     last_mile_cost: Mapped[Decimal] = mapped_column(DECIMAL(12, 4), default=0)  # 尾程派送费用（整批）
@@ -159,6 +159,8 @@ class InventoryBatch(Base):
     period_snapshots: Mapped[list["InventoryPeriodSnapshot"]] = relationship(
         back_populates="batch"
     )
+    # 首次重述已售/已补差批次时冻结原成本依据；原FIFO单价保持不变。
+    cost_basis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     @property
     def edit_version(self) -> str:
