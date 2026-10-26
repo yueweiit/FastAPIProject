@@ -332,9 +332,12 @@ class BatchRestatementTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_closed_finance_flag_allows_metadata_but_rejects_cost_restatement(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '0'
-        response = await self.save(dingtalk_order_no='METADATA')
+        response = await self.save(shipping_cost_no='HEAD-ORDER')
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.session.get(InventoryBatch, 1).shipping_cost_no, 'HEAD-ORDER')
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
+        self.assertEqual(self.session.scalars(select(InventoryCostAdjustment)).all(), [])
+        self.assertEqual(self.logs()[0].after_values['shipping_cost_no'], 'HEAD-ORDER')
         response = await self.save(shipping_cost='20')
         self.assertEqual(response.status_code, 503, response.text)
         self.assertEqual(response.json()['detail']['code'], 'batch_cost_controls_required')

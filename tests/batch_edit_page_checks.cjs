@@ -19,14 +19,17 @@ function setup(file) {
   };
   const messages = [];
   const c = vm.createContext({window: {}, document: {getElementById: element,
-    documentElement: {lang: 'zh-CN'}}, isAdmin: () => false, isOperator: () => true,
+    querySelectorAll: () => [], documentElement: {lang: 'zh-CN'}}, isAdmin: () => false, isOperator: () => true,
     escapeHtml: value => String(value).replaceAll('"', '&quot;'), showMsg: (...args) => messages.push(args),
     applyBatchColumnSelection: () => {}, renderPagination: () => {}, updateBatchSelectionState: () => {},
-    loadBatches: async () => {}, calcEditUnitCost: () => {}});
+    loadBatches: async () => {}, calcEditUnitCost: () => {}, resetSalesImportState: () => {},
+    resetProductImportPreview: () => {}, resetStoreProfitLossState: () => {},
+    clearLegacyAuth: () => {}, showLogin: () => {}});
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
-  vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7;' +
+  vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,batchEditSessionEpoch=0,currentBatchList=[],CURRENT_USER_ID=7;' +
     'let batchTotal=1,batchPage=1,batchPageSize=20,visibleBatchColumns=new Set(),selectedBatchIds=new Set();', c);
-  for (const name of ['formatApiError', 'batchEditBlockedReason', 'renderBatchPage', 'openEditBatch', 'closeEditBatch', 'saveEditBatch']) {
+  for (const name of ['formatApiError', 'handleSessionExpired', 'batchEditBlockedReason', 'renderBatchPage',
+    'setBatchEditStatus', 'resetBatchEditSession', 'openEditBatch', 'closeEditBatch', 'saveEditBatch']) {
     const source = html.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
     assert(source, name); vm.runInContext(source[0], c);
   }
@@ -38,6 +41,9 @@ async function verify(file) {
   ok(/\[data-batch-column="actions"\][^\n]*position:sticky; right:0/.test(html));
   ok(!html.includes('data-batch-column="actions" style="display:flex'));
   ok(html.includes('id="eb-total-amount" type="number" min="0" step="0.0001" required'));
+  ok(html.includes('id="edit-batch-form" novalidate'));
+  ok(html.includes('id="batch-edit-status"'));
+  ok(html.indexOf('id="batch-edit-status"') > html.indexOf('id="eb-save"'));
   setBatch(fixture); c.renderBatchPage();
   ok(e('batches-tbody').innerHTML.includes('openEditBatch(12)'));
   ok(!e('batches-tbody').innerHTML.includes('disabled'));
@@ -80,28 +86,37 @@ async function verify(file) {
   let calls = 0, payload, target;
   c.api = async (method, url, body) => { calls++; payload = body; target = [method, url]; return fixture; };
   e('edit-batch-form').reportValidity = () => false;
+  e('edit-batch-form').querySelector = () => ({validationMessage: '请输入入库时间',
+    parentElement: {querySelector: () => ({textContent: '入库时间'})}});
   await c.saveEditBatch(); equal(calls, 0);
+  equal(e('batch-edit-status').textContent, '请检查“入库时间”：请输入入库时间');
+  equal(e('batch-edit-status').style.display, 'block');
   e('edit-batch-form').reportValidity = () => true;
-  for (const id of ['eb-dingtalk-order', 'eb-ship-no', 'eb-lastmile-no', 'eb-other-no']) e(id).value = '  ';
+  for (const id of ['eb-dingtalk-order', 'eb-lastmile-no', 'eb-other-no']) e(id).value = '  ';
+  e('eb-ship-no').value = ' HEAD-NEW ';
   await c.saveEditBatch(); equal(calls, 1); equal(target, ['PUT', '/batches/12']);
   equal(payload.product_id, 42); equal(payload.total_amount, '34.0054'); equal(payload.shipping_cost, '161.8555');
   equal(payload.edit_version, fixture.edit_version);
   equal(payload.cost_edit_mode, 'restate');
-  for (const key of ['dingtalk_order_no', 'shipping_cost_no', 'last_mile_cost_no', 'other_cost_no']) equal(payload[key], null);
+  for (const key of ['dingtalk_order_no', 'last_mile_cost_no', 'other_cost_no']) equal(payload[key], null);
+  equal(payload.shipping_cost_no, 'HEAD-NEW');
   equal(payload.arrived_at, fixture.arrived_at); equal(payload.shipping_date, fixture.shipping_date);
   equal(e('edit-batch-modal').style.display, 'none'); equal(e('eb-save').disabled, false);
+  equal(e('batch-edit-status').style.display, 'none');
   equal(vm.runInContext('editingBatchVersion', c), null);
   // 保存中不能重复提交、切换编辑目标或取消；请求使用点击时的批次。
   await c.openEditBatch(12);
   let finish; c.api = async () => { calls++; return new Promise(resolve => { finish = resolve; }); };
   const saving = c.saveEditBatch(); await c.saveEditBatch(); c.closeEditBatch(); await c.openEditBatch(99);
   equal(calls, 2); equal(e('eb-save').disabled, true); equal(vm.runInContext('editingBatchId', c), 12);
+  equal(e('batch-edit-status').textContent, c.window.PageInteractions.text('batchEditSaving'));
   finish(fixture); await saving; equal(e('eb-save').disabled, false);
   // 服务端409/并发出库拦截保留表单，便于核对；刷新失败明确表示已经保存。
   await c.openEditBatch(12); e('eb-total-amount').value = '99.9999';
   c.api = async () => { throw Error('batch_has_cost_adjustments'); };
   await c.saveEditBatch(); equal(e('eb-total-amount').value, '99.9999');
-  equal(e('edit-batch-modal').style.display, ''); equal(messages.at(-1)[0], 'batch_has_cost_adjustments');
+  equal(e('edit-batch-modal').style.display, ''); equal(e('batch-edit-status').textContent, 'batch_has_cost_adjustments');
+  equal(e('batch-edit-status').style.display, 'block');
   equal(e('eb-save').disabled, false);
   // 打开时捕获版本；列表对象被更新也不能把旧表单伪装成新版本重试。
   setBatch({...fixture, edit_version: 'b'.repeat(64), shipping_cost: '200.0000'});
@@ -114,7 +129,7 @@ async function verify(file) {
   equal(conflictCalls, 2); equal(payload.edit_version, fixture.edit_version);
   equal(payload.shipping_cost, '161.8555'); equal(e('eb-total-amount').value, '99.9999');
   equal(vm.runInContext('editingBatchVersion', c), fixture.edit_version);
-  equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditConflict'));
+  equal(e('batch-edit-status').textContent, c.window.PageInteractions.text('batchEditConflict'));
   equal(c.formatApiError({code: 'batch_edit_version_required'}, 'error'), c.window.PageInteractions.text('batchEditVersionRequired'));
   c.closeEditBatch(); await c.openEditBatch(12);
   equal(vm.runInContext('editingBatchVersion', c), 'b'.repeat(64));
@@ -122,6 +137,41 @@ async function verify(file) {
   c.api = async () => fixture; c.loadBatches = async () => { throw Error('offline'); };
   await c.saveEditBatch(); equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditRefreshFailed'));
   equal(vm.runInContext('editingBatchId', c), null);
+
+  // 401 时必须关闭高于登录层的编辑弹窗，旧请求不能影响重新登录后的同一账号。
+  c.loadBatches = async () => {}; setBatch(fixture);
+  await c.openEditBatch(12);
+  let rejectExpired;
+  c.api = () => new Promise((_resolve, reject) => { rejectExpired = reject; });
+  const expiredSave = c.saveEditBatch();
+  const messagesBeforeExpiry = messages.length;
+  c.handleSessionExpired();
+  equal(e('login-overlay').style.display, 'flex');
+  equal(e('edit-batch-modal').style.display, 'none');
+  equal(e('batch-edit-status').style.display, 'none');
+  equal(e('eb-save').disabled, false);
+  equal(vm.runInContext('editingBatchId', c), null);
+  rejectExpired(Error('登录已过期')); await expiredSave;
+  equal(messages.length, messagesBeforeExpiry);
+
+  vm.runInContext('CURRENT_USER_ID=7', c);
+  await c.openEditBatch(12);
+  let resolveStale;
+  c.api = () => new Promise(resolve => { resolveStale = resolve; });
+  const staleSave = c.saveEditBatch();
+  c.handleSessionExpired();
+  vm.runInContext('CURRENT_USER_ID=7', c);
+  await c.openEditBatch(12);
+  let resolveCurrent;
+  c.api = () => new Promise(resolve => { resolveCurrent = resolve; });
+  const currentSave = c.saveEditBatch();
+  resolveStale(fixture); await staleSave;
+  equal(e('edit-batch-modal').style.display, '');
+  equal(e('eb-save').disabled, true);
+  equal(e('batch-edit-status').textContent, c.window.PageInteractions.text('batchEditSaving'));
+  resolveCurrent(fixture); await currentSave;
+  equal(e('edit-batch-modal').style.display, 'none');
+  equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditSaved'));
 }
 (async () => {
   for (const file of ['templates/index.html', 'index.html']) await verify(file);

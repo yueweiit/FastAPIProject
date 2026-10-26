@@ -427,7 +427,7 @@
         <!-- 编辑弹窗 -->
         <div id="edit-batch-modal" class="card edit-modal" style="display:none;border:2px solid #e94560">
             <div class="flex-between"><h3>✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditBatch()">× 取消</button></div>
-            <form id="edit-batch-form" onsubmit="event.preventDefault(); saveEditBatch()">
+            <form id="edit-batch-form" novalidate onsubmit="event.preventDefault(); saveEditBatch()">
             <p id="batch-edit-notice" class="cost-detail"></p>
             <div class="form-row">
                 <div class="form-group"><label>数量</label><input id="eb-qty" type="number" min="1" step="1" required></div>
@@ -444,6 +444,7 @@
                 <div class="form-group"><label>入库时间</label><input id="eb-date" type="datetime-local" required></div>
                 <div class="form-group" style="justify-content:flex-end"><button id="eb-save" type="submit" class="btn btn-primary">保存</button></div>
             </div>
+            <p id="batch-edit-status" class="msg msg-err" role="alert" style="display:none"></p>
             <div id="eb-calc" class="cost-detail"></div>
             </form>
         </div>
@@ -858,6 +859,7 @@ async function doLogout() {
 
 function handleSessionExpired() {
     resetSalesImportState();
+    resetBatchEditSession();
     window.PageInteractions?.cancel();
     if (document.getElementById('product-import-dialog').open) {
         document.getElementById('product-import-dialog').close();
@@ -1736,6 +1738,7 @@ async function loadBatchSkuOptions() {
 let editingBatchId = null;
 let editingBatchVersion = null;
 let batchEditSaving = false;
+let batchEditSessionEpoch = 0;
 let currentBatchList = [];
 const selectedBatchIds = new Set();
 let batchPage = 1;
@@ -1901,6 +1904,21 @@ function openBatchLogs(id) {
     if (batch && isOperator()) return window.PageInteractions.batchLogs(id, batch.batch_no);
 }
 
+function setBatchEditStatus(message, error = true) {
+    const status = document.getElementById('batch-edit-status');
+    status.textContent = message;
+    status.className = `msg ${error ? 'msg-err' : 'msg-ok'}`;
+    status.style.display = message ? 'block' : 'none';
+    if (message) status.scrollIntoView?.({block: 'nearest'});
+}
+
+function resetBatchEditSession() {
+    batchEditSessionEpoch++;
+    batchEditSaving = false;
+    closeEditBatch();
+    document.getElementById('eb-save').disabled = false;
+}
+
 async function openEditBatch(id) {
     if (batchEditSaving) return;
     const rawBatch = currentBatchList.find(x => x.id === id);
@@ -1911,6 +1929,7 @@ async function openEditBatch(id) {
     if (!b.edit_version) { showMsg(window.PageInteractions.text('batchEditVersionRequired'), false); return; }
     editingBatchId = id;
     editingBatchVersion = b.edit_version;
+    setBatchEditStatus('');
     document.getElementById('edit-batch-label').textContent = b.batch_no;
     document.getElementById('eb-qty').value = b.quantity;
     document.getElementById('eb-qty').min = Math.max(1, b.quantity - b.remaining_quantity);
@@ -1937,6 +1956,7 @@ function closeEditBatch() {
     if (batchEditSaving) return;
     editingBatchId = null;
     editingBatchVersion = null;
+    setBatchEditStatus('');
     document.getElementById('edit-batch-modal').style.display = 'none';
 }
 
@@ -1959,15 +1979,26 @@ function calcEditUnitCost() {
 async function saveEditBatch() {
     if (batchEditSaving || editingBatchId === null) return;
     const batch = currentBatchList.find(item => item.id === editingBatchId);
-    if (!batch) return;
+    if (!batch) { setBatchEditStatus(window.PageInteractions.text('batchEditConflict')); return; }
     const reason = batchEditBlockedReason(batch);
-    if (reason) { showMsg(reason, false); return; }
-    if (!editingBatchVersion) { showMsg(window.PageInteractions.text('batchEditVersionRequired'), false); return; }
-    if (!document.getElementById('edit-batch-form').reportValidity()) return;
+    if (reason) { setBatchEditStatus(reason); return; }
+    if (!editingBatchVersion) { setBatchEditStatus(window.PageInteractions.text('batchEditVersionRequired')); return; }
+    const form = document.getElementById('edit-batch-form');
+    if (!form.reportValidity()) {
+        const invalid = form.querySelector(':invalid');
+        const field = invalid?.parentElement?.querySelector('label')?.textContent?.trim();
+        const reason = invalid?.validationMessage || window.PageInteractions.text('batchEditInvalidValue');
+        setBatchEditStatus(field
+            ? window.PageInteractions.text('batchEditInvalidField').replace('{field}', field).replace('{reason}', reason)
+            : reason);
+        return;
+    }
     const userId = CURRENT_USER_ID;
     const batchId = editingBatchId;
+    const editSessionEpoch = batchEditSessionEpoch;
     batchEditSaving = true;
     document.getElementById('eb-save').disabled = true;
+    setBatchEditStatus(window.PageInteractions.text('batchEditSaving'), false);
     try {
         const arrived = document.getElementById('eb-date').value;
         const shipdate = document.getElementById('eb-shipdate').value;
@@ -1987,16 +2018,20 @@ async function saveEditBatch() {
             shipping_date: window.PageInteractions.batchDateTimeValue(shipdate, document.getElementById('eb-shipdate').dataset.originalValue),
             arrived_at: window.PageInteractions.batchDateTimeValue(arrived, document.getElementById('eb-date').dataset.originalValue),
         });
-        if (userId !== CURRENT_USER_ID) return;
+        if (userId !== CURRENT_USER_ID || editSessionEpoch !== batchEditSessionEpoch) return;
         batchEditSaving = false;
         closeEditBatch();
         showMsg(window.PageInteractions.text('batchEditSaved'));
         try { await loadBatches(); }
         catch { showMsg(window.PageInteractions.text('batchEditRefreshFailed'), false); }
-    } catch (e) { if (userId === CURRENT_USER_ID) showMsg(e.message, false); }
+    } catch (e) {
+        if (userId === CURRENT_USER_ID && editSessionEpoch === batchEditSessionEpoch) setBatchEditStatus(e.message);
+    }
     finally {
-        batchEditSaving = false;
-        document.getElementById('eb-save').disabled = false;
+        if (editSessionEpoch === batchEditSessionEpoch) {
+            batchEditSaving = false;
+            document.getElementById('eb-save').disabled = false;
+        }
     }
 }
 

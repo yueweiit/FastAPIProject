@@ -17,8 +17,8 @@ function setup(file) {
         refreshSalesWorkspace:()=>{context.refreshed=true;}});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),context);
     context.isOperator=()=>true; context.isAdmin=()=>true;
-    vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
-    for(const name of ['createBatch','batchEditBlockedReason','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {
+    vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,batchEditSessionEpoch=0,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
+    for(const name of ['createBatch','batchEditBlockedReason','setBatchEditStatus','resetBatchEditSession','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source,`${file}: missing ${name}`);
         vm.runInContext(source[0],context);
