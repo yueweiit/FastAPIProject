@@ -10,6 +10,7 @@ import httpx
 from fastapi import FastAPI
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects import mysql
 
 from auth import get_current_user
 from database import Base, get_db
@@ -117,6 +118,41 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.save(**change)).status_code, 422)
         self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
 
+
+    async def request(self, method, path):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
+            return await client.request(method, path)
+
+    async def test_update_and_delete_use_current_cost_read_after_parent_lock(self):
+        os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
+        session = self.session
+        for method in ('PUT', 'DELETE'):
+            with self.subTest(method=method):
+                reads = []
+
+                class RepeatableReadFacade(AsyncFacade):
+                    async def scalar(self, statement):
+                        sql = str(statement.compile(dialect=mysql.dialect()))
+                        if 'inventory_cost_adjustment_lines' in sql:
+                            reads.append(('cost', sql))
+                            # 认证已建立旧快照；普通读看不到之后提交的成本补差。
+                            return 123 if statement._for_update_arg is not None else None
+                        if 'inventory_batches' in sql:
+                            reads.append(('batch', sql))
+                        return await super().scalar(statement)
+
+                async def db():
+                    try:
+                        yield RepeatableReadFacade(session)
+                    finally:
+                        session.rollback()
+                self.app.dependency_overrides[get_db] = db
+                response = await self.save(quantity=99) if method == 'PUT' else await self.request('DELETE', '/batches/12')
+                self.assertEqual(response.status_code, 409, response.text)
+                self.assertEqual(response.json()['detail']['code'], 'batch_has_cost_adjustments')
+                self.assertEqual([kind for kind, _sql in reads], ['batch', 'cost'])
+                self.assertTrue(all(sql.endswith('FOR UPDATE') for _kind, sql in reads), reads)
+                self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
 
 if __name__ == '__main__':
     unittest.main()

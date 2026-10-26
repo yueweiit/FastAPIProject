@@ -48,3 +48,5 @@ list_batches 按 arrived_at、id 降序，可按 product_id 或商品名称/SKU/
 ## 实际成本补差
 
 启用后列表、导出和商品库存金额使用原成本加调整层；数量和FIFO原始保存成本不变。批次已有成本调整来源即禁止直接编辑/删除，反向后也不删除来源。按最新凭证重算历史库存和准备，已保存月度版本保持旧值。流程与公式见[财务增强](../financial-control/workflow.md)。
+
+编辑/删除先锁原批次，再由ensure_batch_cost_editable对调整行执行SELECT ... FOR UPDATE当前读；成本补差也先锁原批次，保持父批次→调整行的锁序。不能将来源检查改成普通SELECT：MySQL/InnoDB REPEATABLE READ下，认证等较早查询可能建立旧快照，漏掉之后提交的调整来源。所有锁保留到事务提交或回滚，成本调整已提交则编辑/删除返回409（batch_has_cost_adjustments），不改写原成本。

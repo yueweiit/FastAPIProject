@@ -85,12 +85,13 @@ def adjusted_cost_expression():
 
 
 async def ensure_batch_cost_editable(db, batch_id):
+    """调用方先持有批次行锁，再用当前读检查补差，避免认证读建立的RR旧快照。"""
     if not financial_controls_enabled():
         return
     from fastapi import HTTPException
     if await db.scalar(select(InventoryCostAdjustmentLine.id).where(
         InventoryCostAdjustmentLine.batch_id == batch_id
-    ).limit(1)):
+    ).limit(1).with_for_update()):
         raise HTTPException(409, detail={"code": "batch_has_cost_adjustments",
                                        "message": "批次已有成本调整，请追加调整或反向单，不能改写原批次。"})
 

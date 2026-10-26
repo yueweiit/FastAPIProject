@@ -4,6 +4,10 @@
 
 > 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
 
+## 批次成本调整并发校验
+
+编辑/删除先锁原批次，再由`ensure_batch_cost_editable`对成本调整行做FOR UPDATE当前读，避免认证建立的REPEATABLE READ旧快照漏掉之后提交的调整来源。保持父批次→调整行锁序，已有来源返回409，不能改写原批次。无需新增结构或回填，回归覆盖及实际验证边界见[库存代码映射](docs/modules/inventory/code-map.md)。
+
 ## 2026-10-16 修复及更新注意
 
 - 本次涉及商品图片服务、销售路由/FIFO、models.py、migrate.py、schemas.py、报表路由和两份页面，不能只上传HTML。损益页面新增update_scope=current，保留人工上月/年累计值；默认API仍整体替换，必须前后端一起更新。详细逻辑和验证见[修复记录](docs/development/2026-10-16-project-safety-fixes.md)。
