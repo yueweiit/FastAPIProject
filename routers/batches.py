@@ -164,8 +164,6 @@ async def update_batch(
         raise HTTPException(409, detail={"code": "batch_quantity_below_sold", "sold_quantity": consumed,
             "message": f"入库数量不能小于已出库数量（{consumed}）。"})
     arrived = data.arrived_at or batch.arrived_at
-    if sales and arrived.date() > min(row.sold_at.date() for row in sales):
-        raise HTTPException(409, detail={"code": "batch_arrival_after_sale", "message": "入库日期不能晚于该批次最早销售日期。"})
 
     before = _batch_change_values(batch, layers)
     _, total_amount = _resolve_purchase_values(data, batch)

@@ -132,14 +132,42 @@ class BatchRestatementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(Decimal(response.json()['unit_cost']), Decimal(10))
         self.assertEqual(response.json()['cost_status'], 'unverified')
 
-    async def test_below_sold_quantity_and_arrival_after_first_sale_are_rejected(self):
-        for change, code in (({'quantity': 3}, 'batch_quantity_below_sold'),
-                             ({'arrived_at': '2026-09-11T12:00:00'}, 'batch_arrival_after_sale')):
-            response = await self.save(**change)
-            self.assertEqual(response.status_code, 409, response.text)
-            self.assertEqual(response.json()['detail']['code'], code)
+    async def test_below_sold_quantity_is_rejected(self):
+        response = await self.save(quantity=3)
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()['detail']['code'], 'batch_quantity_below_sold')
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
         self.assertEqual(self.logs(), [])
+
+    async def test_arrival_after_existing_sale_and_later_ticket_edit_are_allowed(self):
+        original_sale = self.session.get(Sale, 1)
+        original_detail = self.session.get(SaleCostDetail, 1)
+        sale_date = original_sale.sold_at
+        fifo_unit_cost = original_detail.unit_cost
+
+        response = await self.save(arrived_at='2026-09-11T12:00:00')
+        self.assertEqual(response.status_code, 200, response.text)
+        batch = self.session.get(InventoryBatch, 1)
+        self.assertGreater(batch.arrived_at.date(), sale_date.date())
+        self.assertEqual((batch.quantity, batch.remaining_quantity), (10, 6))
+        self.assertEqual(original_detail.unit_cost, fifo_unit_cost)
+        self.assertEqual(self.logs()[0].after_values['arrived_at'][:10], '2026-09-11')
+
+        response = await self.save(shipping_cost_no='CORRECTED-TICKET')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(batch.shipping_cost_no, 'CORRECTED-TICKET')
+        self.assertEqual(len(self.logs()), 2)
+        self.assertEqual(self.session.scalars(select(InventoryCostAdjustment)).all(), [])
+
+    async def test_cost_restatement_still_works_after_arrival_moved_past_sale(self):
+        changed_date = await self.save(arrived_at='2026-09-11T12:00:00')
+        self.assertEqual(changed_date.status_code, 200, changed_date.text)
+        response = await self.save(shipping_cost='20')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
+        self.assertEqual(self.session.get(SaleCostDetail, 1).unit_cost, Decimal(10))
+        context = await sale_cost_context(self.db, [self.session.get(Sale, 1)])
+        self.assertEqual(context[1]['adjustment'], Decimal(8))
 
     async def test_fully_sold_batch_can_edit_without_resurrecting_inventory(self):
         batch = self.session.get(InventoryBatch, 1)

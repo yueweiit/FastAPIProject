@@ -27,9 +27,9 @@ PUT的quantity范围为1–2147483647，对齐数据库INT；还须满足已售�
 
 BatchResponse包含edit_version（64位小写十六进制不透明值）。InventoryBatch持久化字段形成基础摘要，有调整层时再纳入不可变明细ID/数量/金额；包括零额来源。不是递增序号或数据库列，客户端必须保留打开时版本，不得自行计算或失败后自动替换。
 
-PUT先锁批次和当前调整层、比对版本，再核对已售数量与日期。缺少版本428（batch_edit_version_required）、格式无效422、过期409（batch_edit_conflict）。失败不写批次或成功日志，冲突后保留输入并重新核对。新剩余数=新quantity−原已售数，不能通过请求直接传remaining_quantity。
+PUT先锁批次和当前调整层、比对版本，再核对已售数量。缺少版本428（batch_edit_version_required）、格式无效422、过期409（batch_edit_conflict）。失败不写批次或成功日志，冲突后保留输入并重新核对。新剩余数=新quantity−原已售数，不能通过请求直接传remaining_quantity。编辑时不因入库日晚于已有销售日而拒绝；既有销售日期和FIFO分配不随此修改重算。
 
-已售/已有补差/cost_basis批次改数量或成本，追加差额凭证并保留原FIFO单价；财务开关关闭返回503（batch_cost_controls_required）。数量小于已售返回409（batch_quantity_below_sold，附sold_quantity），余量与明细不符返回409（batch_quantity_inconsistent），入库日晚于最早销售日返回409（batch_arrival_after_sale）。派生差额超出财务金额范围返回422（batch_cost_out_of_range）。纯资料更正不重算库存或追加成本。
+已售/已有补差/cost_basis批次改数量或成本，追加差额凭证并保留原FIFO单价；财务开关关闭返回503（batch_cost_controls_required）。数量小于已售返回409（batch_quantity_below_sold，附sold_quantity），余量与明细不符返回409（batch_quantity_inconsistent）。派生差额超出财务金额范围返回422（batch_cost_out_of_range）。纯资料更正不重算库存或追加成本。
 
 ## 查询和导出
 

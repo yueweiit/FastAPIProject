@@ -23,7 +23,7 @@ stateDiagram-v2
 
 _locked_batch 使用 FOR UPDATE 和 populate_existing，等待在途销售完成后读取最新数量。admin/operator 可编辑任意创建人的历史批次，包括部分出库和售完批次；operator 删除仍必须是原创建人，且已出库批次不能删除。编辑不更新 user_id、product_id 或 batch_no，未传单号仍保留相应字段。
 
-保存先核对已出库数=原quantity−remaining_quantity，并用当前读复查销售明细数量。新quantity不能小于已出库数；新remaining_quantity=新quantity−已出库数，不会把已售库存重新加回。入库自然日不能晚于该批次最早销售日。余量与明细不符、数量不足或日期矛盾返回409，不写批次和日志。
+保存先核对已出库数=原quantity−remaining_quantity，并用当前读复查销售明细数量。新quantity不能小于已出库数；新remaining_quantity=新quantity−已出库数，不会把已售库存重新加回。批次编辑允许将入库日改到该批次既有销售日之后，也允许在已有日期矛盾时继续修改资料、数量或成本；该入口不自动改写既有销售及FIFO成本明细。余量与明细不符或数量不足返回409，不写批次和日志。新销售仍只消耗销售当日或之前已到货的批次；销售早于入库的历史记录在存货准备回放中会标记待核对，相关金额可能留空，须核对原始业务日期。
 
 从未出库、无补差且没有cost_basis的批次保持直接重算。已售、已有补差或已保存cost_basis的批次，修改数量/金额时必须启用财务增强，并以cost_edit_mode=restate提交：首次冻结原单位成本构成为cost_basis，原unit_cost和SaleCostDetail.unit_cost保持不变；绝对目标采购/头程/尾程/其他金额转为新增差额凭证，与批次数量、资料和日志一起提交。差额按凭证四位小数保存，单位成本继续Decimal计算，可能含计价尾差。新凭证不自动标记已完成账单核对。
 

@@ -1582,11 +1582,16 @@ async def _load_inventory_impairment_report_rows(
             mismatched_cost.add(sale.batch_id)
     result = []
     for batch, sku, name, store, kind, safe, owner in batch_rows:
-        if batch.arrived_at.date() > report_date or (store_id is not None and owner != store_id):
+        # A future-dated batch is selected above only when it already has a sale
+        # by the cutoff. Keep that anomaly visible instead of dropping its sale.
+        if store_id is not None and owner != store_id:
             continue
         current = replay.balances[report_date][batch.id]
         previous = replay.balances[previous_end][batch.id]
-        note = "本月新增批次，上月账面价值为0" if batch.arrived_at.date() > previous_end else ""
+        if batch.arrived_at.date() > report_date:
+            note = "截至报告日尚未入库但已有销售，日期待核对"
+        else:
+            note = "本月新增批次，上月账面价值为0" if batch.arrived_at.date() > previous_end else ""
         note = "；".join(filter(None, [note, replay.notes.get(batch.id, "")]))
         if batch.id in mismatched_cost:
             note += "；销售成本与当前批次单价不同，保留保存成本，准备按批次成本计算"

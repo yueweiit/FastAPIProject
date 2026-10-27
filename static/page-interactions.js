@@ -18,7 +18,6 @@
         batchEditSaving: '正在保存批次…',
         batchQuantityInconsistent: '批次余量与销售明细不一致，请先核对库存流水。',
         batchQuantityBelowSold: '入库数量不能小于已出库数量（{quantity}）。',
-        batchArrivalAfterSale: '入库日期不能晚于该批次最早销售日期。',
         batchCostControlsRequired: '已出库批次修改数量或成本需要先准备财务结构并启用成本追溯功能；单号等资料仍可修改。',
         batchRestatementModeRequired: '当前页面或调用方未声明成本追溯编辑模式，请更新后重新打开编辑，避免覆盖已确认成本。',
         batchCostOutOfRange: '更正后的金额或成本差额超出字段范围，请核对入库数量和金额。',

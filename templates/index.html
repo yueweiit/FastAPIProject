@@ -730,7 +730,7 @@ function formatApiError(detail, fallback) {
     if (detail && typeof detail === 'object') {
         const batchErrorKey = {batch_edit_version_required: 'batchEditVersionRequired', batch_edit_conflict: 'batchEditConflict',
             batch_quantity_inconsistent: 'batchQuantityInconsistent', batch_quantity_below_sold: 'batchQuantityBelowSold',
-            batch_arrival_after_sale: 'batchArrivalAfterSale', batch_cost_controls_required: 'batchCostControlsRequired',
+            batch_cost_controls_required: 'batchCostControlsRequired',
             batch_restatement_mode_required: 'batchRestatementModeRequired', batch_cost_out_of_range: 'batchCostOutOfRange'}[detail.code];
         if (batchErrorKey) return window.PageInteractions?.text(batchErrorKey)?.replace('{quantity}', detail.sold_quantity ?? '') || detail.message;
         return detail.message || JSON.stringify(detail);

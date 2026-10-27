@@ -25,9 +25,10 @@ def result(rows):
     return SimpleNamespace(all=lambda: rows, scalars=lambda: SimpleNamespace(all=lambda: rows))
 
 
-def fixture(*, owner=7, sale_store=7, invalid=False, second_owner=None):
+def fixture(*, owner=7, sale_store=7, invalid=False, second_owner=None,
+            arrival=datetime(2026, 8, 31)):
     batch = SimpleNamespace(id=1, product_id=10, quantity=100, unit_cost=Decimal(10),
-                            arrived_at=datetime(2026, 8, 31), batch_no="A")
+                            arrived_at=arrival, batch_no="A")
     batches = [(batch, "SKU-1", "测试物料", "店铺A", "new", 0, owner)]
     rules = [SimpleNamespace(product_id=10, product_type="new", safe_stock_quantity=0,
                              effective_date=date(2026, 8, 31))]
@@ -79,6 +80,23 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(sheet[cell].value, cell)
         self.assertEqual(sheet["H2"].value, 1000)
         self.assertEqual(sheet["S2"].value, "历史流水待核对")
+
+    async def test_sale_before_future_arrival_remains_visible_before_arrival_cutoff(self):
+        rows = await _load_inventory_impairment_report_rows(
+            fixture(arrival=datetime(2026, 10, 10)), REPORT, 7,
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["quantity"], 0)
+        self.assertEqual(row["sold_quantity"], 40)
+        self.assertEqual(row["sold_cost_amount"], Decimal(400))
+        self.assertIn("尚未入库但已有销售", row["comparison_note"])
+        self.assertIn("销售日期早于", row["comparison_note"])
+        self.assertIsNone(row["monthly_writeoff_amount"])
+        self.assertIsNone(_summarize_inventory_impairment_rows(rows)[0]["monthly_writeoff_amount"])
+        self.assertEqual(await _load_inventory_impairment_report_rows(
+            fixture(arrival=datetime(2026, 10, 10)), REPORT, 8,
+        ), [])
 
     async def test_store_filter_follows_global_safe_stock_allocation_without_name_leak(self):
         rows = await _load_inventory_impairment_report_rows(fixture(second_owner=8), REPORT, 7)
