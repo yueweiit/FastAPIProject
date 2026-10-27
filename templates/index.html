@@ -482,10 +482,11 @@
                             </div>
                         </div>
                     </div>
-                    <button class="btn btn-primary" onclick="exportAllBatches()" title="导出当前批次列表">批量导出</button>
+                    <button id="batch-export-button" class="btn btn-primary" onclick="exportAllBatches()" title="导出当前批次列表">批量导出</button>
                     <button class="btn btn-secondary" onclick="loadBatches()">刷新</button>
                 </div>
             </div>
+            <p id="batch-export-status" class="msg" role="status" aria-live="polite" style="display:none"></p>
             <div class="form-row" style="margin:12px 0 0">
                 <div class="form-group" style="max-width:360px">
                     <label for="batch-keyword">搜索商品</label>
@@ -860,6 +861,7 @@ async function doLogout() {
 function handleSessionExpired() {
     resetSalesImportState();
     resetBatchEditSession();
+    resetBatchExportSession();
     window.PageInteractions?.cancel();
     if (document.getElementById('product-import-dialog').open) {
         document.getElementById('product-import-dialog').close();
@@ -1761,6 +1763,8 @@ let batchEditSaving = false;
 let batchEditSessionEpoch = 0;
 let currentBatchList = [];
 const selectedBatchIds = new Set();
+let batchExportBusy = false;
+let batchExportSessionEpoch = 0;
 let batchPage = 1;
 let batchPageSize = 20;
 let batchTotal = 0;
@@ -2064,45 +2068,89 @@ async function deleteBatch(id) {
     } catch (e) { showMsg(e.message, false); }
 }
 
+function setBatchExportStatus(message, isError = false) {
+    const status = document.getElementById('batch-export-status');
+    status.textContent = message;
+    status.className = `msg${isError === null ? '' : isError ? ' msg-err' : ' msg-ok'}`;
+    status.style.display = message ? 'block' : 'none';
+}
+
+function resetBatchExportSession() {
+    batchExportSessionEpoch += 1;
+    batchExportBusy = false;
+    selectedBatchIds.clear();
+    updateBatchSelectionState();
+    document.getElementById('batch-export-button').disabled = false;
+    setBatchExportStatus('');
+}
+
 async function downloadBatchExport(ids, extraParams = new URLSearchParams()) {
+    if (batchExportBusy) {
+        setBatchExportStatus(window.PageInteractions.text('batchExportBusy'), null);
+        document.getElementById('batch-export-status').scrollIntoView?.({block: 'nearest'});
+        return;
+    }
     const selectedIds = ids.filter(Boolean);
     const query = new URLSearchParams(extraParams);
     selectedIds.forEach(id => query.append('batch_ids', id));
+    const sessionEpoch = batchExportSessionEpoch;
+    batchExportBusy = true;
+    document.getElementById('batch-export-button').disabled = true;
+    const text = window.PageInteractions.text;
+    setBatchExportStatus(selectedIds.length
+        ? text('batchExportSelectedLoading').replace('{count}', selectedIds.length)
+        : text('batchExportFilteredLoading'), null);
     try {
         const res = await fetch(`/batches/export?${query.toString()}`, {
             headers: authHeaders(),
+            credentials: 'same-origin',
         });
+        if (sessionEpoch !== batchExportSessionEpoch) return;
         if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
             try { detail = JSON.parse(raw).detail || raw; } catch {}
+            if (res.status >= 500) throw new Error(text('batchExportServerError').replace('{status}', res.status));
             throw new Error(formatApiError(detail, '导出失败'));
         }
         const blob = await res.blob();
+        if (sessionEpoch !== batchExportSessionEpoch) return;
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
         link.download = `批次导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        link.style.display = 'none';
         document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-        showMsg(selectedIds.length ? `已导出 ${selectedIds.length} 条批次` : '已导出全部匹配批次');
-    } catch (e) { showMsg(e.message, false); }
+        try {
+            link.click();
+            setTimeout(() => { link.remove(); URL.revokeObjectURL(url); }, 60000);
+        } catch (error) {
+            link.remove();
+            URL.revokeObjectURL(url);
+            throw error;
+        }
+        setBatchExportStatus(text('batchExportReady'));
+    } catch (e) {
+        if (sessionEpoch === batchExportSessionEpoch) setBatchExportStatus(e.message, true);
+    } finally {
+        if (sessionEpoch === batchExportSessionEpoch) {
+            batchExportBusy = false;
+            document.getElementById('batch-export-button').disabled = false;
+        }
+    }
 }
 
-function exportBatch(id) { downloadBatchExport([id]); }
+function exportBatch(id) { return downloadBatchExport([id]); }
 
 function exportAllBatches() {
     if (selectedBatchIds.size) {
-        downloadBatchExport([...selectedBatchIds]);
-        return;
+        return downloadBatchExport([...selectedBatchIds]);
     }
     const keyword = document.getElementById('batch-keyword')?.value.trim();
     const params = new URLSearchParams();
     if (keyword) params.set('keyword', keyword);
-    downloadBatchExport([], params);
+    return downloadBatchExport([], params);
 }
 
 // ========== 销售 ==========

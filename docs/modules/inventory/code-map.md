@@ -17,9 +17,9 @@
 
 相关测试为 [test_sales_rules.py](../../../tests/test_sales_rules.py)、[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py)；真实验证脚本 [mysql_fifo_concurrency.py](../../../tests/mysql_fifo_concurrency.py) 会写测试库，需要独立运行授权。历史批次字段/创建人转移脚本见 [migrations/](../../../migrations/)，不得默认执行。
 
-批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、删除限制、有效金额回填、数量下限、追溯模式、重复提交和错误保留；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
+批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、删除限制、有效金额回填、数量下限、追溯模式、重复提交和错误保留；`node tests/batch_export_page_checks.cjs`覆盖选择/筛选导出、等待/失败提示、下载与会话切换；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
 
-test_batch_restatement还覆盖原销售月成本增加、入库数量不重置已售数、售完不复活库存、旧月度版本保留/新版、未来FIFO只叠加一次、旧分配数量冲销及财务关闭/旧模式/金额越界拒绝。日志失败回滚数量、依据、所有成本凭证和财务审计。batch_log_page_checks.cjs仍验证日志弹窗分页/转义/过期响应。
+test_batch_restatement还覆盖原销售月成本增加、入库数量不重置已售数、入库日后移越过既有销售日后的单号编辑与成本追溯、售完不复活库存、旧月度版本保留/新版、未来FIFO只叠加一次、旧分配数量冲销及财务关闭/旧模式/金额越界拒绝。日志失败回滚数量、依据、所有成本凭证和财务审计。batch_log_page_checks.cjs仍验证日志弹窗分页/转义/过期响应。
 
 精度与重试回归：test_batch_restatement通过实际批次及财务路由验证非整除费用清零、再次保存/零额核对、真实负差拒绝；更正数量后的原成本单重试不新增分配、审计或日志，修改单据/批次/显式权重仍409，非创建人仍403。另验证数量增加后的旧凭证冲销不能将整批负成本舍为零；test_financial_controls验证最大INT数量下的-0.0001元仍拒绝及原有总成本下限。
 

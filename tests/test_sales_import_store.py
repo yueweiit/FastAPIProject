@@ -4,6 +4,7 @@ import io
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
 from fastapi import FastAPI
@@ -145,6 +146,27 @@ class ImportStoreTests(unittest.IsolatedAsyncioTestCase):
         self.session.commit()
         sheet=load_workbook(io.BytesIO((await self.request('GET','/batches/export?batch_ids=1')).content)).active
         self.assertEqual((sheet['V2'].value,sheet['V2'].data_type),('=1+1','s'))
+
+    async def test_batch_export_releases_read_transaction_before_writing_workbook(self):
+        original_workbook = batches.Workbook
+        saved = []
+
+        def checked_workbook():
+            workbook = original_workbook()
+            original_save = workbook.save
+
+            def checked_save(output):
+                self.assertFalse(self.session.in_transaction())
+                saved.append(True)
+                return original_save(output)
+
+            workbook.save = checked_save
+            return workbook
+
+        with patch.object(batches, 'Workbook', new=checked_workbook):
+            response = await self.request('GET', '/batches/export?batch_ids=1')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(saved, [True])
 
     def test_pending_export_does_not_hide_missing_store_in_a_group(self):
         entry=SimpleNamespace(platform_sku_id='X',mapping_error='缺映射',quantity=1,product_name='',sku_name='',

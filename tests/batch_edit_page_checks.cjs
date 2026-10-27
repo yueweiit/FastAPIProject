@@ -23,6 +23,7 @@ function setup(file) {
     escapeHtml: value => String(value).replaceAll('"', '&quot;'), showMsg: (...args) => messages.push(args),
     applyBatchColumnSelection: () => {}, renderPagination: () => {}, updateBatchSelectionState: () => {},
     loadBatches: async () => {}, calcEditUnitCost: () => {}, resetSalesImportState: () => {},
+    resetBatchExportSession: () => {},
     resetProductImportPreview: () => {}, resetStoreProfitLossState: () => {},
     clearLegacyAuth: () => {}, showLogin: () => {}});
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);

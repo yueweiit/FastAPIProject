@@ -65,6 +65,10 @@ list_batches 按 arrived_at、id 降序，可按 product_id 或商品名称/SKU/
 
 导出有 batch_ids 时优先按选择 ID，不叠加 keyword/product_id；没有 ID 才用筛选条件导出全部匹配记录。宽表独立滚动、分页和跨页选择仅为前端交互。依据：[模板](../../../templates/index.html)、[batches.py](../../../routers/batches.py) 的 list_batches、export_batches。
 
+列表中的批量导出与单条导出调用同一接口。请求期间页面在批量导出按钮下持续显示生成状态，并禁止重复提交；此时点击单条导出会提示等待当前文件。成功后提示检查浏览器下载列表，失败时保留错误提示。会话过期时清除跨页批次勾选，旧会话的下载结果不能覆盖新会话提示。服务器返回 5xx 表示文件未生成，应查看服务端日志定位具体异常，页面提示不代表导出成功。下载使用临时对象地址，触发下载后延迟释放。对应交互与文案见 [模板](../../../templates/index.html) 和 [page-interactions.js](../../../static/page-interactions.js)。
+
+服务端批次导出先读取批次、成本层、商品和创建人店铺，结束只读 MySQL 事务后再生成带图片的 Excel，避免文件构造期间占用连接。读取结果仍是该请求内的已物化数据，不对库存或批次执行写入。依据：[batches.py](../../../routers/batches.py) 的 `export_batches`。
+
 批次Excel末尾展示“店铺（创建人当前绑定）”，与存货报表的创建人当前绑定口径一致；未知显示“未关联店铺”。批次本身仍无store_id，账号改绑会影响该展示，不应据此认定为店铺独占库存。原21列不移动；商品汇总可能包含多个店铺创建的批次，不猜测单一店铺。
 
 销售事务和撤销细节见[销售流程](../sales/workflow.md)。

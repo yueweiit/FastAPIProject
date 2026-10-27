@@ -381,6 +381,10 @@ async def export_batches(
             Store, Store.id == User.store_id).where(User.id.in_(owner_ids)))
         store_names = {owner_id: name for owner_id, name in owner_rows.all()}
 
+    # All ORM rows and cost layers are materialized; file/image generation may
+    # take much longer than the queries, so release the read connection now.
+    await db.commit()
+
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "批次数据"
