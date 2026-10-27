@@ -18,7 +18,8 @@
 
 | 字段/类型 | 含义与依赖 | 维护入口 |
 | --- | --- | --- |
-| inventory_batches.quantity / remaining_quantity：Integer | 原始入库量 / 当前余额；历史余额由销售成本明细重建。直接改余额会破坏 FIFO 与报表勾稽 | [库存约束](../modules/inventory/database.md#数据约束和归属) |
+| inventory_batches.quantity / remaining_quantity：Integer | 当前更正后的入库量 / 活动批次余额；作废批次余额保留历史值。历史余额由销售成本明细重建，直接改余额会破坏 FIFO 与报表勾稽 | [库存约束](../modules/inventory/database.md#数据约束和归属) |
+| inventory_batches.voided_at / voided_by / void_reason | 管理员或运营作废标记、操作者及原因；原数量保留，当前库存和新FIFO排除 | [库存作废](../modules/inventory/workflow.md#编辑与删除) |
 | total_amount、purchase_price、unit_cost：DECIMAL(12,4) | 分别为整批采购金额、采购单价、含整批费用分摊的单件成本；请求含总金额时优先据此计算采购价 | [库存流程](../modules/inventory/workflow.md#新建批次) |
 | SaleCostDetail.quantity / unit_cost：Integer / DECIMAL(12,4) | 已保存扣库数量和成本；是撤销及财务成本追溯依据，不用当前商品价格替换 | [销售流程](../modules/sales/workflow.md) |
 | sales.order_no / order_claim：String(64) | 前者允许组合多明细；后者只由新订单第一条占位且全局唯一，历史和后续明细为 NULL | [销售幂等](../modules/sales/database.md#店铺幂等和审计) |

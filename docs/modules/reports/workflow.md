@@ -1,5 +1,7 @@
 # 报表流程、公式与快照
 
+管理员或运营作废错误历史批次后，当前动态存货、准备计算和商品库存排除该批次原剩余数量；原销售与成本明细仍保留。单店损益对引用已作废批次的原销售月份将采购/物流/其他FIFO成本、存货跌价准备和销售转销跌价准备留空，相关利润随公式留空并给出待核对警示；产品线报告对应成本亦留空。未受影响的比较期间继续展示可确定的金额。旧内部月末快照及人工保存月度版本不覆盖，作废后的当前计算可与旧版比较并另存待核对新版。销售列表保留历史成本但标记needs_review，不能把它当作重新分配后的正确成本。依据：[reports.py](../../../routers/reports.py)、[accounting_periods.py](../../../services/accounting_periods.py)、[financial_versions.py](../../../services/financial_versions.py)。
+
 ## 截止日库存与跌价准备
 
 2026-10-15追加确认：入库当天0天，销售当天先计提再转销。现行07、09、10、12统一使用[持有期间回放](../../../services/inventory_provision_movements.py)，逐字段/公式见[字段说明](inventory-impairment-fields.md)，实施边界及验证见[变更记录](../../development/2026-10-15-holding-period-impairment.md)。

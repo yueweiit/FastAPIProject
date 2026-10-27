@@ -7,15 +7,18 @@
 | 搜索/分页 | loadBatches、searchBatches、renderBatchPage | list_batches | 批次、商品 |
 | 字段显示 | toggleBatchColumn、applyBatchColumnSelection | 无后端写入 | 浏览器列状态 |
 | 编辑/删除 | batchEditBlockedReason、openEditBatch、saveEditBatch、deleteBatch | _locked_batch、update_batch、delete_batch、ensure_batch_cost_editable | 原创建人、库存剩余数、成本调整当前读、InventoryBatch.edit_version |
+| 管理员/运营强制删除（作废） | voidBatch、switchBatchVoidFilter、renderBatchPage | void_batch、list_batches | voided_at/by/reason、BatchChangeLog(action=void)；原销售及快照保留 |
 | 已售数量/成本更正 | openEditBatch、saveEditBatch | [batch_edits.py](../../../services/batch_edits.py)的freeze_cost_basis/restate_costs；base_cost_components、post_cost_adjustment | cost_basis、调整头/分配/财务审计；保留原FIFO单价 |
 | 修改日志 | openBatchLogs、PageInteractions.batchLogs | _batch_change_values、list_batch_change_logs | BatchChangeLog；批次更新与日志同事务 |
 | 选择/导出 | downloadBatchExport、exportBatch、exportAllBatches | export_batches | 批次、商品、uploads 图片 |
 | FIFO 消耗 | 销售页面 | lock_fifo_batches、fifo_sell | sales、sale_cost_details |
 | 撤销恢复 | rollbackSalesImport | rollback_sales_import | 原批次、原成本明细 |
 
-来源：[templates/index.html](../../../templates/index.html)、[routers/batches.py](../../../routers/batches.py)、[routers/products.py](../../../routers/products.py)、[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/cost_layers.py](../../../services/cost_layers.py)。契约为 [schemas.py](../../../schemas.py) 的 BatchCreate/BatchUpdate/BatchResponse/BatchPageResponse。
+来源：[templates/index.html](../../../templates/index.html)、[routers/batches.py](../../../routers/batches.py)、[routers/products.py](../../../routers/products.py)、[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/cost_layers.py](../../../services/cost_layers.py)。契约为 [schemas.py](../../../schemas.py) 的 BatchCreate/BatchUpdate/BatchVoidRequest/BatchResponse/BatchPageResponse。
 
 相关测试为 [test_sales_rules.py](../../../tests/test_sales_rules.py)、[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py)；真实验证脚本 [mysql_fifo_concurrency.py](../../../tests/mysql_fifo_concurrency.py) 会写测试库，需要独立运行授权。历史批次字段/创建人转移脚本见 [migrations/](../../../migrations/)，不得默认执行。
+
+作废回归见[test_batch_void.py](../../../tests/test_batch_void.py)及[batch_edit_page_checks.cjs](../../../tests/batch_edit_page_checks.cjs)：权限、原因、版本、日志、销售外键、FIFO/商品库存、销售利润待核对、已作废导出及两份页面。SQLite验证不替代InnoDB并发/生产DDL验证。
 
 批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、删除限制、有效金额回填、数量下限、追溯模式、重复提交和错误保留；`node tests/batch_export_page_checks.cjs`覆盖选择/筛选导出、等待/失败提示、下载与会话切换；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
 

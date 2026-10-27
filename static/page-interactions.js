@@ -10,6 +10,14 @@
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
         batchExport: '导出', batchEdit: '编辑', batchDelete: '删除',
+        batchForceDelete: '强制删除', batchVoidConfirm: '作废批次', batchVoidReason: '作废原因',
+        batchVoided: '已作废', batchVoidedOnly: '查看已作废批次',
+        batchOriginalRemaining: '原剩余',
+        batchVoidWarning: '该批次已有 {sold} 件出库。作废后剩余库存不再参与销售及当前核算；原销售、成本明细和旧月度版本保留，受影响成本与利润待核对。请填写原因。',
+        batchVoidSaved: '批次已作废。关联销售保留，成本与利润待核对。',
+        batchVoidRefreshFailed: '批次已作废，但列表刷新失败，请点击刷新。',
+        batchVoidProfitPending: '批次已作废，利润待核对',
+        batchVoidMonthlyPending: '条销售引用已作废批次，利润待核对',
         batchExportSelectedLoading: '正在生成所选 {count} 条批次的文件，请稍候…',
         batchExportFilteredLoading: '正在生成当前筛选结果的文件，请稍候…',
         batchExportBusy: '已有批次导出正在进行，请等待当前文件生成。',
@@ -39,7 +47,8 @@
             total_amount: '采购总金额', unit_cost: '单件成本', dingtalk_order_no: '采购钉钉单号',
             shipping_cost: '头程运费', shipping_cost_no: '头程运费单号', last_mile_cost: '尾程派送费',
             last_mile_cost_no: '尾程派送费单号', other_cost: '其他成本', other_cost_no: '其他成本单号',
-            shipping_date: '头程发货时间', arrived_at: '入库时间'},
+            shipping_date: '头程发货时间', arrived_at: '入库时间',
+            voided_at: '作废时间（UTC）', voided_by: '作废人ID', void_reason: '作废原因'},
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 
@@ -95,14 +104,14 @@
         dialog.addEventListener('cancel', event => { event.preventDefault(); finish(null); });
         dialog.addEventListener('close', () => { if (!dialog.open) finish(null); });
     }
-    function request({title, message = '', reason = false, confirmLabel}) {
+    function request({title, message = '', reason = false, confirmLabel, reasonLabel}) {
         // 连点或另一个操作不会替换正在确认的目标。
         if (active) return Promise.resolve(null);
         initialize();
         dialog.querySelector('h3').textContent = title;
         dialog.querySelector('#page-action-message').textContent = message;
         dialog.querySelector('label').hidden = !reason;
-        dialog.querySelector('label span').textContent = text('reason');
+        dialog.querySelector('label span').textContent = reasonLabel || text('reason');
         const input = dialog.querySelector('textarea');
         input.value = '';
         input.required = reason;

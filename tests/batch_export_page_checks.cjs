@@ -33,7 +33,7 @@ function setup(file) {
     window: {}, URLSearchParams, URL: {createObjectURL: () => 'blob:batch', revokeObjectURL: url => revoked.push(url)},
     setTimeout: (callback, ms) => { timers.push({callback, ms}); },
     fetch: async (url, options) => { requests.push({url, options}); return {ok: true, status: 200, blob: async () => ({})}; },
-    authHeaders: () => ({'X-CSRF-Token': 'test'}),
+    authHeaders: () => ({'X-CSRF-Token': 'test'}), isAdmin: () => false, isOperator: () => true,
     updateBatchSelectionState: () => {},
     formatApiError: (detail, fallback) => detail || fallback,
     handleSessionExpired: () => vm.runInContext('resetBatchExportSession()', context),
@@ -95,6 +95,10 @@ async function verify(file) {
   await c.exportAllBatches();
   equal(new URLSearchParams(requests[2].url.split('?')[1]).get('keyword'), 'CW000214');
 
+  e('batch-voided-only').checked = true;
+  await c.exportAllBatches();
+  equal(new URLSearchParams(requests[3].url.split('?')[1]).get('voided_only'), 'true');
+
   const stale = deferred();
   c.fetch = () => stale.promise;
   const previous = c.exportBatch(118);
@@ -105,7 +109,7 @@ async function verify(file) {
   equal(vm.runInContext('selectedBatchIds.size', c), 0);
   stale.resolve({ok: true, status: 200, blob: async () => ({size: 100})});
   await previous;
-  equal(links.length, 2);
+  equal(links.length, 3);
   equal(e('batch-export-status').style.display, 'none');
 }
 

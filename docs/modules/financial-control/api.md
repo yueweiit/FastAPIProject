@@ -41,6 +41,8 @@ request_key为8–64位ASCII字母数字下划线/横线，客户端同一提交
 
 CostAdjustmentRequest另含source_ref、category（purchase/head_shipping/last_mile/other）、allocation_basis（quantity/weight/volume/value）、document_date、rate_date、allocations[{batch_id,weight?}]、is_final、note。ExpenseRequest另含store_id、expense_date、category、source_ref、settlement_entry_id?、note；ReceiptRequest另含store_id、payout_id、receipt_date、source_ref、note。FinanceReversalRequest为request_key、必填note；FinancialVersionRequest为request_key、store_id、report_month、note。
 
+作废批次不能预览或新增成本调整，返回409 `batch_voided`；已存在单据的相同request_key幂等重试与原单反向冲销仍可执行，历史调整行不删除。依据：[financial_controls.py](../../../services/financial_controls.py) 的 `prepare_cost_adjustment`、`post_cost_adjustment`、`reverse_cost_adjustment`。
+
 ## 既有接口的兼容字段
 
 批次响应unit_cost为追溯后成本，并增加base_unit_cost、cost_adjustment_per_unit、cost_status。销售total_cost/profit_cny/成本明细unit_cost包含调整，增加original_total_cost、cost_adjustment_cny、cost_status及明细base_unit_cost；持久化原字段不变。损益行增加input_source（默认manual），ledger行只读但manual_value仍返回原人工备选值。列表数组/分页形态不改变，旧字段保留。

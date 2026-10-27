@@ -16,7 +16,7 @@
 ## 日期和店铺
 
 - monthly：start_date、end_date，含结束日；非管理员销售按绑定店铺筛选，库存字段为当前全局库存，不是月末库存。
-- inventory-impairment、summary 及独立 export：report_date 必填、不得晚于 date.today，当前没有 store_id/店铺过滤；export 未传 view 保持原有批次导出，非法 view 框架校验422。
+- inventory-impairment、summary 及独立 export：report_date 必填、不得晚于 date.today，当前没有 store_id/店铺过滤；export 未传 view 保持原有批次导出，非法 view 框架校验422。动态结果排除已作废批次；已保存的旧快照和月度版本不覆盖，关联销售利润待核对。
 - store-profit-loss：report_month 必须当月第一天；store_id 可空，管理员默认首个有效店铺，非管理员固定绑定店铺且不能请求他店。
 - product-line-profit：report_month 必须第一天，report_date 省略则该月末；admin 无 store_id 汇总当前有效店铺，其余通过绑定/选定店铺范围。该入口未采用存货接口同样的未来截止日校验。
 - financial-attachments/export：report_date 必填不得晚于今天；report_month 可省略，默认截止日所在月份第一天；store_id 通过损益范围解析。

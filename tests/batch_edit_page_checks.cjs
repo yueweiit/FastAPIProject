@@ -22,15 +22,15 @@ function setup(file) {
     querySelectorAll: () => [], documentElement: {lang: 'zh-CN'}}, isAdmin: () => false, isOperator: () => true,
     escapeHtml: value => String(value).replaceAll('"', '&quot;'), showMsg: (...args) => messages.push(args),
     applyBatchColumnSelection: () => {}, renderPagination: () => {}, updateBatchSelectionState: () => {},
-    loadBatches: async () => {}, calcEditUnitCost: () => {}, resetSalesImportState: () => {},
-    resetBatchExportSession: () => {},
+    loadBatches: async () => {}, loadProducts: async () => {}, calcEditUnitCost: () => {}, resetSalesImportState: () => {},
+    resetBatchExportSession: () => {}, batchVoidBusy: false,
     resetProductImportPreview: () => {}, resetStoreProfitLossState: () => {},
     clearLegacyAuth: () => {}, showLogin: () => {}});
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
   vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,batchEditSessionEpoch=0,currentBatchList=[],CURRENT_USER_ID=7;' +
-    'let batchTotal=1,batchPage=1,batchPageSize=20,visibleBatchColumns=new Set(),selectedBatchIds=new Set();', c);
+    'let batchTotal=1,batchPage=1,batchPageSize=20,batchListRequestId=0,visibleBatchColumns=new Set(),selectedBatchIds=new Set();', c);
   for (const name of ['formatApiError', 'handleSessionExpired', 'batchEditBlockedReason', 'renderBatchPage',
-    'setBatchEditStatus', 'resetBatchEditSession', 'openEditBatch', 'closeEditBatch', 'saveEditBatch']) {
+    'setBatchEditStatus', 'resetBatchEditSession', 'openEditBatch', 'closeEditBatch', 'saveEditBatch', 'voidBatch']) {
     const source = html.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
     assert(source, name); vm.runInContext(source[0], c);
   }
@@ -52,6 +52,7 @@ async function verify(file) {
   setBatch({...fixture, user_id:9});c.renderBatchPage();
   ok(!e('batches-tbody').innerHTML.includes('disabled'));
   ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
+  ok(e('batches-tbody').innerHTML.includes('voidBatch(12)'));
   ok(e('batches-tbody').innerHTML.includes('openBatchLogs(12)'));
   await c.openEditBatch(12);equal(vm.runInContext('editingBatchId',c),12);c.closeEditBatch();
   for (const batch of [{...fixture, remaining_quantity: 0}, {...fixture, remaining_quantity: 12}]) {
@@ -69,6 +70,7 @@ async function verify(file) {
   c.isOperator = () => false; c.renderBatchPage();
   ok(!e('batches-tbody').innerHTML.includes('openEditBatch'));
   ok(!e('batches-tbody').innerHTML.includes('openBatchLogs'));
+  ok(!e('batches-tbody').innerHTML.includes('voidBatch'));
   ok(e('batches-tbody').innerHTML.includes('exportBatch'));
   await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
   c.isOperator = () => true; c.isAdmin = () => false; setBatch(fixture);
@@ -173,6 +175,31 @@ async function verify(file) {
   resolveCurrent(fixture); await currentSave;
   equal(e('edit-batch-modal').style.display, 'none');
   equal(messages.at(-1)[0], c.window.PageInteractions.text('batchEditSaved'));
+
+  c.isAdmin = () => false; c.isOperator = () => true;
+  setBatch({...fixture, remaining_quantity: 10}); c.renderBatchPage();
+  ok(e('batches-tbody').innerHTML.includes('voidBatch(12)'));
+  ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
+  setBatch({...fixture, voided_at: '2026-10-27T01:00:00'}); c.renderBatchPage();
+  ok(e('batches-tbody').innerHTML.includes('已作废'));
+  ok(!e('batches-tbody').innerHTML.includes('voidBatch(12)'));
+  ok(!e('batches-tbody').innerHTML.includes('openEditBatch(12)'));
+  setBatch({...fixture, remaining_quantity: 10});
+  let voidRequests = 0;
+  c.api = async (method, url, body) => { voidRequests++; equal([method, url], ['POST', '/batches/12/void']);
+    equal(body.edit_version, fixture.edit_version); equal(body.reason, '盘点重复');
+    return {...fixture, voided_at: '2026-10-27T01:00:00+00:00'}; };
+  c.window.PageInteractions.reason = async () => null;
+  await c.voidBatch(12); equal(voidRequests, 0);
+  c.window.PageInteractions.reason = async () => '盘点重复';
+  await c.voidBatch(12); equal(voidRequests, 1);
+  equal(messages.at(-1)[0], c.window.PageInteractions.text('batchVoidSaved'));
+  ok(!e('batches-tbody').innerHTML.includes('voidBatch(12)'));
+  setBatch({...fixture, remaining_quantity: 10});
+  c.loadBatches = async () => { throw new Error('refresh failed'); };
+  await c.voidBatch(12); equal(voidRequests, 2);
+  equal(messages.at(-1)[0], c.window.PageInteractions.text('batchVoidRefreshFailed'));
+  ok(!e('batches-tbody').innerHTML.includes('voidBatch(12)'));
 }
 (async () => {
   for (const file of ['templates/index.html', 'index.html']) await verify(file);

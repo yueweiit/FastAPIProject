@@ -1,6 +1,6 @@
 # 入库批次 API
 
-前缀 /batches，共6个端点。admin/operator可编辑任意创建人的历史批次（含已售），强制留痕；删除仍受原创建人、出库及成本来源约束。读取全局共享，修改日志仅admin/operator可读。
+前缀 /batches，共7个端点。admin/operator可编辑或作废任意创建人的历史批次（含已售），强制留痕；普通物理删除仍受原创建人、出库及成本来源约束。“强制删除”是保留关联的作废操作。活动批次共享读取，修改日志仅admin/operator可读。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
@@ -8,8 +8,9 @@
 | `PUT /batches/{batch_id}` | [update_batch](../../../routers/batches.py) | admin/operator | batch_id、BatchUpdate（含edit_version） | BatchResponse |
 | `GET /batches/{batch_id}/logs` | [list_batch_change_logs](../../../routers/batches.py) | admin/operator | page≥1、page_size 1–100（默认20） | BatchChangeLogPageResponse |
 | `DELETE /batches/{batch_id}` | [delete_batch](../../../routers/batches.py) | admin/operator | batch_id | ok |
-| `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、keyword、page、page_size | list[BatchResponse] \| BatchPageResponse |
-| `GET /batches/export` | [export_batches](../../../routers/batches.py) | admin/operator/viewer | batch_ids、product_id、keyword | Excel 文件 |
+| `POST /batches/{batch_id}/void` | [void_batch](../../../routers/batches.py) | admin/operator | BatchVoidRequest：edit_version、reason | BatchResponse |
+| `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、keyword、page、page_size、voided_only | list[BatchResponse] \| BatchPageResponse |
+| `GET /batches/export` | [export_batches](../../../routers/batches.py) | admin/operator/viewer | batch_ids、product_id、keyword、voided_only | Excel 文件 |
 
 ## BatchCreate 请求
 
@@ -33,17 +34,23 @@ PUT先锁批次和当前调整层、比对版本，再核对已售数量。缺�
 
 ## 查询和导出
 
+列表默认只返回活动批次；`voided_only=true`允许admin/operator查看已作废批次，viewer返回403。BatchResponse新增可空`voided_at`、`voided_by`、`void_reason`，旧客户端可忽略。admin/operator的`POST /batches/{batch_id}/void`可跨创建人提交`edit_version`和作废原因（去首尾空白后非空、最多1000字），在批次和成本来源行锁内校验当前版本，过期409（batch_edit_conflict）、重复作废409（batch_voided）；成功同事务追加action=void日志。作废保留原数量、销售成本明细和旧月度版本；已作废批次不能再次编辑或普通删除，不参与新FIFO及当前库存。关联销售的历史成本展示保留，利润待核对。
+
 GET 列表支持 product_id、keyword（名称/SKU/批次号，≤255）、page、page_size；分页约定见[接口总览](../../knowledge/api-overview.md)。
 
 GET 导出支持重复 batch_ids，或无 ID 时使用 product_id/keyword；有 ID 时以 ID 为准。示例：/batches/export?batch_ids=1&batch_ids=2。无可导出记录为404。
 
-Excel保留原21列及顺序，在末尾追加“店铺（创建人当前绑定）”。通过批次user_id关联User.store_id/Store.name一次性读取，创建人缺失或未绑定时显示“未关联店铺”；名称按文本写入，不执行为Excel公式。该列不是固化批次归属，不改变共享读取/FIFO扣库范围，也不新增数据库字段。
+导出默认只包括活动批次。admin/operator可用`voided_only=true`或显式ID导出已作废批次；viewer传该参数返回403，按ID读取已作废批次被过滤。原21列顺序不变，在末尾店铺列后追加“作废时间（UTC）”“作废原因”；店铺名与原因强制按Excel文本写入。已作废行的“剩余数”为历史原值，不是当前可售库存。
+
+Excel保留原21列及顺序，在末尾先追加“店铺（创建人当前绑定）”，再追加作废时间和原因。通过批次user_id关联User.store_id/Store.name一次性读取，创建人缺失或未绑定时显示“未关联店铺”；名称按文本写入，不执行为Excel公式。店铺列不是固化批次归属，不改变共享读取/FIFO扣库范围。
 
 商品或待修改批次不存在404，viewer写入/读日志及operator删除他人批次403。删除已出库批次400、已有成本来源409；编辑错误码见上方。响应契约见[schemas.py](../../../schemas.py)，实现见[batches.py](../../../routers/batches.py)。
 
 ## 修改日志
 
-日志查询固定返回 `{items,total,page,page_size}`，按日志ID倒序，超过末页调整页码。items包含id、batch_id、batch_no、action（update）、actor_id、actor_username、actor_role、before_values、after_values、created_at（UTC偏移明确的ISO时间）；快照金额为精确字符串。没有记录时返回空页，批次删除后仍能按原ID读取保留日志；viewer返回403。没有日志更新/删除API。
+action除update外新增void。void的after_values包含作废时间、操作者ID和原因；日志不随批次状态改变而删除。
+
+日志查询固定返回 `{items,total,page,page_size}`，按日志ID倒序，超过末页调整页码。items包含id、batch_id、batch_no、action（update或void）、actor_id、actor_username、actor_role、before_values、after_values、created_at（UTC偏移明确的ISO时间）；快照金额为精确字符串。没有记录时返回空页，批次删除后仍能按原ID读取保留日志；viewer返回403。没有日志更新/删除API。
 
 ## 成本响应扩展
 

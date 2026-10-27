@@ -12,7 +12,7 @@
 | `product_id` | `Integer` | 否 | 本地商品关联 | 索引；ForeignKey('products.id') |
 | `batch_no` | `String(64)` | 否 | 批次编号 | 唯一 |
 | `quantity` | `Integer` | 否 | 数量；业务含义见本表说明 | — |
-| `remaining_quantity` | `Integer` | 否 | 当前剩余可用数量 | — |
+| `remaining_quantity` | `Integer` | 否 | 活动批次的当前余量；作废后保留作废前历史余量，不代表可售数量 | — |
 | `unit_cost` | `DECIMAL(12, 4)` | 否 | 原FIFO基准单价；有效成本另叠加调整层 | — |
 | `purchase_price` | `DECIMAL(12, 4)` | 否 | 采购单价 | — |
 | `dingtalk_order_no` | `String(64)` | 是 | 采购钉钉单号 | — |
@@ -27,6 +27,9 @@
 | `shipping_date` | `DateTime` | 是 | 发货时间 | — |
 | `arrived_at` | `DateTime` | 否 | 到货时间 | — |
 | `created_at` | `DateTime` | 否 | 创建时间 | 数据库默认：func.now() |
+| `voided_at` | `DateTime` | 是 | 管理员或运营作废时间，UTC无时区值；非空则不计可用库存 | 默认NULL |
+| `voided_by` | `Integer` | 是 | 作废操作者ID快照 | 默认NULL，不设级联外键 |
+| `void_reason` | `String(1000)` | 是 | 作废原因 | 默认NULL |
 | `cost_basis` | `JSON` | 是 | 首次成本重述冻结的原quantity、unit_cost、四科目单位成本components | 默认空；仅服务端写入，后续不覆盖 |
 
 复合唯一约束与索引（ORM 声明）：
@@ -38,6 +41,8 @@
 ## 数据约束和归属
 
 quantity为当前更正后的入库数量，remaining_quantity为当前余量；更正保留quantity−remaining_quantity及实际出库明细一致。cost_basis.quantity保留冻结时的原分摊依据，不随更正变化。数据库没有统一非负CHECK，路由/FIFO/撤销事务共同保证一致性。batch_no唯一。
+
+作废不清零remaining_quantity，也不删除SaleCostDetail、InventoryPeriodSnapshot或InventoryCostAdjustmentLine；这些字段保留原始追溯值。当前可售库存及动态存货计算必须过滤voided_at非空的批次，避免把原余量重新出售。既有快照/月度版本保持不变。三列为可空加法迁移，历史批次默认活动；离线DDL见[add_batch_void_fields.py](../../../migrations/add_batch_void_fields.py)，兼容补列见[migrate.py](../../../migrate.py)。
 
 user_id保存创建人，可为空；没有store_id、仓库ID、关税独立列。total_amount用于计算purchase_price；成本单号不参与计算。已售成本重述的原构成由cost_basis独立冻结，不再按最近目标金额重新分配旧FIFO成本。
 
@@ -54,7 +59,7 @@ InventoryBatch.edit_version是原持久化字段的基础摘要；AdjustedBatch�
 | id | Integer | 否 | 自增主键 |
 | batch_id | Integer | 否 | 原批次ID，故意不设级联外键 |
 | batch_no | String(64) | 否 | 当时批次编号快照 |
-| action | String(16) | 否 | 稳定操作码，当前为update |
+| action | String(16) | 否 | 稳定操作码：update或void |
 | actor_id | Integer | 否 | 操作者ID快照，无用户删除级联 |
 | actor_username | String(64) | 否 | 当时用户名 |
 | actor_role | String(16) | 否 | 当时角色编码 |

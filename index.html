@@ -496,6 +496,7 @@
                     <button type="button" class="btn btn-primary" onclick="searchBatches()">搜索</button>
                     <button type="button" class="btn btn-secondary" onclick="clearBatchSearch()">清空</button>
                 </div>
+                <label id="batch-voided-filter-label" style="display:none;align-self:end"><input id="batch-voided-only" type="checkbox" onchange="switchBatchVoidFilter()"> <span id="batch-voided-filter-text"></span></label>
             </div>
             <p id="batch-edit-help"></p>
             <div class="table-scroll" id="batches-table-scroll">
@@ -1745,6 +1746,8 @@ let currentBatchList = [];
 const selectedBatchIds = new Set();
 let batchExportBusy = false;
 let batchExportSessionEpoch = 0;
+let batchVoidBusy = false;
+let batchListRequestId = 0;
 let batchPage = 1;
 let batchPageSize = 20;
 let batchTotal = 0;
@@ -1823,8 +1826,10 @@ function renderBatchPage() {
         const b = {...rawBatch, ...(rawBatch.edit_values || {})};
         const p = b._product || {};
         const editReason = batchEditBlockedReason(b);
-        const canDelete = isOperator() && b.remaining_quantity === b.quantity && (isAdmin() || Number(b.user_id) === CURRENT_USER_ID);
+        const canDelete = !b.voided_at && isOperator() && b.remaining_quantity === b.quantity && (isAdmin() || Number(b.user_id) === CURRENT_USER_ID);
+        const canVoid = isOperator() && !b.voided_at;
         const text = window.PageInteractions.text;
+        const remainingDisplay = b.voided_at ? `0 (${text('batchOriginalRemaining')} ${b.remaining_quantity})` : b.remaining_quantity;
         return `<tr>
             <td><input type="checkbox" data-batch-select="${b.id}" ${selectedBatchIds.has(Number(b.id)) ? 'checked' : ''} onchange="toggleBatchSelection(${b.id}, this.checked)" aria-label="选择批次 ${b.batch_no}"></td>
             <td data-batch-column="image">${p.image ? `<img src="${p.image}" style="height:36px;border-radius:4px">` : '-'}</td>
@@ -1833,7 +1838,7 @@ function renderBatchPage() {
             <td data-batch-column="batch_no"><strong>${b.batch_no}</strong></td>
             <td data-batch-column="dingtalk_order_no">${b.dingtalk_order_no || '-'}</td>
             <td data-batch-column="quantity">${b.quantity}</td>
-            <td data-batch-column="remaining_quantity">${b.remaining_quantity} <span class="tag ${b.remaining_quantity > 0 ? 'tag-green' : 'tag-red'}">${b.remaining_quantity > 0 ? '有库存' : '已售罄'}</span></td>
+            <td data-batch-column="remaining_quantity">${remainingDisplay} <span class="tag ${b.voided_at ? 'tag-red' : b.remaining_quantity > 0 ? 'tag-green' : 'tag-red'}">${b.voided_at ? text('batchVoided') : b.remaining_quantity > 0 ? '有库存' : '已售罄'}</span></td>
             <td data-batch-column="purchase_price">¥${b.purchase_price}</td>
             <td data-batch-column="total_amount">${b.total_amount == null ? '-' : `¥${b.total_amount}`}</td>
             <td data-batch-column="shipping_cost">¥${b.shipping_cost}</td>
@@ -1847,9 +1852,10 @@ function renderBatchPage() {
             <td data-batch-column="arrived_at">${b.arrived_at?.slice(0,16) || '-'}</td>
             <td data-batch-column="actions"><div class="batch-row-actions">
                 <button class="btn btn-secondary" onclick="exportBatch(${b.id})" title="${text('batchExport')}">${text('batchExport')}</button>
-                ${isOperator() ? `<span title="${escapeHtml(editReason || text('batchEdit'))}" ${editReason ? 'tabindex="0"' : ''}><button class="btn btn-secondary" onclick="openEditBatch(${b.id})" ${editReason ? 'disabled' : ''}>✏️ ${text('batchEdit')}</button></span>` : ''}
+                ${isOperator() && !b.voided_at ? `<span title="${escapeHtml(editReason || text('batchEdit'))}" ${editReason ? 'tabindex="0"' : ''}><button class="btn btn-secondary" onclick="openEditBatch(${b.id})" ${editReason ? 'disabled' : ''}>✏️ ${text('batchEdit')}</button></span>` : ''}
                 ${isOperator() ? `<button class="btn btn-secondary" onclick="openBatchLogs(${b.id})">${text('batchLogs')}</button>` : ''}
                 ${canDelete ? `<button class="btn btn-secondary" style="color:#e94560" onclick="deleteBatch(${b.id})" title="${text('batchDelete')}" aria-label="${text('batchDelete')}">🗑</button>` : ''}
+                ${canVoid ? `<button class="btn btn-secondary" style="color:#e94560" onclick="voidBatch(${b.id})" title="${text('batchForceDelete')}" aria-label="${text('batchForceDelete')}" ${batchVoidBusy ? 'disabled' : ''}>${text('batchForceDelete')}</button>` : ''}
             </div>
             </td>
         </tr>`;
@@ -1866,6 +1872,12 @@ function clearBatchSearch() {
     searchBatches();
 }
 
+function switchBatchVoidFilter() {
+    selectedBatchIds.clear();
+    batchPage = 1;
+    loadBatches();
+}
+
 document.addEventListener('click', event => {
     const picker = document.getElementById('batch-field-picker');
     if (picker && !picker.contains(event.target)) {
@@ -1875,14 +1887,22 @@ document.addEventListener('click', event => {
 });
 
 async function loadBatches() {
+    const requestId = ++batchListRequestId;
+    const sessionEpoch = batchEditSessionEpoch;
     document.getElementById('batch-edit-help').textContent = window.PageInteractions.text('batchEditHelp');
+    document.getElementById('batch-voided-filter-label').style.display = isOperator() ? '' : 'none';
+    document.getElementById('batch-voided-filter-text').textContent = window.PageInteractions.text('batchVoidedOnly');
+    if (!isOperator()) document.getElementById('batch-voided-only').checked = false;
     document.querySelector('#sec-batches .card:first-child').style.display = isOperator() ? '' : 'none';
     document.getElementById('edit-batch-modal').style.display = 'none';
     await loadBatchSkuOptions();
+    if (requestId !== batchListRequestId || sessionEpoch !== batchEditSessionEpoch) return;
     const keyword = document.getElementById('batch-keyword')?.value.trim();
     const query = new URLSearchParams({page: batchPage, page_size: batchPageSize});
     if (keyword) query.set('keyword', keyword);
+    if (isOperator() && document.getElementById('batch-voided-only').checked) query.set('voided_only', 'true');
     const result = await api('GET', `/batches?${query}`);
+    if (requestId !== batchListRequestId || sessionEpoch !== batchEditSessionEpoch) return;
     const batchList = result.items;
     batchPage = result.page;
     batchPageSize = result.page_size;
@@ -1918,7 +1938,9 @@ function setBatchEditStatus(message, error = true) {
 
 function resetBatchEditSession() {
     batchEditSessionEpoch++;
+    batchListRequestId++;
     batchEditSaving = false;
+    batchVoidBusy = false;
     closeEditBatch();
     document.getElementById('eb-save').disabled = false;
 }
@@ -2048,6 +2070,39 @@ async function deleteBatch(id) {
     } catch (e) { showMsg(e.message, false); }
 }
 
+async function voidBatch(id) {
+    if (!isOperator() || batchVoidBusy) return;
+    const batch = currentBatchList.find(item => Number(item.id) === Number(id));
+    if (!batch || batch.voided_at || !batch.edit_version) return;
+    const text = window.PageInteractions.text;
+    const epoch = batchEditSessionEpoch;
+    const reason = await window.PageInteractions.reason({
+        title: `${text('batchForceDelete')} · ${batch.batch_no}`,
+        message: text('batchVoidWarning').replace('{sold}', Number(batch.quantity) - Number(batch.remaining_quantity)),
+        confirmLabel: text('batchVoidConfirm'),
+        reasonLabel: text('batchVoidReason'),
+    });
+    if (!reason || epoch !== batchEditSessionEpoch) return;
+    batchVoidBusy = true;
+    renderBatchPage();
+    try {
+        const saved = await api('POST', `/batches/${id}/void`, {edit_version: batch.edit_version, reason});
+        if (epoch !== batchEditSessionEpoch) return;
+        batch.voided_at = saved.voided_at;
+        showMsg(text('batchVoidSaved'));
+        selectedBatchIds.delete(Number(id));
+        try { await Promise.all([loadBatches(), loadProducts()]); }
+        catch { showMsg(text('batchVoidRefreshFailed'), false); }
+    } catch (error) {
+        if (epoch === batchEditSessionEpoch) showMsg(error.message, false);
+    } finally {
+        if (epoch === batchEditSessionEpoch) {
+            batchVoidBusy = false;
+            renderBatchPage();
+        }
+    }
+}
+
 function setBatchExportStatus(message, isError = false) {
     const status = document.getElementById('batch-export-status');
     status.textContent = message;
@@ -2130,6 +2185,7 @@ function exportAllBatches() {
     const keyword = document.getElementById('batch-keyword')?.value.trim();
     const params = new URLSearchParams();
     if (keyword) params.set('keyword', keyword);
+    if (isOperator() && document.getElementById('batch-voided-only').checked) params.set('voided_only', 'true');
     return downloadBatchExport([], params);
 }
 
@@ -2334,7 +2390,7 @@ async function loadSales() {
         totalSummary.innerHTML = '<tr><td colspan="4">本页合计</td><td>0</td><td></td><td></td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td></tr>';
         renderPagination('sales-pagination', 1, 1, 0, salesPageSize);
     } else {
-        const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true};
+        const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true, costReviewCount: 0};
         tbody.innerHTML = list.map(s => {
             const p = productMap[s.product_id] || {};
             const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${Number(d.unit_cost).toFixed(2)}`).join('；') || '无批次明细';
@@ -2349,19 +2405,21 @@ async function loadSales() {
             const revenueCny = s.sales_revenue_cny == null ? null : Number(s.sales_revenue_cny);
             const platformFeeCny = s.platform_fee_cny == null ? null : Number(s.platform_fee_cny);
             const grossProfitCny = s.profit_cny == null ? null : Number(s.profit_cny);
+            const costNeedsReview = s.cost_status === 'needs_review';
             const fxReady = [sellingPriceCny, revenueCny, platformFeeCny, grossProfitCny].every(value => value !== null);
             const fxTitle = currency === 'CNY'
                 ? '人民币原始金额'
                 : `原币 ${currency} ${originalPrice.toFixed(2)}；汇率 ${rate ?? '-'}；汇率日期 ${s.exchange_rate_date || '-'}；来源 ${s.exchange_rate_source || '-'}`;
             totals.quantity += quantity;
             totals.cost += totalCost;
+            if (costNeedsReview) totals.costReviewCount++;
             if (!fxReady) totals.fxReady = false;
             else {
                 totals.revenue += revenueCny;
                 totals.platformFee += platformFeeCny;
                 totals.grossProfit += grossProfitCny;
             }
-            const money = value => value === null ? '汇率缺失' : `¥${value.toFixed(2)}`;
+            const money = (value, pending = '汇率缺失') => value === null ? pending : `¥${value.toFixed(2)}`;
             return `<tr>
                 <td class="${s.store_name ? '' : 'unlinked-store'}">${escapeHtml(s.store_name || '未关联店铺')}</td>
                 <td>${dateStr}</td>
@@ -2373,10 +2431,10 @@ async function loadSales() {
                 <td class="${fxReady ? '' : 'fx-missing'}">${money(revenueCny)}</td>
                 <td>¥${totalCost.toFixed(2)}</td>
                 <td class="${fxReady ? '' : 'fx-missing'}">${money(platformFeeCny)}</td>
-                <td class="${fxReady ? '' : 'fx-missing'}">${money(grossProfitCny)}</td>
+                <td class="${fxReady ? '' : 'fx-missing'}" title="${escapeHtml(s.cost_review_reason || '')}">${money(grossProfitCny, costNeedsReview ? window.PageInteractions.text('batchVoidProfitPending') : '汇率缺失')}</td>
             </tr>`;
         }).join('');
-        const totalMoney = value => totals.fxReady ? `¥${value.toFixed(2)}` : '存在汇率缺失';
+        const totalMoney = value => totals.fxReady ? `¥${value.toFixed(2)}` : totals.costReviewCount ? window.PageInteractions.text('batchVoidProfitPending') : '存在汇率缺失';
         totalSummary.innerHTML = `<tr>
             <td colspan="4">本页合计</td>
             <td>${totals.quantity.toLocaleString('zh-CN')}</td>
@@ -2399,8 +2457,9 @@ function renderMonthlySalesSummary(summary) {
         note.textContent = salesMonth ? `${salesMonth} · 金额均为人民币` : '金额均为人民币';
         return;
     }
-    const money = value => value == null ? '汇率缺失' : `¥${Number(value).toFixed(2)}`;
+    const money = (value, pending = '汇率缺失') => value == null ? pending : `¥${Number(value).toFixed(2)}`;
     const missing = summary.reduce((count, item) => count + Number(item.fx_missing_count || 0), 0);
+    const costReview = summary.reduce((count, item) => count + Number(item.cost_review_count || 0), 0);
     tbody.innerHTML = summary.map(item => `<tr>
         <td><strong>${escapeHtml(item.month)}</strong></td>
         <td>${Number(item.sales_count).toLocaleString('zh-CN')}</td>
@@ -2408,9 +2467,9 @@ function renderMonthlySalesSummary(summary) {
         <td class="${item.sales_revenue_cny == null ? 'fx-missing' : ''}">${money(item.sales_revenue_cny)}</td>
         <td>¥${Number(item.sales_cost_cny || 0).toFixed(2)}</td>
         <td class="${item.platform_fee_cny == null ? 'fx-missing' : ''}">${money(item.platform_fee_cny)}</td>
-        <td class="${item.gross_profit_cny == null ? 'fx-missing' : ''}">${money(item.gross_profit_cny)}</td>
+        <td class="${item.gross_profit_cny == null ? 'fx-missing' : ''}">${money(item.gross_profit_cny, item.cost_review_count ? window.PageInteractions.text('batchVoidProfitPending') : '汇率缺失')}</td>
     </tr>`).join('');
-    note.textContent = `${salesMonth || '全部月份'} · 金额均为人民币${missing ? ` · ${missing} 条记录汇率缺失` : ''}`;
+    note.textContent = `${salesMonth || '全部月份'} · 金额均为人民币${missing ? ` · ${missing} 条记录汇率缺失` : ''}${costReview ? ` · ${costReview} ${window.PageInteractions.text('batchVoidMonthlyPending')}` : ''}`;
 }
 
 function refreshSalesWorkspace() {

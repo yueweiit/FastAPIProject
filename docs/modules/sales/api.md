@@ -16,6 +16,8 @@
 
 ## 手工销售与查询
 
+已作废批次的原销售仍出现在列表与详情，cost_details和total_cost保留原始追溯金额；SaleResponse.cost_status=`needs_review`、cost_review_reason列出批次号，profit_cny留空。monthly-summary新增cost_review_count，受影响月份保留原销售成本展示但gross_profit_cny留空；不能将显示的历史成本当作已核准金额。原Sale.profit、成本明细和旧月度版本均不改写。依据：[sale_cost_context](../../../services/cost_layers.py)、[sales.py](../../../routers/sales.py)。
+
 SaleCreate：product_id、order_no、quantity>0；store_id 可在模型层为空，但路由要求有效店铺，非管理员使用绑定店铺。selling_price/platform_fee 默认0且≥0，sold_at 可省略。订单号最大64、strip 后不能为空，前置查询已存在订单号返回400，并发占位/数据完整性冲突返回409且回滚；截至销售日可用库存不足返回400。到货日按自然日比较，不能使用销售日之后的批次。order_claim仅为数据库内部字段，不增加请求或响应字段。
 
 GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM；列表还支持 page/page_size。monthly-summary 按全部筛选结果汇总，不只是当前页，返回数量、人民币收入/成本/费用/毛利、fx_missing_count及新增settlement_event_count。未关联出库的退款/调整/赔付事件纳入金额，不增加销售单数或数量；同事件只计一次。
