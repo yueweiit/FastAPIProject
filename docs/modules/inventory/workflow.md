@@ -25,6 +25,8 @@ stateDiagram-v2
 
 admin/operator“强制删除”采用软作废，两者均可跨创建人操作，不删除有销售/快照/成本补差外键的原批次。页面必须填写作废原因并提交打开时的edit_version；服务端先按既有顺序锁批次和成本调整来源，比对版本，再同事务写voided_at（UTC）、voided_by、void_reason与action=void的BatchChangeLog。作废字段先落库并刷新，日志和响应使用数据库实际保存的时间精度及版本。重复作废409，viewer无权提交。作废后的原quantity/remaining_quantity保持历史值；默认批次列表不显示，admin/operator可用“查看已作废批次”读取、导出和查看日志，页面当前剩余显示0并注明原值。原销售、成本明细、财务来源及旧月度版本不删除，入库编号不复用。新增FIFO排除作废批次；商品当前库存与动态存货报表排除原剩余数；引用作废批次的销售保留原成本展示，状态为needs_review，利润及原销售期间的FIFO成本、跌价准备和销售转销留空并提示待核对。产品线成本同样留空。保存的旧快照及旧月度版本不覆盖；新报表应复核后另存版本。实现见[batches.py](../../../routers/batches.py)、[fifo.py](../../../services/fifo.py)、[reports.py](../../../routers/reports.py)。
 
+存货跌价费用的待核对范围还包括原归属店铺的历史持有月份，即使当月没有销售也不能因排除批次而填0；售完/作废后的新月份及无关比较期间不扩大置空。期间、时区及数量边界统一见[报表流程](../reports/workflow.md)。
+
 页面已移除普通删除按钮及deleteBatch函数；未出库、部分出库和售完批次统一通过强制删除软作废。旧DELETE /batches/{id}保留为deprecated兼容入口，通过角色校验后返回410 batch_delete_retired，不删记录、不自动作废；旧客户端须刷新并通过作废接口显式填写原因和当前版本。
 
 _locked_batch 使用 FOR UPDATE 和 populate_existing，等待在途销售完成后读取最新数量。admin/operator 可编辑任意创建人的活动历史批次，包括部分出库和售完批次。编辑不更新 user_id、product_id 或 batch_no，未传单号仍保留相应字段。

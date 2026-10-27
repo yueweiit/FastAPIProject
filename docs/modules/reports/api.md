@@ -23,6 +23,8 @@
 
 日期参数来自 Query/Pydantic，实际业务规则见 [reports.py](../../../routers/reports.py)。没有独立 public accounting-period 路由。
 
+损益中的已作废批次待核对范围包括原销售期间及原归属店铺的历史持有期间。即使当月没有销售，持有期间的`inventory_impairment`和衍生利润仍返回null，并在warnings中说明，不能按0确认费用；本月、上月、年累计分别判断，区间与时区边界见[报表流程](workflow.md)。接口字段及旧版本payload保持兼容，本次不回填历史金额。
+
 ## 存货明细金额契约
 
 `GET /reports/inventory-impairment` 保留已有字段及四个入库/出库追溯字段；算法依据见[流程](workflow.md)，完整24个响应字段（23个显示列及comparison_note）的血缘见[逐字段说明](inventory-impairment-fields.md#页面23列完整对照)：

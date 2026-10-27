@@ -1,11 +1,12 @@
 from collections import defaultdict
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from io import BytesIO
 from typing import Literal
 from types import SimpleNamespace
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -1591,9 +1592,41 @@ async def _sale_provision_adjustments(db, as_of: date) -> dict:
     return result
 
 
+async def _voided_inventory_holding_counts(db, store_id: int, periods: dict) -> dict[str, int]:
+    """已作废来源不能作为0费用；按保存数量及流水圈定需复核的持有期间。"""
+    cutoff = datetime.combine(max(end for _start, end in periods.values()), time.min)
+    rows = (await db.execute(
+        select(InventoryBatch.id, InventoryBatch.arrived_at, InventoryBatch.voided_at,
+               InventoryBatch.quantity, func.coalesce(func.sum(SaleCostDetail.quantity), 0),
+               func.max(Sale.sold_at))
+        .join(User, User.id == InventoryBatch.user_id)
+        .outerjoin(SaleCostDetail, SaleCostDetail.batch_id == InventoryBatch.id)
+        .outerjoin(Sale, Sale.id == SaleCostDetail.sale_id)
+        .where(InventoryBatch.voided_at.is_not(None), InventoryBatch.arrived_at < cutoff,
+               User.store_id == store_id)
+        .group_by(InventoryBatch.id, InventoryBatch.arrived_at, InventoryBatch.voided_at,
+                  InventoryBatch.quantity)
+    )).all()
+    counts = {period: 0 for period in periods}
+    business_timezone = ZoneInfo("Asia/Shanghai")
+    for _batch_id, arrived_at, voided_at, quantity, sold_quantity, last_sold_at in rows:
+        # 入库当天0天；作废日沿用现有月度核算时区，不能直接截UTC日期。
+        held_start = arrived_at.date() + timedelta(days=1)
+        held_end = voided_at.replace(tzinfo=timezone.utc).astimezone(
+            business_timezone).date() + timedelta(days=1)
+        # 售完后的新月份没有该批次持有费用；部分出库或无销售持续到作废日。
+        if sold_quantity >= quantity and last_sold_at is not None:
+            held_end = min(held_end, last_sold_at.date() + timedelta(days=1))
+        for period, (start, end) in periods.items():
+            if max(start, held_start) < min(end, held_end):
+                counts[period] += 1
+    return counts
+
+
 async def _store_provision_financial_values(db, store_id: int, periods: dict) -> dict:
     as_of = max(end for _start, end in periods.values()) - timedelta(days=1)
     batch_rows, _sale_rows, replay = await _load_inventory_provision_data(db, as_of)
+    voided_holdings = await _voided_inventory_holding_counts(db, store_id, periods)
     batch_info = {row[0].id: (row[0].unit_cost, row[6]) for row in batch_rows}
     result = {"inventory_impairment": {}, "inventory_writeoff": {}, "_warnings": []}
     labels = {"current": "本月", "previous": "上月", "ytd": "本年累计"}
@@ -1621,6 +1654,11 @@ async def _store_provision_financial_values(db, store_id: int, periods: dict) ->
         result["inventory_writeoff"][period] = transferred
         if accrued is None or transferred is None:
             result["_warnings"].append(f"{labels[period]}存在历史流水异常或跨店/缺失店铺归属，跌价相关金额及受影响利润待核对，未以0代替。")
+        if voided_holdings[period]:
+            result["inventory_impairment"][period] = None
+            result["_warnings"].append(
+                f"{labels[period]}有{voided_holdings[period]}个已作废批次的历史持有期间待核对，"
+                "存货跌价准备及受影响利润留空，未以0代替。")
     return result
 
 

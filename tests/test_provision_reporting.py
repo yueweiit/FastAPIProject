@@ -46,7 +46,7 @@ def fixture(*, owner=7, sale_store=7, invalid=False, second_owner=None,
         rules = [SimpleNamespace(product_id=10, product_type="stable", safe_stock_quantity=100,
                                  effective_date=date(2026, 8, 1))]
         sales = []
-    return SimpleNamespace(execute=AsyncMock(side_effect=[result(batches), result(rules), result(sales)]),
+    return SimpleNamespace(execute=AsyncMock(side_effect=[result(batches), result(rules), result(sales), result([])]),
                            commit=AsyncMock(), info={})
 
 
@@ -139,12 +139,12 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
         adjustments = await _sale_provision_adjustments(db, REPORT)
         self.assertEqual(adjustments[1], (Decimal(5), ""))
         self.assertEqual(adjustments[2], (Decimal(30), ""))
-        self.assertEqual(db.execute.await_count, 3)
+        self.assertEqual(db.execute.await_count, 4)
 
     async def test_later_safety_rule_preserves_other_store_previous_month_amounts(self):
         def data():
             db = fixture(owner=8, sale_store=8, invalid=True)
-            batches, rules, sales = [item.all() for item in db.execute.side_effect]
+            batches, rules, sales, _voided = [item.all() for item in db.execute.side_effect]
             first = batches[0]
             batches[0] = (*first[:4], "stable", 50, first[6])
             batches.append((SimpleNamespace(id=2, product_id=10, quantity=100, unit_cost=Decimal(10),
@@ -152,7 +152,7 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
                             "SKU-1", "测试物料", "店铺A", "stable", 50, 7))
             rules.append(SimpleNamespace(product_id=10, product_type="stable", safe_stock_quantity=50,
                                          effective_date=date(2026, 10, 1)))
-            return SimpleNamespace(execute=AsyncMock(side_effect=[result(batches), result(rules), result(sales)]),
+            return SimpleNamespace(execute=AsyncMock(side_effect=[result(batches), result(rules), result(sales), result([])]),
                                    commit=AsyncMock(), info={})
 
         september_db, october_db = data(), data()

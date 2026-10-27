@@ -10,6 +10,7 @@
 | 月度销量/当前库存 | 当前主要报表导航未发现独立月度页，保留 API | monthly_report | 销售、商品、当前全局库存 |
 | 月末快照 | 无人工页面/公开 API | main.lifespan、_monthly_snapshot_worker、ensure_period_snapshot、create_period_snapshot | accounting_periods、inventory_period_snapshots |
 | 持有期间计提/转销 | 07/09/10/12共用 | _load_inventory_provision_data → replay_inventory_provisions | 批次、逐笔FIFO、规则历史、日内先计提后转销 |
+| 作废批次历史持有费用待核对 | 店铺损益/API及财务附件 | _voided_inventory_holding_counts、_store_provision_financial_values | 作废时间、创建人当前店铺、入库数量/日期、累计出库数量及最后销售日；受影响费用留空 |
 | 独立结算/人工期间 | 销售月度、损益/产品线/附件 | unlinked_settlement_events、manual_period_values、derive_manual_periods | services/financial_facts.py；结算、分摊、人工月记录 |
 | 原静态准备余额 | 自动快照及历史辅助 | batch_impairments | 不替代当前持有期间变动服务 |
 | OA 自动费用 | 损益自动项/默认薪资 | office_space_totals_by_application_date、china_salary_totals_by_store_and_application_date、shared_admin_totals_by_application_date | 外部 PostgreSQL |
@@ -25,7 +26,7 @@
 | 入库/出库成本、跨批次汇总、售完余额0、Excel公式缓存、两种导出和财务范围 | [test_inventory_cost_summary.py](../../../tests/test_inventory_cost_summary.py) |
 | 两份页面脚本语法及真实渲染函数的新增字段、未知合计、120/480和转义（DOM模拟） | [inventory_page_checks.cjs](../../../tests/inventory_page_checks.cjs)，`node tests/inventory_page_checks.cjs` |
 | 快照仅一次与无公开会计接口 | [test_accounting_period_snapshots.py](../../../tests/test_accounting_period_snapshots.py)、[test_accounting_period_removal.py](../../../tests/test_accounting_period_removal.py) |
-| 损益公式、入库其他成本、OA默认/人工覆盖 | [test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)；产品线成本见[test_provision_reporting.py](../../../tests/test_provision_reporting.py) |
+| 损益公式、入库其他成本、OA默认/人工覆盖、作废前持有费用待核对 | [test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)：VoidedHoldingPeriodTests使用隔离SQLite，覆盖销售前月份、无销售、部分/完全售完、跨年月/UTC日期边界及店铺；产品线成本见[test_provision_reporting.py](../../../tests/test_provision_reporting.py) |
 | 损益加载/保存竞态、条件切换和会话失效（两份页面DOM模拟） | [profit_loss_page_checks.cjs](../../../tests/profit_loss_page_checks.cjs)，`node tests/profit_loss_page_checks.cjs` |
 | OA 过滤、部门和申请日期 | [test_oa_office_expenses.py](../../../tests/test_oa_office_expenses.py) |
 | 财务附件、汇总、产品线分摊与歧义 | [test_financial_attachments_export.py](../../../tests/test_financial_attachments_export.py) |

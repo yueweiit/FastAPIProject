@@ -25,6 +25,8 @@
 
 管理员或运营“强制删除”历史批次使用软作废；两者均可跨创建人作废共享批次。模型增加`inventory_batches.voided_at DATETIME NULL`、`voided_by INT NULL`、`void_reason VARCHAR(1000) NULL`。已售、成本补差和快照记录仍引用原批次，不做物理级联删除；原数量/剩余数量保留供审计，但FIFO、商品当前库存和动态存货不再计入它。原销售人民币利润、月度毛利以及原销售期间损益中的FIFO成本、存货跌价准备、销售转销改为待核对/留空，旧月度版本不覆盖。作废需管理员或运营角色、非空原因和当前edit_version，行锁内同事务写批次与action=void日志；批次字段落库并刷新后才生成日志及响应，确保时间和版本与数据库一致。重复/并发旧版本409。活动列表默认不显示，管理员和运营可用“查看已作废批次”查日志/导出；查看者无权作废或查看已作废批次。
 
+作废后的历史损益还要复核原归属店铺从入库次日至售完/作废日的持有费用，不能只覆盖销售月；本月、上月和年累计分别传播null及warnings，细则见[报表流程](docs/modules/reports/workflow.md)。此修复无需新增数据库列、不回填历史金额，回归见[test_store_profit_loss_report.py](tests/test_store_profit_loss_report.py)的VoidedHoldingPeriodTests。
+
 发布前在目标库备份并确认三列不存在/类型正确，审核离线DDL：`python migrations/add_batch_void_fields.py --write-sql output/batch_void_fields.sql`。该脚本只写SQL文件；`migrate.py`也有兼容补列，但应用启动还执行其他既有写入，不能用启动替代生产结构预检。需获得目标环境变更授权后单独迁移并统一更新后端、两份页面和共享JS；旧写入进程不认识voided_at，会再次出售已作废的原剩余库存，不能与新版混跑。回退应用时保留列和原数据，需先阻止旧版销售写入，不能通过直接清除作废字段恢复库存。隔离测试入口：[test_batch_void.py](tests/test_batch_void.py)、[batch_edit_page_checks.cjs](tests/batch_edit_page_checks.cjs)；真实MySQL锁等待、目标库结构和历史利润需另行验证。本次代码修改未执行生产DDL或作废任何实际批次。
 
 ## 已出库批次编辑与成本重述

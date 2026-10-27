@@ -1,9 +1,15 @@
+import os
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from database import Base
+from models import InventoryBatch, Product, Sale, SaleCostDetail, Store, User
 from routers.reports import (
     _build_store_profit_loss_values,
     _fifo_cost_components,
@@ -14,6 +20,105 @@ from routers.reports import (
     update_store_profit_loss,
 )
 from schemas import StoreProfitLossUpdateRequest
+from tests.test_batch_edit import AsyncFacade
+
+
+class VoidedHoldingPeriodTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.flag = patch.dict(os.environ, {"FIFO_FINANCIAL_CONTROLS_ENABLED": "0"})
+        self.flag.start()
+        self.addCleanup(self.flag.stop)
+        self.engine = create_engine("sqlite://")
+        Base.metadata.create_all(self.engine)
+        self.session = Session(self.engine, expire_on_commit=False)
+        self.session.add_all([
+            Store(id=7, platform="test", platform_store_id="7", name="S7",
+                  country_or_region="CN", settlement_currency="CNY"),
+            Store(id=8, platform="test", platform_store_id="8", name="S8",
+                  country_or_region="CN", settlement_currency="CNY"),
+            User(id=1, username="holder", role="operator", password_hash="test", store_id=7),
+            Product(id=10, sku="HOLDING", name="持有期测试", product_type="stable", safe_stock_quantity=0),
+            InventoryBatch(id=20, product_id=10, user_id=1, batch_no="HOLDING-001",
+                quantity=10, remaining_quantity=6, unit_cost=Decimal("2"), purchase_price=Decimal("2"),
+                total_amount=Decimal("20"), shipping_cost=0, last_mile_cost=0, other_cost=0,
+                arrived_at=datetime(2026, 8, 1)),
+            Sale(id=30, product_id=10, user_id=1, store_id=7, order_no="HOLDING-SALE", quantity=4,
+                 selling_price=Decimal("10"), total_cost=Decimal("8"), platform_fee=0,
+                 profit=Decimal("32"), sold_at=datetime(2026, 9, 8)),
+            SaleCostDetail(id=40, sale_id=30, batch_id=20, quantity=4, unit_cost=Decimal("2")),
+        ])
+        self.session.commit()
+
+    def tearDown(self):
+        self.session.close()
+        self.engine.dispose()
+
+    async def values(self, month, store_id=7):
+        # 每次调用模拟独立请求；不沿用上次查询或作废前的回放缓存。
+        self.session.info.clear()
+        return await _store_profit_loss_auto_values(
+            AsyncFacade(self.session), store_id, month,
+            oa_values={"office": {}, "shared_admin": {}, "salaries": {}}, active_store_count=2,
+        )
+
+    def void(self, when=datetime(2026, 10, 27)):
+        self.session.get(InventoryBatch, 20).voided_at = when
+        self.session.commit()
+
+    async def test_voided_batch_keeps_presale_holding_month_pending_in_all_periods(self):
+        before = await self.values(date(2026, 8, 1))
+        self.assertEqual(before["inventory_impairment"]["current"], Decimal("6"))
+        self.void()
+        august = await self.values(date(2026, 8, 1))
+        self.assertIsNone(august["inventory_impairment"]["current"])
+        self.assertIsNone(august["inventory_impairment"]["ytd"])
+        self.assertEqual(august["inventory_impairment"]["previous"], Decimal(0))
+        self.assertEqual(august["inventory_writeoff"]["current"], Decimal(0))
+        computed = _build_store_profit_loss_values(august, {})
+        self.assertIsNone(computed["net_profit"]["current"])
+        self.assertTrue(any("已作废批次" in warning and "持有" in warning
+                            for warning in august["_warnings"]))
+        september = await self.values(date(2026, 9, 1))
+        self.assertIsNone(september["inventory_impairment"]["previous"])
+        other = await self.values(date(2026, 8, 1), store_id=8)
+        self.assertEqual(other["inventory_impairment"]["current"], Decimal(0))
+        self.assertEqual(other["_warnings"], [])
+
+    async def test_sold_out_batch_does_not_mark_later_months_or_next_year_pending(self):
+        self.session.get(InventoryBatch, 20).remaining_quantity = 0
+        self.session.get(Sale, 30).quantity = 10
+        self.session.get(Sale, 30).total_cost = Decimal("20")
+        self.session.get(Sale, 30).profit = Decimal("80")
+        self.session.get(SaleCostDetail, 40).quantity = 10
+        self.void()
+        october = await self.values(date(2026, 10, 1))
+        self.assertEqual(october["inventory_impairment"]["current"], Decimal(0))
+        self.assertIsNone(october["inventory_impairment"]["previous"])
+        self.assertIsNone(october["inventory_impairment"]["ytd"])
+        january = await self.values(date(2027, 1, 1))
+        self.assertEqual(january["inventory_impairment"],
+                         {period: Decimal(0) for period in ("current", "previous", "ytd")})
+
+    async def test_no_sales_holdings_stop_at_void_business_day_including_month_boundary(self):
+        self.session.delete(self.session.get(SaleCostDetail, 40))
+        self.session.delete(self.session.get(Sale, 30))
+        self.session.get(InventoryBatch, 20).remaining_quantity = 10
+        # UTC 9月30日18时在现有核算时区为10月1日，不能提前一天结束。
+        self.void(datetime(2026, 9, 30, 18))
+        october = await self.values(date(2026, 10, 1))
+        self.assertIsNone(october["inventory_impairment"]["current"])
+        november = await self.values(date(2026, 11, 1))
+        self.assertEqual(november["inventory_impairment"]["current"], Decimal(0))
+        self.assertIsNone(november["inventory_impairment"]["previous"])
+
+    async def test_arrival_day_zero_and_cross_year_comparisons_remain_separate(self):
+        self.session.get(InventoryBatch, 20).arrived_at = datetime(2025, 12, 31)
+        self.session.get(Sale, 30).sold_at = datetime(2026, 2, 1)
+        self.void(datetime(2026, 3, 1))
+        january = await self.values(date(2026, 1, 1))
+        self.assertEqual(january["inventory_impairment"]["previous"], Decimal(0))
+        self.assertIsNone(january["inventory_impairment"]["current"])
+        self.assertIsNone(january["inventory_impairment"]["ytd"])
 
 
 class _Result:
