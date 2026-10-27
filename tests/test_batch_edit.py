@@ -147,9 +147,9 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.save(**change)).status_code, 422)
         self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
 
-    async def request(self, method, path):
+    async def request(self, method, path, **kwargs):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
-            return await client.request(method, path)
+            return await client.request(method, path, **kwargs)
 
     async def test_log_insert_failure_rolls_back_the_batch_change(self):
         def reject(_mapper, _connection, _target):
@@ -164,7 +164,7 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((batch.quantity, batch.remaining_quantity), (13, 13))
         self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
-    async def test_logs_paginate_include_identity_and_survive_deletion(self):
+    async def test_logs_paginate_include_identity_and_survive_void(self):
         await self.save(total_amount='35.0001')
         self.actor.username = 'renamed-operator'
         await self.save(total_amount='36.0001')
@@ -181,12 +181,15 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         older = (await self.request('GET', '/batches/12/logs?page=99&page_size=1')).json()
         self.assertEqual(older['page'], 2)
         self.assertEqual(older['items'][0]['actor_username'], 'batch-editor')
-        # 编辑权限放开后，运营仍不可删除其他创建人的批次。
-        self.assertEqual((await self.request('DELETE', '/batches/12')).status_code, 403)
-        self.actor.role = 'admin'
-        self.assertEqual((await self.request('DELETE', '/batches/12')).status_code, 200)
-        self.assertIsNone(self.session.get(InventoryBatch, 12))
-        self.assertEqual((await self.request('GET', '/batches/12/logs')).json()['total'], 2)
+        response = await self.request('POST', '/batches/12/void', json={
+            'edit_version': self.session.get(InventoryBatch, 12).edit_version,
+            'reason': '重复入库',
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertIsNotNone(self.session.get(InventoryBatch, 12).voided_at)
+        logs = (await self.request('GET', '/batches/12/logs')).json()
+        self.assertEqual(logs['total'], 3)
+        self.assertEqual([row['action'] for row in logs['items']], ['void', 'update', 'update'])
 
     async def test_viewer_cannot_read_logs_or_change_them(self):
         await self.save()
@@ -323,37 +326,17 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         saved = await self.save(edit_version=original.edit_version)
         self.assertEqual(saved.status_code, 200, saved.text)
 
-    async def test_delete_uses_current_cost_read_after_parent_lock(self):
-        os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'
-        session = self.session
-        for method in ('DELETE',):
-            with self.subTest(method=method):
-                reads = []
+    async def test_retired_delete_does_not_open_inventory_transaction(self):
+        async def unexpected_db():
+            raise AssertionError('retired DELETE must not access inventory')
+            yield
 
-                class RepeatableReadFacade(AsyncFacade):
-                    async def scalar(self, statement):
-                        sql = str(statement.compile(dialect=mysql.dialect()))
-                        if 'inventory_cost_adjustment_lines' in sql:
-                            reads.append(('cost', sql))
-                            # 认证已建立旧快照；普通读看不到之后提交的成本补差。
-                            return 123 if statement._for_update_arg is not None else None
-                        if 'inventory_batches' in sql:
-                            reads.append(('batch', sql))
-                        return await super().scalar(statement)
-
-                async def db():
-                    try:
-                        yield RepeatableReadFacade(session)
-                    finally:
-                        session.rollback()
-                self.app.dependency_overrides[get_db] = db
-                response = await self.save(quantity=99) if method == 'PUT' else await self.request('DELETE', '/batches/12')
-                self.assertEqual(response.status_code, 409, response.text)
-                self.assertEqual(response.json()['detail']['code'], 'batch_has_cost_adjustments')
-                self.assertEqual([kind for kind, _sql in reads], ['batch', 'cost'])
-                self.assertTrue(all(sql.endswith('FOR UPDATE') for _kind, sql in reads), reads)
-                self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
-                self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+        self.app.dependency_overrides[get_db] = unexpected_db
+        response = await self.request('DELETE', '/batches/12')
+        self.assertEqual(response.status_code, 410, response.text)
+        self.assertEqual(response.json()['detail']['code'], 'batch_delete_retired')
+        self.assertEqual(self.session.get(InventoryBatch, 12).quantity, 13)
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
     async def test_current_cost_read_without_adjustments_allows_edit(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'

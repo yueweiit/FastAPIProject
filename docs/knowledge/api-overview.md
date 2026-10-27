@@ -8,7 +8,7 @@
 | --- | ---: | --- | --- |
 | /auth | 16 | [认证 API](../modules/auth/api.md) | [本地/用户](../../routers/auth.py)、[EIMS](../../routers/eims_auth.py) |
 | /products | 10 | [商品 API](../modules/products/api.md) | [routers/products.py](../../routers/products.py) |
-| /batches | 7 | [库存 API](../modules/inventory/api.md) | [routers/batches.py](../../routers/batches.py) |
+| /batches | 7（含已停用DELETE，返回410） | [库存 API](../modules/inventory/api.md) | [routers/batches.py](../../routers/batches.py) |
 | /sales | 9 | [销售 API](../modules/sales/api.md) | [routers/sales.py](../../routers/sales.py) |
 | /finance-masters | 16 | [主数据 API](../modules/finance-masters/api.md) | [routers/finance_masters.py](../../routers/finance_masters.py) |
 | /financial-control | 22 | [财务增强API](../modules/financial-control/api.md) | [routers/financial_control.py](../../routers/financial_control.py) |

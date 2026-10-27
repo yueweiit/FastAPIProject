@@ -17,7 +17,7 @@ from database import get_db
 from models import InventoryBatch, Product, User, Sale, SaleCostDetail, Store, BatchChangeLog
 from schemas import BatchCreate, BatchUpdate, BatchVoidRequest, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
-from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
+from services.cost_layers import load_cost_layers, AdjustedBatch
 from services.finance_config import financial_controls_enabled
 from services.batch_edits import freeze_cost_basis, restate_costs
 
@@ -269,30 +269,14 @@ async def list_batch_change_logs(
     return BatchChangeLogPageResponse(items=rows, total=total, page=page, page_size=page_size)
 
 
-@router.delete("/{batch_id}")
+@router.delete("/{batch_id}", deprecated=True, status_code=410)
 async def delete_batch(
     batch_id: int,
-    db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
 ):
-    """删除批次 - 只能删未被消耗的批次"""
-    batch = await _locked_batch(db, batch_id)
-    if not batch:
-        raise HTTPException(status_code=404, detail="批次不存在")
-    if batch.voided_at is not None:
-        raise HTTPException(status_code=409, detail={"code": "batch_voided", "message": "批次已作废，不能再次删除。"})
-
-    if user.role == "operator" and batch.user_id != user.id:
-        raise HTTPException(status_code=403, detail="无权删除此批次")
-
-    if batch.remaining_quantity != batch.quantity:
-        raise HTTPException(status_code=400, detail="批次已有出库记录，无法删除")
-
-    await ensure_batch_cost_editable(db, batch_id)
-
-    await db.delete(batch)
-    await db.commit()
-    return {"ok": True}
+    """旧删除接口已停用；作废必须显式提供原因与当前编辑版本。"""
+    raise HTTPException(status_code=410, detail={"code": "batch_delete_retired",
+        "message": "直接删除已停用，请刷新页面后使用强制删除并填写作废原因。"})
 
 
 @router.post("/{batch_id}/void", response_model=BatchResponse)

@@ -179,7 +179,7 @@ class BatchRestatementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(batch.remaining_quantity, 0)
         self.assertEqual(batch.dingtalk_order_no, 'CORRECTED')
-        self.assertEqual((await self.request('DELETE', '/batches/1')).status_code, 400)
+        self.assertEqual((await self.request('DELETE', '/batches/1')).status_code, 410)
 
     async def test_other_operator_can_restate_but_viewer_cannot(self):
         self.session.add(User(id=2, username='second', role='operator', store_id=7, password_hash='test'))

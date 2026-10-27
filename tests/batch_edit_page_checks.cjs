@@ -48,7 +48,11 @@ async function verify(file) {
   setBatch(fixture); c.renderBatchPage();
   ok(e('batches-tbody').innerHTML.includes('openEditBatch(12)'));
   ok(!e('batches-tbody').innerHTML.includes('disabled'));
-  ok(e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
+  ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
+  ok(e('batches-tbody').innerHTML.includes('voidBatch(12)'));
+  ok(!html.includes('async function deleteBatch('));
+  equal(c.formatApiError({code: 'batch_delete_retired'}, ''),
+    c.window.PageInteractions.text('batchDeleteRetired'));
   setBatch({...fixture, user_id:9});c.renderBatchPage();
   ok(!e('batches-tbody').innerHTML.includes('disabled'));
   ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
@@ -200,6 +204,7 @@ async function verify(file) {
   await c.voidBatch(12); equal(voidRequests, 2);
   equal(messages.at(-1)[0], c.window.PageInteractions.text('batchVoidRefreshFailed'));
   ok(!e('batches-tbody').innerHTML.includes('voidBatch(12)'));
+
 }
 (async () => {
   for (const file of ['templates/index.html', 'index.html']) await verify(file);

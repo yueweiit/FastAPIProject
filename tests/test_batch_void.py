@@ -95,13 +95,14 @@ class BatchVoidTests(unittest.IsolatedAsyncioTestCase):
         product_summary = self.session.execute(_product_summary_stmt()).one()
         self.assertEqual(product_summary.stock_quantity, 0)
         self.assertEqual(product_summary.stock_value, Decimal(0))
-        self.assertEqual((await self.request("DELETE", "/batches/20")).status_code, 409)
+        self.assertEqual((await self.request("DELETE", "/batches/20")).status_code, 410)
         self.assertEqual((await self.void()).status_code, 409)
 
     async def test_void_requires_write_role_reason_and_current_version(self):
         version = self.session.get(InventoryBatch, 20).edit_version
         self.actor.role = "viewer"
         self.assertEqual((await self.void(version)).status_code, 403)
+        self.assertEqual((await self.request("DELETE", "/batches/20")).status_code, 403)
         self.assertEqual((await self.request("GET", "/batches?voided_only=true")).status_code, 403)
         self.actor.role = "operator"
         self.assertEqual((await self.void(version, "   ")).status_code, 422)
@@ -115,7 +116,7 @@ class BatchVoidTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_operator_can_void_other_creators_batch_and_read_archive(self):
         self.actor.role = "operator"
-        self.assertEqual((await self.request("DELETE", "/batches/20")).status_code, 403)
+        self.assertEqual((await self.request("DELETE", "/batches/20")).status_code, 410)
         response = await self.void()
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["voided_by"], self.actor.id)
@@ -124,6 +125,35 @@ class BatchVoidTests(unittest.IsolatedAsyncioTestCase):
         archived = await self.request("GET", "/batches?voided_only=true")
         self.assertEqual(len(archived.json()), 1)
         self.assertEqual((await self.request("GET", "/batches/export?batch_ids=20")).status_code, 200)
+
+    async def test_retired_delete_preserves_unsold_and_sold_batches_for_all_write_roles(self):
+        self.session.add(InventoryBatch(id=21, product_id=10, user_id=2, batch_no="VOID-UNSOLD",
+            quantity=10, remaining_quantity=10, unit_cost=Decimal("2"), purchase_price=Decimal("2"),
+            total_amount=Decimal("20"), shipping_cost=0, last_mile_cost=0, other_cost=0,
+            arrived_at=datetime(2026, 8, 1)))
+        self.session.commit()
+        for role in ("admin", "operator"):
+            self.actor.role = role
+            for batch_id in (20, 21):
+                with self.subTest(role=role, batch_id=batch_id):
+                    response = await self.request("DELETE", f"/batches/{batch_id}")
+                    self.assertEqual(response.status_code, 410, response.text)
+                    self.assertEqual(response.json()["detail"]["code"], "batch_delete_retired")
+                    self.assertIsNone(self.session.get(InventoryBatch, batch_id).voided_at)
+        self.assertEqual(self.session.get(InventoryBatch, 20).remaining_quantity, 7)
+        self.assertEqual(self.session.get(InventoryBatch, 21).remaining_quantity, 10)
+        self.assertIsNotNone(self.session.get(Sale, 30))
+        self.assertEqual(self.session.get(SaleCostDetail, 40).batch_id, 20)
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
+        # 未出库批次也通过同一作废入口留痕，不再物理删除。
+        response = await self.request("POST", "/batches/21/void", json={
+            "edit_version": self.session.get(InventoryBatch, 21).edit_version,
+            "reason": "重复入库",
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        log = self.session.scalar(select(BatchChangeLog))
+        self.assertEqual((log.batch_id, log.action), (21, "void"))
+        self.assertEqual(self.session.get(InventoryBatch, 21).remaining_quantity, 10)
 
     async def test_void_audit_and_response_use_persisted_timestamp(self):
         def round_to_database_precision(session, _flush_context, _instances):
