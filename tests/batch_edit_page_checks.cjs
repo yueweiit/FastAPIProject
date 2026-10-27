@@ -205,6 +205,20 @@ async function verify(file) {
   equal(messages.at(-1)[0], c.window.PageInteractions.text('batchVoidRefreshFailed'));
   ok(!e('batches-tbody').innerHTML.includes('voidBatch(12)'));
 
+  // 作废已经成功，退出或同账号重新登录后，旧刷新失败不得污染新会话。
+  for (const relogin of [false, true]) {
+    setBatch({...fixture, remaining_quantity: 10});
+    let rejectRefresh;
+    c.loadBatches = () => new Promise((_resolve, reject) => { rejectRefresh = reject; });
+    const staleVoid = c.voidBatch(12);
+    while (!rejectRefresh) await Promise.resolve();
+    c.handleSessionExpired();
+    if (relogin) vm.runInContext('CURRENT_USER_ID=7', c);
+    const before = messages.length;
+    rejectRefresh(new Error('old refresh failed'));
+    await staleVoid;
+    equal(messages.length, before);
+  }
 }
 (async () => {
   for (const file of ['templates/index.html', 'index.html']) await verify(file);

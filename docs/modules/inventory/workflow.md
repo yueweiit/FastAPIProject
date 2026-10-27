@@ -53,6 +53,8 @@ update_batch 接收 BatchUpdate（BatchCreate加edit_version/cost_edit_mode）�
 
 登录过期或退出时立即关闭编辑弹窗、清除保存状态，使登录层可操作；同一账号重新登录后，旧批次保存函数的回调不能关闭新弹窗、显示旧结果或解除新请求的保存锁。
 
+作废操作对原因确认结果、POST结果和成功后的刷新失败提示均校验batchEditSessionEpoch。旧刷新失败只有在原会话仍有效时才显示“已作废但刷新失败”；退出或同账号重新登录后忽略旧提示，旧finally也不解除新会话的操作状态。该行为不改变服务端已提交的作废和日志。
+
 ### 修改日志
 
 每次成功编辑（含无字段变化保存）同事务追加batch_change_logs：批次ID/编号、操作者身份、UTC时间和前后快照。先flush、refresh(with_for_update=True)，再当前读调整层；快照金额按字符串，展示实际叠加后的单价及edit_values金额，不记录计算版本或内部cost_basis。日志失败则批次、原成本依据、全部差额凭证及财务审计一起回滚。实现见update_batch、_batch_change_values、[batch_edits.py](../../../services/batch_edits.py)。

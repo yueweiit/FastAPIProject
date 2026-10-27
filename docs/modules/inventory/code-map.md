@@ -19,7 +19,7 @@
 
 相关测试为 [test_sales_rules.py](../../../tests/test_sales_rules.py)、[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py)；真实验证脚本 [mysql_fifo_concurrency.py](../../../tests/mysql_fifo_concurrency.py) 会写测试库，需要独立运行授权。历史批次字段/创建人转移脚本见 [migrations/](../../../migrations/)，不得默认执行。
 
-作废回归见[test_batch_void.py](../../../tests/test_batch_void.py)及[batch_edit_page_checks.cjs](../../../tests/batch_edit_page_checks.cjs)：权限、原因、版本、日志、销售外键、FIFO/商品库存、销售利润待核对、已作废导出及两份页面；另验证旧DELETE对所有写角色返回410、不删记录，未出库批次作废同样留日志。销售前及未销售持有月份的费用待核对见[test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)的VoidedHoldingPeriodTests。SQLite验证不替代InnoDB并发/生产DDL验证。
+作废回归见[test_batch_void.py](../../../tests/test_batch_void.py)及[batch_edit_page_checks.cjs](../../../tests/batch_edit_page_checks.cjs)：权限、原因、版本、日志、销售外键、FIFO/商品库存、销售利润待核对、已作废导出及两份页面；另验证旧DELETE对所有写角色返回410、不删记录，未出库批次作废同样留日志。页面覆盖作废成功后刷新仍在等待时退出/同账号重登，旧失败回调不得显示提示。销售前及未销售持有月份的费用待核对见[test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)的VoidedHoldingPeriodTests。SQLite验证不替代InnoDB并发/生产DDL验证。
 
 批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、垃圾桶及旧删除函数移除、强制删除及旧接口错误提示、有效金额回填、数量下限、追溯模式、重复提交和错误保留；`node tests/batch_export_page_checks.cjs`覆盖选择/筛选导出、等待/失败提示、下载与会话切换；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
 

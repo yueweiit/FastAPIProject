@@ -2101,7 +2101,9 @@ async function voidBatch(id) {
         showMsg(text('batchVoidSaved'));
         selectedBatchIds.delete(Number(id));
         try { await Promise.all([loadBatches(), loadProducts()]); }
-        catch { showMsg(text('batchVoidRefreshFailed'), false); }
+        catch {
+            if (epoch === batchEditSessionEpoch) showMsg(text('batchVoidRefreshFailed'), false);
+        }
     } catch (error) {
         if (epoch === batchEditSessionEpoch) showMsg(error.message, false);
     } finally {

@@ -27,6 +27,8 @@
 
 作废后的历史损益还要复核原归属店铺从入库次日至售完/作废日的持有费用，不能只覆盖销售月；本月、上月和年累计分别传播null及warnings，细则见[报表流程](docs/modules/reports/workflow.md)。此修复无需新增数据库列、不回填历史金额，回归见[test_store_profit_loss_report.py](tests/test_store_profit_loss_report.py)的VoidedHoldingPeriodTests。
 
+页面作废成功后刷新若失败，也须先核对会话版本，退出或重新登录后不显示旧提示。回归见[batch_edit_page_checks.cjs](tests/batch_edit_page_checks.cjs)，覆盖两份页面的退出及同账号重新登录场景。
+
 发布前在目标库备份并确认三列不存在/类型正确，审核离线DDL：`python migrations/add_batch_void_fields.py --write-sql output/batch_void_fields.sql`。该脚本只写SQL文件；`migrate.py`也有兼容补列，但应用启动还执行其他既有写入，不能用启动替代生产结构预检。需获得目标环境变更授权后单独迁移并统一更新后端、两份页面和共享JS；旧写入进程不认识voided_at，会再次出售已作废的原剩余库存，不能与新版混跑。回退应用时保留列和原数据，需先阻止旧版销售写入，不能通过直接清除作废字段恢复库存。隔离测试入口：[test_batch_void.py](tests/test_batch_void.py)、[batch_edit_page_checks.cjs](tests/batch_edit_page_checks.cjs)；真实MySQL锁等待、目标库结构和历史利润需另行验证。本次代码修改未执行生产DDL或作废任何实际批次。
 
 ## 已出库批次编辑与成本重述
