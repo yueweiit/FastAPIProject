@@ -267,6 +267,8 @@ docker compose ps
 docker compose logs --tail=200 web
 ```
 
+若批次导出约 30 秒后返回 500，日志在 `get_current_user` / `auth_sessions.authenticate` 处出现 `QueuePool ... timeout 30`，说明请求尚未进入导出函数，认证阶段已无法取得 MySQL 连接。先查看同一时段的数据库连接状态、慢查询及 EIMS 复核，再检查文件内容；不要将该异常误判为某个批次或图片数据错误。同一进程内的同 Cookie 请求现从认证首次读取前排队，EIMS 跨进程 Token 轮换仍由 MySQL 会话行锁保证；店铺损益及财务附件读取 OA 前也会先释放 MySQL 读取事务。仍须在服务器复测连接池与导出响应，离线测试不能证明所有连接占用原因已消除。代码见 [auth_sessions.py](services/auth_sessions.py)、[reports.py](routers/reports.py)，口径见[认证流程](docs/modules/auth/workflow.md)与[报表流程](docs/modules/reports/workflow.md)。
+
 数据库核对：
 
 ```sql

@@ -18,6 +18,7 @@ from schemas import (CostAdjustmentRequest, ExpenseRequest, ExpenseSourceRequest
 from services.finance_config import financial_controls_enabled
 from services import financial_controls as controls
 from services.financial_versions import collect_payload, compare_version, save_version, version_workbook
+from routers.reports import _prepare_profit_loss_oa_values
 
 class FinancialRoute(APIRoute):
     """先转为精确金额字符串，避免FastAPI普通dict将Decimal转成float。"""
@@ -197,7 +198,9 @@ async def financial_overview(store_id: int, report_month: date, db: AsyncSession
     controls.month_bounds(report_month)
     if report_month > controls.today().replace(day=1):
         controls.fail("future_report", "不能查询未来核算月份。")
-    payload = await collect_payload(db, user, store, report_month)
+    active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, report_month, bool(store.name))
+    payload = await collect_payload(db, user, store, report_month,
+                                    oa_values=oa_values, active_store_count=active_store_count)
     return {"profit_layers": payload["profit_layers"], "warnings": payload["warnings"],
             "report_date": payload["report_date"], "source_digest": controls.digest(payload)}
 
@@ -205,7 +208,23 @@ async def financial_overview(store_id: int, report_month: date, db: AsyncSession
 @router.post("/versions")
 async def capture_version(data: FinancialVersionRequest, db: AsyncSession = Depends(get_db),
                            user: User = Depends(RequireOperator)):
-    row = await write(db, save_version(db, user, data))
+    controls.require_enabled()
+    controls.month_bounds(data.report_month)
+    if data.report_month >= controls.today().replace(day=1):
+        controls.fail("month_not_complete", "月度版本只能保存已结束的完整自然月。")
+    await controls.scoped_store(db, user, data.store_id)
+    existing = await db.scalar(select(FinancialReportVersion).where(
+        FinancialReportVersion.request_key == data.request_key))
+    if existing:
+        if (existing.store_id != data.store_id or existing.report_month != data.report_month
+                or existing.note != data.note):
+            controls.fail("idempotency_conflict", "相同请求标识的店铺、月份或备注已改变。", 409)
+        await db.commit()
+        row = existing
+    else:
+        active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, data.report_month, True)
+        row = await write(db, save_version(db, user, data,
+                                           oa_values=oa_values, active_store_count=active_store_count))
     return {key: value for key, value in controls.record(row).items() if key != "payload"}
 
 
@@ -236,7 +255,10 @@ async def get_version(version_id: int, db: AsyncSession = Depends(get_db), user:
 
 @router.get("/versions/{version_id}/compare")
 async def compare_financial_version(version_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole)):
-    return await compare_version(db, user, await scoped_version(db, user, version_id))
+    version = await scoped_version(db, user, version_id)
+    active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, version.report_month, True)
+    return await compare_version(db, user, version,
+                                 oa_values=oa_values, active_store_count=active_store_count)
 
 
 @router.get("/versions/{version_id}/export")

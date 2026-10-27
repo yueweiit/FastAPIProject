@@ -11,7 +11,7 @@ from services.financial_controls import (audit, digest, fail, json_safe, month_b
                                          reconciliation, require_enabled, scoped_store, today)
 
 
-async def collect_payload(db, user, store, report_month):
+async def collect_payload(db, user, store, report_month, *, oa_values=None, active_store_count=None):
     from routers.reports import (_store_profit_loss_response, _load_inventory_impairment_report_rows,
                                  _product_line_profit_data)
     end = month_bounds(report_month)[1]
@@ -19,7 +19,10 @@ async def collect_payload(db, user, store, report_month):
     source_start = min(date(report_month.year, 1, 1), (report_month-timedelta(days=1)).replace(day=1))
     report = await db.scalar(select(StoreProfitLossReport).where(
         StoreProfitLossReport.store_id == store.id, StoreProfitLossReport.report_month == report_month))
-    response = await _store_profit_loss_response(db, user, store, report_month, report)
+    response = await _store_profit_loss_response(
+        db, user, store, report_month, report,
+        oa_values=oa_values, active_store_count=active_store_count,
+    )
     response.can_edit = False
     inventory = await _load_inventory_impairment_report_rows(db, cutoff, store.id)
     lines = await _product_line_profit_data(db, {store.id}, report_month, cutoff)
@@ -66,7 +69,7 @@ async def collect_payload(db, user, store, report_month):
         "warnings": list(dict.fromkeys(warnings)), "calculation_version": "restated-cost-v1"})
 
 
-async def save_version(db, user, payload):
+async def save_version(db, user, payload, *, oa_values=None, active_store_count=None):
     require_enabled()
     if db.get_bind().dialect.name == "mysql":
         connection = await db.connection()
@@ -81,7 +84,10 @@ async def save_version(db, user, payload):
         if existing.store_id != store.id or existing.report_month != payload.report_month or existing.note != payload.note:
             fail("idempotency_conflict", "相同请求标识的店铺、月份或备注已改变。", 409)
         return existing
-    result = await collect_payload(db, user, store, payload.report_month)
+    result = await collect_payload(
+        db, user, store, payload.report_month,
+        oa_values=oa_values, active_store_count=active_store_count,
+    )
     fingerprint = digest(result)
     duplicate = await db.scalar(select(FinancialReportVersion).where(
         FinancialReportVersion.store_id == store.id, FinancialReportVersion.report_month == payload.report_month,
@@ -101,9 +107,12 @@ async def save_version(db, user, payload):
     return row
 
 
-async def compare_version(db, user, version):
+async def compare_version(db, user, version, *, oa_values=None, active_store_count=None):
     store = await scoped_store(db, user, version.store_id)
-    current = await collect_payload(db, user, store, version.report_month)
+    current = await collect_payload(
+        db, user, store, version.report_month,
+        oa_values=oa_values, active_store_count=active_store_count,
+    )
     old_rows = {row["key"]: row["value"] for row in version.payload["profit_loss"]["rows"]}
     changes = []
     for row in current["profit_loss"]["rows"]:

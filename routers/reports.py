@@ -360,8 +360,36 @@ def _fifo_cost_components(detail: SaleCostDetail, batch: InventoryBatch, layers=
     return allocated[0], allocated[1], allocated[2]
 
 
+async def _load_profit_loss_oa_values(report_month: date, active_store_count: int,
+                                      include_salary: bool) -> dict:
+    periods = _month_periods(report_month)
+    read_start = min(start for start, _end in periods.values())
+    ytd_end = periods["ytd"][1]
+    office, shared_admin, salaries = {}, {}, {}
+    if active_store_count:
+        office = await office_space_totals_by_application_date(read_start, ytd_end)
+        shared_admin = await shared_admin_totals_by_application_date(read_start, ytd_end)
+    if include_salary:
+        salaries = await china_salary_totals_by_store_and_application_date(read_start, ytd_end)
+    return {"office": office, "shared_admin": shared_admin, "salaries": salaries}
+
+
+async def _prepare_profit_loss_oa_values(db: AsyncSession, report_month: date,
+                                          include_salary: bool) -> tuple[int, dict]:
+    active_store_count = await db.scalar(
+        select(func.count()).select_from(Store).where(Store.is_active.is_(True))
+    )
+    # Callers have completed writes, if any. Release their read transaction
+    # before waiting on the external OA database.
+    await db.commit()
+    return active_store_count, await _load_profit_loss_oa_values(
+        report_month, active_store_count, include_salary
+    )
+
+
 async def _store_profit_loss_auto_values(
-    db: AsyncSession, store_id: int, report_month: date, store_name: str | None = None
+    db: AsyncSession, store_id: int, report_month: date, store_name: str | None = None,
+    *, oa_values: dict | None = None, active_store_count: int | None = None,
 ) -> dict[str, dict[str, Decimal]]:
     periods = _month_periods(report_month)
     ytd_start, ytd_end = periods["ytd"]
@@ -457,11 +485,13 @@ async def _store_profit_loss_auto_values(
             auto_values["other_direct_cost"][period] = None
             label = {"current": "本月", "previous": "上月", "ytd": "本年累计"}[period]
             warnings.append(f"{label}有{count}笔销售或结算缺少有效汇率，收入、平台费用及受影响利润留空。")
-    active_store_count = await db.scalar(
-        select(func.count()).select_from(Store).where(Store.is_active.is_(True))
-    )
+    if active_store_count is None:
+        active_store_count = await db.scalar(
+            select(func.count()).select_from(Store).where(Store.is_active.is_(True))
+        )
     if active_store_count:
-        office_totals = await office_space_totals_by_application_date(read_start, ytd_end)
+        office_totals = (oa_values["office"] if oa_values is not None
+                         else await office_space_totals_by_application_date(read_start, ytd_end))
         for application_date, total in office_totals.items():
             _add_period_value(
                 auto_values["rent_utilities"],
@@ -469,9 +499,8 @@ async def _store_profit_loss_auto_values(
                 total / Decimal(active_store_count),
                 periods,
             )
-        shared_admin_totals = await shared_admin_totals_by_application_date(
-            read_start, ytd_end
-        )
+        shared_admin_totals = (oa_values["shared_admin"] if oa_values is not None
+                               else await shared_admin_totals_by_application_date(read_start, ytd_end))
         for application_date, total in shared_admin_totals.items():
             _add_period_value(
                 auto_values["shared_admin"],
@@ -480,9 +509,8 @@ async def _store_profit_loss_auto_values(
                 periods,
             )
     if store_name:
-        salary_totals = await china_salary_totals_by_store_and_application_date(
-            read_start, ytd_end
-        )
+        salary_totals = (oa_values["salaries"] if oa_values is not None
+                         else await china_salary_totals_by_store_and_application_date(read_start, ytd_end))
         auto_values["salary"] = {
             period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS
         }
@@ -613,9 +641,11 @@ async def _resolve_report_store(
 async def _store_profit_loss_response(
     db: AsyncSession, user: User, store: Store, report_month: date,
     report: StoreProfitLossReport | None,
+    *, oa_values: dict | None = None, active_store_count: int | None = None,
 ) -> StoreProfitLossResponse:
     auto_values = await _store_profit_loss_auto_values(
-        db, store.id, report_month, store.name
+        db, store.id, report_month, store.name,
+        oa_values=oa_values, active_store_count=active_store_count,
     )
     saved_manual_values = report.manual_values if report else {}
     manual_values = saved_manual_values
@@ -667,13 +697,17 @@ async def get_store_profit_loss(
     if report_month.day != 1:
         raise HTTPException(status_code=400, detail="核算月份必须传入该月第一天")
     store = await _resolve_report_store(db, user, store_id)
+    active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, report_month, bool(store.name))
     report = await db.scalar(
         select(StoreProfitLossReport).where(
             StoreProfitLossReport.store_id == store.id,
             StoreProfitLossReport.report_month == report_month,
         )
     )
-    return await _store_profit_loss_response(db, user, store, report_month, report)
+    return await _store_profit_loss_response(
+        db, user, store, report_month, report,
+        oa_values=oa_values, active_store_count=active_store_count,
+    )
 
 
 @router.put("/store-profit-loss", response_model=StoreProfitLossResponse)
@@ -754,8 +788,12 @@ async def update_store_profit_loss(
     metadata["manual_period_mode"] = "monthly" if data.update_scope == "current" else "legacy"
     report.report_metadata = metadata
     await db.commit()
+    active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, data.report_month, bool(store.name))
     await db.refresh(report)
-    return await _store_profit_loss_response(db, user, store, data.report_month, report)
+    return await _store_profit_loss_response(
+        db, user, store, data.report_month, report,
+        oa_values=oa_values, active_store_count=active_store_count,
+    )
 
 
 def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) -> tuple[Workbook, dict]:
@@ -1811,6 +1849,7 @@ async def export_financial_attachments(
         raise HTTPException(status_code=400, detail="核算月份必须传入该月第一天")
 
     selected_store = await _resolve_report_store(db, user, store_id)
+    active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, report_month, True)
     report = await db.scalar(
         select(StoreProfitLossReport).where(
             StoreProfitLossReport.store_id == selected_store.id,
@@ -1818,7 +1857,8 @@ async def export_financial_attachments(
         )
     )
     selected_auto_values = await _store_profit_loss_auto_values(
-        db, selected_store.id, report_month, selected_store.name
+        db, selected_store.id, report_month, selected_store.name,
+        oa_values=oa_values, active_store_count=active_store_count,
     )
     selected_values = _build_store_profit_loss_values(
         selected_auto_values, await manual_period_values(
@@ -1854,7 +1894,8 @@ async def export_financial_attachments(
         for store in stores:
             store_report = reports_by_store.get(store.id)
             auto_values = await _store_profit_loss_auto_values(
-                db, store.id, report_month, store.name
+                db, store.id, report_month, store.name,
+                oa_values=oa_values, active_store_count=active_store_count,
             )
             store_reports.append((
                 store,

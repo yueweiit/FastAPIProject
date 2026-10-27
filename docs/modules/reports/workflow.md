@@ -86,6 +86,8 @@ _approved_forms_by_expense 查询未删除、指定流程、COMPLETED、结果�
 
 OA_DB 必要配置缺少或不完整时返回空数据并记录警告；完整配置但连接/查询失败抛 OaExpenseSourceError，没有统一转换为专用业务响应。数据是直接读取，没有稳定期间缓存，OA 更新和当前有效店铺数量变化会影响重算。依据：[oa_office_expenses.py](../../../services/oa_office_expenses.py)。
 
+单店损益读取、保存后的响应及财务附件导出先读取当前有效店铺数，结束只读 MySQL 事务后再等待 OA PostgreSQL；OA 结果在同一请求内复用，财务附件的跨店汇总不逐店重复请求 OA。OA 返回后才重新读取 MySQL 报表/销售数据，避免等待外部数据库时占用 MySQL 连接。保存接口先提交人工值，再执行上述读取；OA 失败仍按原有错误传播，已提交人工值不回滚。此分段读取不提供跨 MySQL/OA 的一致快照，金额仍应按业务核对。依据：[reports.py](../../../routers/reports.py) 的 `_prepare_profit_loss_oa_values`、`_store_profit_loss_auto_values`。
+
 ## 产品线、跨店汇总与 Excel
 
 产品线通过销售店铺/本地商品、来源平台 SKU 和销售日期匹配有效 StoreProduct；无来源 SKU、匹配失败或产品线冲突进入未分配组。手工销售通常无来源平台 SKU，需要关注该组。每店运费/其他收入以及人工关税/本地物流/代发按该店各线销售收入比例分摊，不能跨店混分；期间收入合计0时不分摊。

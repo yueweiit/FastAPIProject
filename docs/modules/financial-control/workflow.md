@@ -38,6 +38,8 @@
 
 按店铺/月保存P&L、07明细、SKU汇总所需数据、产品线、利润层次、费用/成本来源清单、结算回款核对及warnings。店铺锁串行化版本号，数据库唯一约束兜底；相同request_key重试复用，同一来源摘要也复用。
 
+财务总览、保存新版及版本比较先核对店铺权限，再结束用于读取有效店铺数的 MySQL 事务，等待 OA 只读数据后进入报表采集；同一请求的 OA 结果只读取一次。保存新版在 OA 等待结束后才获取店铺锁，并在新的 MySQL REPEATABLE READ 事务内计算、写入版本及审计。已存在且参数一致的 request_key 直接复用旧版，不依赖 OA 当时是否可用。OA 与 MySQL 之间没有共同快照；OA 更新仍可能影响后续新版本，旧 payload 不改。依据：[financial_control.py](../../../routers/financial_control.py) 的总览/版本路由、[financial_versions.py](../../../services/financial_versions.py) 的 `collect_payload`、`save_version`。
+
 版本payload持久化后不更新；当前数据比较返回利润行差异，来源变化但金额未变也标记changed。更正成本回到原金额仍因来源清单不同生成新版。导出仅读取该payload生成四张单店表和“版本及核对说明”，不取实时数据；跨店10汇总需另行核对各店所选版本，未实现跨店统一版本集。
 
 商品成本后余额、平台费用后余额用于经营核对，正式财务毛利/净利仍以既有损益口径为准。needs_review保存了未解决事项，不能当作无警示的confirmed。内部AccountingPeriod自动快照继续保留，与人工保存的FinancialReportVersion用途不同。

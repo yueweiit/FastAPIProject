@@ -523,6 +523,54 @@ class FinancialControlsTests(facts.FinancialFactsTests):
                     request_key="snapshot-rejected", store_id=7, report_month=date(2026, 9, 1)))
         self.assertEqual(raised.exception.detail["code"], "snapshot_isolation_required")
 
+    async def test_version_routes_read_oa_after_releasing_mysql_transaction(self):
+        app = FastAPI()
+        app.include_router(financial_control.router)
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[get_current_user] = lambda: self.admin
+        oa_reads = []
+
+        async def read_oa(*_args):
+            self.assertFalse(self.session.in_transaction())
+            oa_reads.append(True)
+            return {}
+
+        body = FinancialVersionRequest(request_key="version-prefetch-001", store_id=7,
+                                       report_month=date(2026, 9, 1)).model_dump(mode="json")
+        with patch("routers.reports._store_provision_financial_values",
+                   new=AsyncMock(return_value=self.zero_provisions())), \
+             patch("routers.reports.office_space_totals_by_application_date", new=read_oa), \
+             patch("routers.reports.shared_admin_totals_by_application_date", new=read_oa), \
+             patch("routers.reports.china_salary_totals_by_store_and_application_date", new=read_oa), \
+             patch("services.financial_versions.today", return_value=date(2026, 10, 27)), \
+             patch.object(controls, "today", return_value=date(2026, 10, 27)):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                overview = await client.get("/financial-control/overview?store_id=7&report_month=2026-09-01")
+                self.assertEqual(overview.status_code, 200, overview.text)
+                captured = await client.post("/financial-control/versions", json=body)
+                self.assertEqual(captured.status_code, 200, captured.text)
+                version_id = captured.json()["id"]
+                compared = await client.get(f"/financial-control/versions/{version_id}/compare")
+                self.assertEqual(compared.status_code, 200, compared.text)
+                self.assertEqual(len(oa_reads), 9)  # Three OA sources, once per request.
+
+                async def unavailable(*_args):
+                    raise AssertionError("Idempotent replay must not read OA")
+
+                with patch("routers.reports.office_space_totals_by_application_date", new=unavailable):
+                    replay = await client.post("/financial-control/versions", json=body)
+                    conflict = await client.post("/financial-control/versions", json={**body, "note": "changed"})
+                self.assertEqual(replay.status_code, 200, replay.text)
+                self.assertEqual(replay.json()["id"], version_id)
+                self.assertEqual(conflict.status_code, 409, conflict.text)
+                self.assertEqual(conflict.json()["detail"]["code"], "idempotency_conflict")
+
+            app.dependency_overrides[get_current_user] = lambda: self.user
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                forbidden = await client.get("/financial-control/overview?store_id=8&report_month=2026-09-01")
+            self.assertEqual(forbidden.status_code, 403)
+            self.assertEqual(len(oa_reads), 9)
+
     async def test_api_authorization_feature_gate_and_duplicate_source_errors(self):
         app = FastAPI()
         app.include_router(financial_control.router)

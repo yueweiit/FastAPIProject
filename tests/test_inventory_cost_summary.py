@@ -214,10 +214,12 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
         rows, _ = await self._rows()
         for role, expected_scope in (("admin", None), ("viewer", 7)):
             fake_db = SimpleNamespace(scalar=AsyncMock(return_value=None),
-                execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))))
+                execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))),
+                commit=AsyncMock())
             store = SimpleNamespace(id=7, name="店铺A", platform="tiktok_shop")
             async with self._client(role, fake_db) as client:
                 with patch("routers.reports._resolve_report_store", new_callable=AsyncMock, return_value=store), \
+                     patch("routers.reports._load_profit_loss_oa_values", new_callable=AsyncMock, return_value={}), \
                      patch("routers.reports._store_profit_loss_auto_values", new_callable=AsyncMock, return_value={}), \
                      patch("routers.reports._product_line_profit_data", new_callable=AsyncMock, return_value=[]), \
                      patch("routers.reports._load_inventory_impairment_report_rows", new_callable=AsyncMock, return_value=rows) as load:
