@@ -19,7 +19,7 @@ import httpx
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from jose import jwt
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -638,6 +638,73 @@ class AuthFlowTests(SsoFixture):
             row=db.scalars(select(AuthSession)).one()
             tokens=TokenCipher(self.settings).decrypt(row.token_payload)
             self.assertEqual(tokens['refresh_token'],'fixture-refresh-1')
+
+    async def test_parallel_validation_waits_before_opening_database_sessions(self):
+        await self.sso_login()
+        self.modify_session(validated_at=utcnow()-timedelta(seconds=61))
+        with Session(self.engine) as db:
+            key=db.scalars(select(AuthSession.session_hash)).one()
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_userinfo=self.provider_client.userinfo
+        async def delayed_userinfo(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original_userinfo(*args, **kwargs)
+        self.provider_client.userinfo=delayed_userinfo
+        sessions_opened=0
+        def counted_factory():
+            nonlocal sessions_opened
+            sessions_opened+=1
+            return self.factory()
+        self.store.session_factory=counted_factory
+        first=asyncio.create_task(self.store._validate_eims(key,self.settings,False))
+        await asyncio.wait_for(entered.wait(),2)
+        waiting=[asyncio.create_task(self.store._validate_eims(key,self.settings,False)) for _ in range(20)]
+        await asyncio.sleep(0.02)
+        self.assertEqual(sessions_opened,1)
+        release.set()
+        views=await asyncio.wait_for(asyncio.gather(first,*waiting),3)
+        self.assertEqual({view.user_id for view in views},{2})
+        self.assertEqual(self.provider.userinfo_count,2)  # Login, then one recheck.
+        self.assertEqual(sessions_opened,21)
+
+    async def test_authenticate_waits_before_first_database_checkout(self):
+        await self.sso_login()
+        self.modify_session(validated_at=utcnow()-timedelta(seconds=61))
+        cookie = self.browser.cookies.get('__Host-fifo_session')
+        request = Request({'type': 'http', 'method': 'GET', 'path': '/auth/me',
+                           'scheme': 'https', 'server': ('fifo.test', 443), 'headers': []})
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_userinfo = self.provider_client.userinfo
+
+        async def delayed_userinfo(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original_userinfo(*args, **kwargs)
+
+        self.provider_client.userinfo = delayed_userinfo
+        sessions_opened = 0
+
+        def counted_factory():
+            nonlocal sessions_opened
+            sessions_opened += 1
+            return self.factory()
+
+        self.store.session_factory = counted_factory
+        first = asyncio.create_task(self.store.authenticate(cookie, request, self.settings))
+        waiting = []
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            waiting = [asyncio.create_task(self.store.authenticate(cookie, request, self.settings))
+                       for _ in range(20)]
+            await asyncio.sleep(0.02)
+            self.assertEqual(sessions_opened, 2)  # First read and locked EIMS recheck only.
+        finally:
+            release.set()
+        views = await asyncio.wait_for(asyncio.gather(first, *waiting), 3)
+        self.assertEqual({view.user_id for view in views}, {2})
+        self.assertEqual(self.provider.userinfo_count, 2)  # Login, then one recheck.
+        self.assertEqual(sessions_opened, 22)
 
     async def test_failed_refresh_revokes_cookie(self):
         await self.sso_login()

@@ -40,7 +40,7 @@ sequenceDiagram
 
 ## 会话复核与刷新
 
-浏览器会话绝对有效期 24 小时，不随访问延长。EIMS 读请求最多缓存 UserInfo 复核 60 秒；写请求每次复核，Token 剩余不超过 5 秒时提前刷新。每个会话通过独立 MySQL 事务和 `SELECT FOR UPDATE` 串行刷新，要求返回不同的新 Refresh Token；新 ID Token 如存在须验签并保持原 sub，UserInfo 绑定也必须不变。
+浏览器会话绝对有效期 24 小时，不随访问延长。EIMS 读请求最多缓存 UserInfo 复核 60 秒；写请求每次复核，Token 剩余不超过 5 秒时提前刷新。同一进程内，同一浏览器 Cookie 会话从首次数据库读取前就排队，避免并发请求各自占用 MySQL 连接等待复核；本地和 EIMS 会话均适用。EIMS 刷新仍由独立 MySQL 事务和 `SELECT FOR UPDATE` 串行处理，保障跨进程的 Token 轮换顺序；进程内排队不能替代跨进程行锁。复核要求返回不同的新 Refresh Token；新 ID Token 如存在须验签并保持原 sub，UserInfo 绑定也必须不变。实现见 [auth_sessions.py](../../../services/auth_sessions.py) 的 `authenticate`、`_validate_eims_locked`。
 
 永久身份/授权错误撤销会话并清除加密 Token；503 拒绝本次访问并将 validated_at 置空。若已经收到成功轮换的 Token，保留加密的新 Token 和待复核状态，不能回滚为已经失效的旧 Refresh Token；恢复后先复核，不重复刷新。新 ID Token 在加密 JSON 内有 `_id_token_pending` 标记，JWKS 暂不可用时保留；重试仍验签/核对 sub，UserInfo 绑定一致且全部复核成功后才更新 validated_at、删除标记并允许缓存读取。没有新增表或字段。
 

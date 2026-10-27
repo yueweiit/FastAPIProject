@@ -54,7 +54,7 @@ flowchart LR
 | 导入撤销 | 锁导入批次及原库存批次 → 校验恢复数量 → 恢复库存 → 删除关联业务行 → 保留撤销批次状态 → 提交 | [sales.py](../../routers/sales.py) 的 rollback_sales_import |
 | 批次修改/删除 | 先锁批次、当前读调整和销售明细；版本比对、保留已售数，必要时冻结原依据并追加成本差额，与日志同事务；删除仍拒绝已售/已补差 | [batches.py](../../routers/batches.py)、[batch_edits.py](../../services/batch_edits.py)、[cost_layers.py](../../services/cost_layers.py) |
 | 月末快照 | snapshot_version 为 0 时生成，设为 1 并提交；已生成时不覆盖 | [accounting_periods.py](../../services/accounting_periods.py) |
-| EIMS 认证/刷新 | 独立 AsyncSession 原子消费 state；按会话行锁串行 Token 轮换；释放认证锁后才进入业务 | [auth_sessions.py](../../services/auth_sessions.py) |
+| EIMS 认证/刷新 | 独立 AsyncSession 原子消费 state；同进程先按会话排队，再以行锁串行 Token 轮换；释放认证锁后才进入业务 | [auth_sessions.py](../../services/auth_sessions.py) |
 | 图片修改 | 文件写入/删除不受数据库事务回滚保护 | [products.py](../../routers/products.py) |
 
 FIFO 的锁序为 product_id、arrived_at、id，MySQL/InnoDB 事务持锁直至提交或回滚。FIFO 只按商品选择批次，没有按销售店铺筛选批次；库存归属与销售归属是不同口径，详见[库存流程](../modules/inventory/workflow.md)。

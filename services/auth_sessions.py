@@ -1,10 +1,12 @@
 """Authentication-only transactions; never retain their locks into FIFO work."""
 
+import asyncio
 import hashlib
 import secrets
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
+from weakref import WeakValueDictionary
 
 from fastapi import Request, Response
 from sqlalchemy import delete, update
@@ -77,6 +79,14 @@ class SessionView:
 class SessionStore:
     def __init__(self, session_factory=async_session):
         self.session_factory = session_factory
+        self._validation_locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+    def _validation_lock(self, key: str) -> asyncio.Lock:
+        lock = self._validation_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._validation_locks[key] = lock
+        return lock
 
     async def create_transaction(self, flow: str, state: str, browser: str, payload: dict,
                                  settings: AuthSettings) -> None:
@@ -165,6 +175,13 @@ class SessionStore:
             raise SsoError("invalid_session")
         write = request.method not in ("GET", "HEAD", "OPTIONS")
         key = credential_hash(cookie)
+        # Serialize the first read too: it is the checkout that fails when a
+        # burst from one browser has already filled the connection pool.
+        async with self._validation_lock(key):
+            return await self._authenticate_locked(key, request, settings, write)
+
+    async def _authenticate_locked(self, key: str, request: Request, settings: AuthSettings,
+                                   write: bool) -> SessionView:
         async with self.session_factory() as db:
             row = self._check_row(await db.get(AuthSession, key), settings)
             if write:
@@ -172,7 +189,7 @@ class SessionStore:
             if row.source == "local" or not self._needs_validation(row, settings, write):
                 return self._view(row)
         # No inventory/business session or lock is held by this transaction.
-        return await self._validate_eims(key, settings, write)
+        return await self._validate_eims_locked(key, settings, write)
 
     @staticmethod
     async def _validate_pending_id_token(client, row: AuthSession, tokens: dict) -> None:
@@ -183,6 +200,12 @@ class SessionStore:
             tokens.pop("_id_token_pending")
 
     async def _validate_eims(self, key: str, settings: AuthSettings, write: bool) -> SessionView:
+        # Wait for the same browser session before opening a DB session. InnoDB's row
+        # lock remains the cross-process authority for token rotation.
+        async with self._validation_lock(key):
+            return await self._validate_eims_locked(key, settings, write)
+
+    async def _validate_eims_locked(self, key: str, settings: AuthSettings, write: bool) -> SessionView:
         failure = None
         async with self.session_factory() as db:
             async with db.begin():
