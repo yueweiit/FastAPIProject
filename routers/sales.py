@@ -1256,7 +1256,8 @@ def _build_sale_response(
             sales_revenue_cny / sale.quantity if sale.quantity else Decimal("0")
         )
         platform_fee_cny = source_other_expense * exchange_rate_to_cny
-        profit_cny = sales_revenue_cny - adjusted_cost - platform_fee_cny
+        if cost_context.get("cost_status") != "needs_review":
+            profit_cny = sales_revenue_cny - adjusted_cost - platform_fee_cny
     return SaleResponse(
         id=sale.id,
         product_id=sale.product_id,
@@ -1268,6 +1269,7 @@ def _build_sale_response(
         original_total_cost=sale.total_cost,
         cost_adjustment_cny=cost_context.get("adjustment", Decimal(0)),
         cost_status=cost_context.get("cost_status", "unverified"),
+        cost_review_reason=cost_context.get("cost_review_reason"),
         platform_fee=sale.platform_fee,
         profit=sale.profit,
         currency=currency,
@@ -1732,12 +1734,15 @@ def _monthly_sales_summary(
                 "platform_fee_cny": Decimal("0"),
                 "gross_profit_cny": Decimal("0"),
                 "fx_missing_count": 0,
+                "cost_review_count": 0,
             },
         )
         group["sales_count"] += 1
         group["sold_quantity"] += sale.quantity
         cost = sale.total_cost + (cost_contexts or {}).get(sale.id, {}).get("adjustment", Decimal(0))
         group["sales_cost_cny"] += cost
+        if (cost_contexts or {}).get(sale.id, {}).get("cost_status") == "needs_review":
+            group["cost_review_count"] += 1
 
         context = import_context_by_sale.get(sale.id, {})
         currency = (context.get("currency") or "CNY").upper()
@@ -1762,6 +1767,7 @@ def _monthly_sales_summary(
             "sales_count": 0, "sold_quantity": 0, "sales_revenue_cny": Decimal(0),
             "sales_cost_cny": Decimal(0), "platform_fee_cny": Decimal(0),
             "gross_profit_cny": Decimal(0), "fx_missing_count": 0,
+            "cost_review_count": 0,
         })
         group["settlement_event_count"] = group.get("settlement_event_count", 0) + 1
         if event.revenue is None or event.expense is None:
@@ -1775,6 +1781,7 @@ def _monthly_sales_summary(
         if values["fx_missing_count"]:
             values["sales_revenue_cny"] = None
             values["platform_fee_cny"] = None
+        if values["fx_missing_count"] or values["cost_review_count"]:
             values["gross_profit_cny"] = None
         summary.append(MonthlySalesSummaryResponse(month=month, **values))
     return summary

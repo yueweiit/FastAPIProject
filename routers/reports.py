@@ -440,7 +440,11 @@ async def _store_profit_loss_auto_values(
             .where(SaleCostDetail.sale_id.in_(sale_ids))
         )).all()
         layers = await load_cost_layers(db, {batch.id for _detail, batch, _date in cost_rows})
+        voided_sales_dates = []
         for detail, batch, sold_at in cost_rows:
+            if getattr(batch, "voided_at", None) is not None:
+                voided_sales_dates.append(sold_at.date())
+                continue
             purchase_cost, logistics_cost, other_cost = _fifo_cost_components(detail, batch, layers.get(batch.id, []))
             _add_period_value(
                 auto_values["product_purchase_cost"], sold_at.date(),
@@ -469,6 +473,14 @@ async def _store_profit_loss_auto_values(
 
     auto_values.update(await _store_provision_financial_values(db, store_id, periods))
     warnings = auto_values.setdefault("_warnings", [])
+    for period, (start, end) in periods.items():
+        count = sum(start <= day < end for day in (voided_sales_dates if sales else []))
+        if count:
+            for key in ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
+                        "inventory_impairment", "inventory_writeoff"):
+                auto_values[key][period] = None
+            label = {"current": "本月", "previous": "上月", "ytd": "本年累计"}[period]
+            warnings.append(f"{label}有{count}条销售成本明细引用已作废批次，相关成本、跌价准备及利润待核对。")
     events = await unlinked_settlement_events(db, {store_id}, read_start, ytd_end)
     for event in events:
         if event.revenue is None or event.expense is None:
@@ -553,7 +565,7 @@ async def _store_inventory_impairment_totals(
         )
         .join(Product, Product.id == InventoryBatch.product_id)
         .outerjoin(User, User.id == InventoryBatch.user_id)
-        .where(InventoryBatch.arrived_at < maximum_cutoff)
+        .where(InventoryBatch.arrived_at < maximum_cutoff, InventoryBatch.voided_at.is_(None))
     )).all()
     if not batch_rows:
         return {cutoff: Decimal("0") for cutoff in unique_cutoffs}
@@ -1364,6 +1376,14 @@ async def _product_line_profit_data(
             line_id = sale_line_by_id.get(sale.id)
             if line_id not in line_data:
                 continue
+            if getattr(batch, "voided_at", None) is not None:
+                note = f"销售引用已作废批次{batch.batch_no}，相关成本及毛利待核对"
+                for period, (start, end) in periods.items():
+                    if start <= sale.sold_at.date() < end:
+                        line_data[line_id].setdefault("_unknown_cost_periods", set()).add(period)
+                if note not in line_data[line_id]["note"]:
+                    line_data[line_id]["note"] = f"{line_data[line_id]['note']}；{note}".strip("；")
+                continue
             batch_cost = (detail.unit_cost + unit_adjustment(cost_layers.get(batch.id, []))) * Decimal(detail.quantity)
             for period in STORE_PROFIT_LOSS_PERIODS:
                 start, end = periods[period]
@@ -1515,7 +1535,8 @@ async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
         .join(Product, Product.id == InventoryBatch.product_id)
         .outerjoin(User, User.id == InventoryBatch.user_id)
         .outerjoin(Store, Store.id == User.store_id)
-        .where(or_(InventoryBatch.arrived_at < cutoff, InventoryBatch.id.in_(sold_batch_ids)))
+        .where(or_(InventoryBatch.arrived_at < cutoff, InventoryBatch.id.in_(sold_batch_ids)),
+               InventoryBatch.voided_at.is_(None))
         .order_by(Store.name, Product.sku, InventoryBatch.arrived_at, InventoryBatch.id)
     )).all()
     cost_layers = await load_cost_layers(db, {row[0].id for row in batch_rows})
@@ -1964,7 +1985,7 @@ async def monthly_report(
         InventoryBatch.product_id,
         func.sum(InventoryBatch.remaining_quantity).label("inventory_quantity"),
         func.sum(InventoryBatch.remaining_quantity * InventoryBatch.unit_cost).label("inventory_value"),
-    ).group_by(InventoryBatch.product_id)
+    ).where(InventoryBatch.voided_at.is_(None)).group_by(InventoryBatch.product_id)
     inv_result = await db.execute(inventory_stmt)
     inventory_map: dict[int, tuple[int, Decimal]] = {}
     for row in inv_result.all():

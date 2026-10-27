@@ -26,6 +26,7 @@ async def lock_fifo_batches(
         .where(
             InventoryBatch.product_id.in_(sorted(set(product_ids))),
             InventoryBatch.remaining_quantity > 0,
+            InventoryBatch.voided_at.is_(None),
         )
         .order_by(
             InventoryBatch.product_id.asc(),

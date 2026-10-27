@@ -47,7 +47,7 @@ async def _snapshot_rows(
             )
             .join(Product, Product.id == InventoryBatch.product_id)
             .outerjoin(User, User.id == InventoryBatch.user_id)
-            .where(InventoryBatch.arrived_at < cutoff)
+            .where(InventoryBatch.arrived_at < cutoff, InventoryBatch.voided_at.is_(None))
             .order_by(InventoryBatch.arrived_at, InventoryBatch.id)
         )
     ).all()

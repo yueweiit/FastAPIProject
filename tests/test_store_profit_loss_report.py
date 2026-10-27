@@ -39,6 +39,63 @@ class _AutoValuesDb:
 
 
 class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
+    async def test_voided_batch_marks_original_sale_month_cost_and_profit_pending(self):
+        sale = SimpleNamespace(id=1, sold_at=datetime(2026, 9, 8),
+                               selling_price=Decimal("10"), quantity=2, platform_fee=Decimal(0))
+        detail = SimpleNamespace(quantity=2, unit_cost=Decimal("3"))
+        batch = SimpleNamespace(id=11, batch_no="VOID-001", voided_at=datetime(2026, 10, 1))
+        db = _AutoValuesDb([sale], [(detail, batch, sale.sold_at)])
+        provision = {
+            key: {"current": Decimal("2"), "previous": Decimal("1"), "ytd": Decimal("3")}
+            for key in ("inventory_impairment", "inventory_writeoff")
+        }
+        with (
+            patch("routers.sales._sale_import_context", new=AsyncMock(return_value=({}, {}))),
+            patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=provision)),
+            patch("routers.reports.unlinked_settlement_events", new=AsyncMock(return_value=[])),
+        ):
+            values = await _store_profit_loss_auto_values(
+                db, 7, date(2026, 9, 1), oa_values={"office": {}, "shared_admin": {}, "salaries": {}},
+                active_store_count=1,
+            )
+        self.assertEqual(values["product_sales_revenue"]["current"], Decimal("20"))
+        for key in ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
+                    "inventory_impairment", "inventory_writeoff"):
+            self.assertIsNone(values[key]["current"])
+            self.assertIsNone(values[key]["ytd"])
+        self.assertEqual(values["inventory_impairment"]["previous"], Decimal("1"))
+        self.assertEqual(values["inventory_writeoff"]["previous"], Decimal("1"))
+        computed = _build_store_profit_loss_values(values, {})
+        self.assertIsNone(computed["gross_profit"]["current"])
+        self.assertIsNone(computed["net_profit"]["current"])
+        self.assertTrue(any("已作废批次" in warning for warning in values["_warnings"]))
+
+    async def test_voided_batch_marks_previous_sale_month_without_blanking_current(self):
+        sale = SimpleNamespace(id=1, sold_at=datetime(2026, 9, 8),
+                               selling_price=Decimal("10"), quantity=2, platform_fee=Decimal(0))
+        detail = SimpleNamespace(quantity=2, unit_cost=Decimal("3"))
+        batch = SimpleNamespace(id=11, batch_no="VOID-001", voided_at=datetime(2026, 10, 1))
+        db = _AutoValuesDb([sale], [(detail, batch, sale.sold_at)])
+        provision = {
+            key: {period: Decimal("2") for period in ("current", "previous", "ytd")}
+            for key in ("inventory_impairment", "inventory_writeoff")
+        }
+        with (
+            patch("routers.sales._sale_import_context", new=AsyncMock(return_value=({}, {}))),
+            patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=provision)),
+            patch("routers.reports.unlinked_settlement_events", new=AsyncMock(return_value=[])),
+        ):
+            values = await _store_profit_loss_auto_values(
+                db, 7, date(2026, 10, 1), oa_values={"office": {}, "shared_admin": {}, "salaries": {}},
+                active_store_count=1,
+            )
+        for key in ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
+                    "inventory_impairment", "inventory_writeoff"):
+            self.assertIsNone(values[key]["previous"])
+            self.assertIsNone(values[key]["ytd"])
+        self.assertEqual(values["inventory_impairment"]["current"], Decimal("2"))
+        self.assertEqual(values["inventory_writeoff"]["current"], Decimal("2"))
+
     async def test_oa_reads_start_after_mysql_transaction_is_released(self):
         events = []
         report_month = date(2026, 9, 1)

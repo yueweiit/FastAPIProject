@@ -191,6 +191,24 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         with self.assertRaises(HTTPException):
             await ensure_batch_cost_editable(self.db, 1)
 
+    async def test_voided_batch_rejects_new_cost_but_preserves_retry_and_reversal(self):
+        original = await controls.post_cost_adjustment(self.db, self.user, self.cost())
+        await self.db.commit()
+        batch = self.session.get(InventoryBatch, 1)
+        batch.voided_at = datetime(2026, 10, 27)
+        self.session.commit()
+
+        retry = await controls.post_cost_adjustment(self.db, self.user, self.cost())
+        self.assertEqual(retry.id, original.id)
+        with self.assertRaises(HTTPException) as caught:
+            await controls.post_cost_adjustment(self.db, self.user,
+                self.cost(request_key="cost-request-after-void", source_ref="无效新账单"))
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.detail["code"], "batch_voided")
+        reversal = await controls.reverse_cost_adjustment(self.db, self.user, original.id,
+            FinanceReversalRequest(request_key="reverse-voided-cost", note="撤回旧费用"))
+        self.assertEqual(reversal.reverses_id, original.id)
+
     async def test_adjustments_validate_owner_duplicate_batches_and_nonnegative_component(self):
         for payload, user in [
             (self.cost(allocations=[CostAllocationRequest(batch_id=1), CostAllocationRequest(batch_id=1)]), self.user),

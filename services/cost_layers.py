@@ -131,20 +131,27 @@ async def ensure_batch_cost_editable(db, batch_id):
 
 
 async def sale_cost_context(db, sales):
-    if not financial_controls_enabled() or not sales:
+    if not sales:
         return {}
     from models import SaleCostDetail
-    details = (await db.execute(select(SaleCostDetail).where(
+    details = (await db.execute(select(SaleCostDetail, InventoryBatch).join(
+        InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id).where(
         SaleCostDetail.sale_id.in_([sale.id for sale in sales])
-    ))).scalars().all()
-    layers = await load_cost_layers(db, {detail.batch_id for detail in details})
+    ))).all()
+    layers = await load_cost_layers(db, {detail.batch_id for detail, _batch in details})
     result = {}
-    for detail in details:
-        context = result.setdefault(detail.sale_id, {"adjustment": ZERO, "batch_deltas": {}, "states": []})
+    for detail, batch in details:
+        context = result.setdefault(detail.sale_id, {"adjustment": ZERO, "batch_deltas": {},
+                                                      "states": [], "voided_batches": set()})
         delta = unit_adjustment(layers.get(detail.batch_id, []))
         context["adjustment"] += delta * Decimal(detail.quantity)
         context["batch_deltas"][detail.batch_id] = delta
         context["states"].append(cost_state(layers.get(detail.batch_id, [])))
+        if batch.voided_at is not None:
+            context["voided_batches"].add(batch.batch_no)
     for context in result.values():
-        context["cost_status"] = "actual" if all(s == "actual" for s in context["states"]) else "unverified"
+        context["cost_status"] = ("needs_review" if context["voided_batches"] else
+                                  "actual" if all(s == "actual" for s in context["states"]) else "unverified")
+        context["cost_review_reason"] = ("销售引用已作废批次：" + "、".join(sorted(context["voided_batches"]))
+                                         if context["voided_batches"] else None)
     return result

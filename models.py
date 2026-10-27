@@ -152,6 +152,10 @@ class InventoryBatch(Base):
     shipping_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # 头程发货时间
     arrived_at: Mapped[datetime] = mapped_column(DateTime)  # 入库时间
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # 作废保留销售成本、快照和调整来源的外键；业务查询不再把该批次当可用库存。
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    void_reason: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     product: Mapped["Product"] = relationship(back_populates="batches")
     user: Mapped["User"] = relationship(back_populates="batches")

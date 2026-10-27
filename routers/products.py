@@ -191,7 +191,8 @@ def _product_summary_stmt():
             ).label("stock_value"),
             func.max(InventoryBatch.arrived_at).label("last_batch_at"),
         )
-        .outerjoin(InventoryBatch, InventoryBatch.product_id == Product.id)
+        .outerjoin(InventoryBatch, (InventoryBatch.product_id == Product.id)
+                   & InventoryBatch.voided_at.is_(None))
         .group_by(
             Product.id,
             Product.sku,
@@ -261,7 +262,7 @@ async def export_products(
             ).label("stock_value"),
             func.max(InventoryBatch.arrived_at).label("last_batch_at"),
         )
-        .where(InventoryBatch.product_id.in_(product_ids))
+        .where(InventoryBatch.product_id.in_(product_ids), InventoryBatch.voided_at.is_(None))
         .group_by(InventoryBatch.product_id)
     )
     summary_map = {

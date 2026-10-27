@@ -202,6 +202,18 @@ class BatchUpdate(BatchCreate):
     cost_edit_mode: Literal["restate"] | None = None
 
 
+class BatchVoidRequest(BaseModel):
+    edit_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str = Field(min_length=1, max_length=1000)
+
+    @model_validator(mode="after")
+    def normalize_reason(self):
+        self.reason = self.reason.strip()
+        if not self.reason:
+            raise ValueError("必须填写作废原因")
+        return self
+
+
 class BatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -224,11 +236,18 @@ class BatchResponse(BaseModel):
     shipping_date: datetime | None = None
     arrived_at: datetime
     created_at: datetime
+    voided_at: datetime | None = None
+    voided_by: int | None = None
+    void_reason: str | None = None
     base_unit_cost: Decimal | None = None
     cost_adjustment_per_unit: Decimal = Decimal(0)
     cost_status: str = "unverified"
     edit_version: str
     edit_values: dict[str, Decimal] | None = None
+
+    @field_serializer("voided_at")
+    def serialize_void_time(self, value: datetime | None):
+        return value.replace(tzinfo=timezone.utc).isoformat() if value is not None else None
 
 
 class BatchPageResponse(BaseModel):
@@ -299,6 +318,7 @@ class SaleResponse(BaseModel):
     original_total_cost: Decimal | None = None
     cost_adjustment_cny: Decimal = Decimal(0)
     cost_status: str = "unverified"
+    cost_review_reason: str | None = None
     platform_fee: Decimal
     profit: Decimal
     currency: str = "CNY"
@@ -334,6 +354,7 @@ class MonthlySalesSummaryResponse(BaseModel):
     platform_fee_cny: Decimal | None = None
     gross_profit_cny: Decimal | None = None
     fx_missing_count: int = 0
+    cost_review_count: int = 0
     settlement_event_count: int = 0
 
 

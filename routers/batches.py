@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
 import re
@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import InventoryBatch, Product, User, Sale, SaleCostDetail, Store, BatchChangeLog
-from schemas import BatchCreate, BatchUpdate, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
+from schemas import BatchCreate, BatchUpdate, BatchVoidRequest, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse
 from auth import get_current_user, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch, ensure_batch_cost_editable
 from services.finance_config import financial_controls_enabled
@@ -138,6 +138,8 @@ async def update_batch(
     batch = await _locked_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
+    if batch.voided_at is not None:
+        raise HTTPException(status_code=409, detail={"code": "batch_voided", "message": "批次已作废，不能继续编辑。"})
 
     if data.edit_version is None:
         raise HTTPException(428, detail={"code": "batch_edit_version_required",
@@ -277,6 +279,8 @@ async def delete_batch(
     batch = await _locked_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
+    if batch.voided_at is not None:
+        raise HTTPException(status_code=409, detail={"code": "batch_voided", "message": "批次已作废，不能再次删除。"})
 
     if user.role == "operator" and batch.user_id != user.id:
         raise HTTPException(status_code=403, detail="无权删除此批次")
@@ -291,17 +295,55 @@ async def delete_batch(
     return {"ok": True}
 
 
+@router.post("/{batch_id}/void", response_model=BatchResponse)
+async def void_batch(
+    batch_id: int,
+    data: BatchVoidRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireOperator),
+):
+    """作废错误历史批次，保留销售、成本来源与快照供人工核对。"""
+    batch = await _locked_batch(db, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="批次不存在")
+    if batch.voided_at is not None:
+        raise HTTPException(status_code=409, detail={"code": "batch_voided", "message": "批次已作废。"})
+    layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
+    if data.edit_version != AdjustedBatch(batch, layers).edit_version:
+        raise HTTPException(status_code=409, detail={"code": "batch_edit_conflict",
+            "message": "批次或成本来源已改变，请刷新后核对再作废。"})
+    before = _batch_change_values(batch, layers)
+    batch.voided_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    batch.voided_by = user.id
+    batch.void_reason = data.reason
+    # 先按数据库字段精度落库，再将实际保存值用于日志、版本和响应。
+    await db.flush()
+    await db.refresh(batch, with_for_update=True)
+    after = _batch_change_values(batch, layers)
+    db.add(BatchChangeLog(
+        batch_id=batch.id, batch_no=batch.batch_no, action="void",
+        actor_id=user.id, actor_username=user.username, actor_role=user.role,
+        before_values=before, after_values=after,
+    ))
+    response = BatchResponse.model_validate(AdjustedBatch(batch, layers))
+    await db.commit()
+    return response
+
+
 @router.get("", response_model=list[BatchResponse] | BatchPageResponse)
 async def list_batches(
     product_id: int | None = None,
     keyword: str | None = Query(default=None, max_length=255),
+    voided_only: bool = False,
     page: int | None = Query(default=None, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
     """列出批次，可按商品名称、SKU 或批次号搜索。"""
-    filters = []
+    if voided_only and user.role not in {"admin", "operator"}:
+        raise HTTPException(status_code=403, detail="只有管理员或运营可查看已作废批次")
+    filters = [InventoryBatch.voided_at.is_not(None) if voided_only else InventoryBatch.voided_at.is_(None)]
     joins_product = False
     if product_id:
         filters.append(InventoryBatch.product_id == product_id)
@@ -342,14 +384,20 @@ async def export_batches(
     batch_ids: list[int] | None = Query(default=None, description="要导出的批次 ID，可重复传入"),
     product_id: int | None = Query(default=None),
     keyword: str | None = Query(default=None, max_length=255),
+    voided_only: bool = False,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
     """导出一个或多个批次为 Excel，并嵌入商品图片。"""
+    if voided_only and user.role not in {"admin", "operator"}:
+        raise HTTPException(status_code=403, detail="只有管理员或运营可导出已作废批次")
     stmt = select(InventoryBatch)
     if batch_ids:
         stmt = stmt.where(InventoryBatch.id.in_(batch_ids))
+        if user.role not in {"admin", "operator"}:
+            stmt = stmt.where(InventoryBatch.voided_at.is_(None))
     else:
+        stmt = stmt.where(InventoryBatch.voided_at.is_not(None) if voided_only else InventoryBatch.voided_at.is_(None))
         if product_id:
             stmt = stmt.where(InventoryBatch.product_id == product_id)
         if keyword and keyword.strip():
@@ -392,6 +440,7 @@ async def export_batches(
         "图片", "批次ID", "商品名称", "SKU", "批次号", "钉钉单号", "入库数", "剩余数",
         "采购价", "总金额", "头程运费", "头程运费钉钉单号", "尾程派送", "尾程派送费钉钉单号",
         "其他成本", "其他成本钉钉单号", "单件成本", "头程发货时间", "入库时间", "创建时间", "创建人ID", "店铺（创建人当前绑定）",
+        "作废时间（UTC）", "作废原因",
     ]
     sheet.append(headers)
     header_fill = PatternFill("solid", fgColor="5B9BD5")
@@ -411,8 +460,11 @@ async def export_batches(
             costs["total_amount"], costs["shipping_cost"], batch.shipping_cost_no or "", costs["last_mile_cost"],
             batch.last_mile_cost_no or "", costs["other_cost"], batch.other_cost_no or "", batch.unit_cost,
             batch.shipping_date, batch.arrived_at, batch.created_at, batch.user_id,
-            store_names.get(batch.user_id) or "未关联店铺",
+            store_names.get(batch.user_id) or "未关联店铺", batch.voided_at, batch.void_reason or "",
         ])
+        store_column = headers.index("店铺（创建人当前绑定）") + 1
+        sheet.cell(row_index, store_column).data_type = "s"
+        sheet.cell(row_index, store_column).number_format = "@"
         sheet.cell(row_index, len(headers)).data_type = "s"
         sheet.cell(row_index, len(headers)).number_format = "@"
         image_path = None

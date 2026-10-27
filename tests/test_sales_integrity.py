@@ -3,7 +3,7 @@ import unittest
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from sqlalchemy import create_engine
@@ -114,7 +114,8 @@ class SalesIntegrityTests(unittest.IsolatedAsyncioTestCase):
             except HTTPException as error:
                 return error.status_code
 
-        with patch("routers.sales._build_sale_response",side_effect=lambda sale, details, **kwargs: sale):
+        with (patch("routers.sales._build_sale_response",side_effect=lambda sale, details, **kwargs: sale),
+              patch("routers.sales.sale_cost_context", new=AsyncMock(return_value={}))):
             outcomes = await asyncio.gather(submit(),submit())
         self.assertEqual(sorted(outcomes), [200,409])
         self.assertEqual(len(inventory.sales),1)
