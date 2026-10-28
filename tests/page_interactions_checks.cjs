@@ -16,6 +16,8 @@ function setup(file) {
         api:async()=>{throw new Error('unexpected request');},showMsg:()=>{},loadBatches:()=>{},calcEditUnitCost:()=>{},
         refreshSalesWorkspace:()=>{context.refreshed=true;}});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),context);
+    // 此夹具只验证日期与撤销状态机；归属选择器由真实浏览器夹具覆盖。
+    context.window.PageInteractions.batchStores = {read: () => undefined, edit: () => {}, reset: () => {}};
     context.isOperator=()=>true; context.isAdmin=()=>true;
     vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,batchEditSessionEpoch=0,currentBatchList=[],CURRENT_USER_ID=7,salesRollbackBusy=false,salesPage=1,pendingConfirmationsPage=1;',context);
     for(const name of ['createBatch','batchEditBlockedReason','setBatchEditStatus','resetBatchEditSession','openEditBatch','closeEditBatch','saveEditBatch','rollbackSalesImport']) {

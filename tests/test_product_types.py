@@ -226,7 +226,7 @@ class ProductTypeReportingTests(unittest.IsolatedAsyncioTestCase):
             rules.append(SimpleNamespace(product_id=4, product_type="no_impairment", safe_stock_quantity=0,
                                          effective_date=date(2026, 9, 15)))
         return SimpleNamespace(info={}, execute=AsyncMock(side_effect=[
-            result(batches), result(rules), result([]), result([])]), commit=AsyncMock())
+            result(batches), result(rules), result([]), result([]), result([])]), commit=AsyncMock())
 
     async def test_mixed_types_api_excel_sku_and_profit_use_same_total(self):
         cutoff = date(2026, 9, 10)

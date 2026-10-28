@@ -181,6 +181,18 @@ class InventoryBatch(Base):
         return sha256(encoded.encode("utf-8")).hexdigest()
 
 
+class BatchImpairmentStore(Base):
+    """批次跌价金额的手工均分对象，不是实物库存或销售配额。"""
+    __tablename__ = "batch_impairment_stores"
+    __table_args__ = (
+        Index("ix_batch_impairment_stores_store_batch", "store_id", "batch_id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+
+    batch_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventory_batches.id"), primary_key=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), primary_key=True)
+
+
 class BatchChangeLog(Base):
     """追加式批次修改记录；保留身份快照，不随批次或账号删除级联丢失。"""
     __tablename__ = "batch_change_logs"

@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_serializer
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_serializer, field_validator
 
 
 class FinancialMoneyRequest(BaseModel):
@@ -181,6 +181,7 @@ class ProductImportResultRequest(BaseModel):
 # ========== 入库批次 ==========
 class BatchCreate(BaseModel):
     product_id: int
+    impairment_store_ids: list[int] = Field(default_factory=list, max_length=100)
     quantity: int = Field(..., gt=0)
     purchase_price: Decimal = Field(default=0, ge=0, examples=[100.00])
     dingtalk_order_no: str | None = Field(default=None, max_length=64, examples=["202608201234000000001"])
@@ -193,6 +194,13 @@ class BatchCreate(BaseModel):
     other_cost_no: str | None = Field(default=None, max_length=64)
     shipping_date: datetime | None = None
     arrived_at: datetime | None = None
+
+    @field_validator("impairment_store_ids")
+    @classmethod
+    def validate_impairment_stores(cls, value):
+        if any(store_id <= 0 for store_id in value):
+            raise ValueError("跌价归属店铺ID必须为正数")
+        return sorted(set(value))
 
 
 class BatchUpdate(BatchCreate):
@@ -220,6 +228,8 @@ class BatchResponse(BaseModel):
     id: int
     product_id: int
     user_id: int | None = None
+    impairment_store_ids: list[int] = Field(default_factory=list)
+    impairment_store_names: list[str] = Field(default_factory=list)
     batch_no: str
     quantity: int
     remaining_quantity: int

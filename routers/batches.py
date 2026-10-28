@@ -20,6 +20,7 @@ from auth import get_current_user, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch
 from services.finance_config import financial_controls_enabled
 from services.batch_edits import freeze_cost_basis, restate_costs
+from services.batch_store_allocations import AssignedBatch, load_batch_store_allocations, replace_stores, validate_stores
 
 router = APIRouter(prefix="/batches", tags=["入库管理"])
 BASE_DIR = Path(__file__).parent.parent
@@ -85,6 +86,7 @@ async def create_batch(
     product = await db.get(Product, data.product_id)
     if not product:
         raise HTTPException(status_code=404, detail=f"商品不存在: {data.product_id}")
+    actor_id = user.id
 
     purchase_price, total_amount = _resolve_purchase_values(data)
     unit_cost = _calc_unit_cost(purchase_price, data.quantity, data.shipping_cost, data.last_mile_cost, data.other_cost)
@@ -93,10 +95,11 @@ async def create_batch(
     prefix = f"LatinGo{arrived.strftime('%Y%m%d')}"
 
     for attempt in range(3):
+        stores = await validate_stores(db, data.impairment_store_ids)
         batch_no = await _next_batch_no(db, prefix)
         batch = InventoryBatch(
             product_id=data.product_id,
-            user_id=user.id,
+            user_id=actor_id,
             batch_no=batch_no,
             quantity=data.quantity,
             remaining_quantity=data.quantity,
@@ -115,6 +118,9 @@ async def create_batch(
         )
         db.add(batch)
         try:
+            await db.flush()
+            if stores:
+                await replace_stores(db, batch.id, stores)
             await db.commit()
         except IntegrityError:
             await db.rollback()
@@ -122,7 +128,7 @@ async def create_batch(
                 raise HTTPException(status_code=409, detail="批次号生成冲突，请稍后重试")
             continue
         await db.refresh(batch)
-        return batch
+        return AssignedBatch(batch, stores)
 
     raise HTTPException(status_code=409, detail="批次号生成冲突，请稍后重试")
 
@@ -146,7 +152,8 @@ async def update_batch(
             "message": "缺少批次编辑版本，请刷新页面后重新打开编辑。"})
 
     layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
-    current = AdjustedBatch(batch, layers)
+    stores = (await load_batch_store_allocations(db, {batch_id}, lock=True)).get(batch_id, [])
+    current = AssignedBatch(AdjustedBatch(batch, layers), stores)
 
     # 行锁内读取当前版本；排队的编辑必须携带打开表单时的版本，不能覆盖中途修改。
     if data.edit_version != current.edit_version:
@@ -167,7 +174,10 @@ async def update_batch(
             "message": f"入库数量不能小于已出库数量（{consumed}）。"})
     arrived = data.arrived_at or batch.arrived_at
 
-    before = _batch_change_values(batch, layers)
+    before = _batch_change_values(batch, layers, stores)
+    if "impairment_store_ids" in data.model_fields_set:
+        stores = await validate_stores(db, data.impairment_store_ids, existing=[store["id"] for store in stores])
+        await replace_stores(db, batch_id, stores)
     _, total_amount = _resolve_purchase_values(data, batch)
     effective = current.edit_values or {key: getattr(batch, key) for key in (
         "total_amount", "purchase_price", "shipping_cost", "last_mile_cost", "other_cost")}
@@ -235,15 +245,15 @@ async def update_batch(
     db.add(BatchChangeLog(
         batch_id=batch.id, batch_no=batch.batch_no, action="update",
         actor_id=user.id, actor_username=user.username, actor_role=user.role,
-        before_values=before, after_values=_batch_change_values(batch, after_layers),
+        before_values=before, after_values=_batch_change_values(batch, after_layers, stores),
     ))
-    response = BatchResponse.model_validate(AdjustedBatch(batch, after_layers))
+    response = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, after_layers), stores))
     await db.commit()
     return response
 
 
-def _batch_change_values(batch, layers=()):
-    values = BatchResponse.model_validate(AdjustedBatch(batch, layers)).model_dump(mode="json", exclude={
+def _batch_change_values(batch, layers=(), stores=()):
+    values = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, layers), stores)).model_dump(mode="json", exclude={
         "base_unit_cost", "cost_adjustment_per_unit", "cost_status", "edit_version",
     })
     # 日志保留当时页面的实际金额，原始成本依据另存cost_basis且不接受客户端覆盖。
@@ -293,23 +303,24 @@ async def void_batch(
     if batch.voided_at is not None:
         raise HTTPException(status_code=409, detail={"code": "batch_voided", "message": "批次已作废。"})
     layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
-    if data.edit_version != AdjustedBatch(batch, layers).edit_version:
+    stores = (await load_batch_store_allocations(db, {batch_id}, lock=True)).get(batch_id, [])
+    if data.edit_version != AssignedBatch(AdjustedBatch(batch, layers), stores).edit_version:
         raise HTTPException(status_code=409, detail={"code": "batch_edit_conflict",
             "message": "批次或成本来源已改变，请刷新后核对再作废。"})
-    before = _batch_change_values(batch, layers)
+    before = _batch_change_values(batch, layers, stores)
     batch.voided_at = datetime.now(timezone.utc).replace(tzinfo=None)
     batch.voided_by = user.id
     batch.void_reason = data.reason
     # 先按数据库字段精度落库，再将实际保存值用于日志、版本和响应。
     await db.flush()
     await db.refresh(batch, with_for_update=True)
-    after = _batch_change_values(batch, layers)
+    after = _batch_change_values(batch, layers, stores)
     db.add(BatchChangeLog(
         batch_id=batch.id, batch_no=batch.batch_no, action="void",
         actor_id=user.id, actor_username=user.username, actor_role=user.role,
         before_values=before, after_values=after,
     ))
-    response = BatchResponse.model_validate(AdjustedBatch(batch, layers))
+    response = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, layers), stores))
     await db.commit()
     return response
 
@@ -358,6 +369,8 @@ async def list_batches(
     cost_layers = await load_cost_layers(db, {batch.id for batch in batches})
     if cost_layers:
         batches = [AdjustedBatch(batch, cost_layers.get(batch.id, [])) for batch in batches]
+    assignments = await load_batch_store_allocations(db, {batch.id for batch in batches})
+    batches = [AssignedBatch(batch, assignments.get(batch.id, [])) for batch in batches]
     if page is None:
         return batches
     return BatchPageResponse(items=batches, total=total, page=page, page_size=page_size)
@@ -402,6 +415,7 @@ async def export_batches(
         batches = [AdjustedBatch(batch, cost_layers.get(batch.id, [])) for batch in batches]
 
     product_ids = {batch.product_id for batch in batches}
+    assignments = await load_batch_store_allocations(db, {batch.id for batch in batches})
     products_result = await db.execute(select(Product).where(Product.id.in_(product_ids)))
     products = {product.id: product for product in products_result.scalars().all()}
 
@@ -424,7 +438,7 @@ async def export_batches(
         "图片", "批次ID", "商品名称", "SKU", "批次号", "钉钉单号", "入库数", "剩余数",
         "采购价", "总金额", "头程运费", "头程运费钉钉单号", "尾程派送", "尾程派送费钉钉单号",
         "其他成本", "其他成本钉钉单号", "单件成本", "头程发货时间", "入库时间", "创建时间", "创建人ID", "店铺（创建人当前绑定）",
-        "作废时间（UTC）", "作废原因",
+        "作废时间（UTC）", "作废原因", "跌价归属店铺（均分）",
     ]
     sheet.append(headers)
     header_fill = PatternFill("solid", fgColor="5B9BD5")
@@ -445,12 +459,15 @@ async def export_batches(
             batch.last_mile_cost_no or "", costs["other_cost"], batch.other_cost_no or "", batch.unit_cost,
             batch.shipping_date, batch.arrived_at, batch.created_at, batch.user_id,
             store_names.get(batch.user_id) or "未关联店铺", batch.voided_at, batch.void_reason or "",
+            " / ".join(store["name"] for store in assignments.get(batch.id, [])) or "未指定（沿用原归属）",
         ])
         store_column = headers.index("店铺（创建人当前绑定）") + 1
         sheet.cell(row_index, store_column).data_type = "s"
         sheet.cell(row_index, store_column).number_format = "@"
         sheet.cell(row_index, len(headers)).data_type = "s"
         sheet.cell(row_index, len(headers)).number_format = "@"
+        sheet.cell(row_index, len(headers) - 1).data_type = "s"
+        sheet.cell(row_index, len(headers) - 1).number_format = "@"
         image_path = None
         if product and product.image:
             candidate = (BASE_DIR / product.image.lstrip("/")).resolve()

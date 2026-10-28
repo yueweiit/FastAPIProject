@@ -138,7 +138,8 @@ def version_workbook(version):
     rows = []
     decimal_fields = {"unit_cost", "base_unit_cost", "cost_adjustment_per_unit", "original_inventory_amount",
         "sold_cost_amount", "previous_book_value", "impairment_rate", "impairment_amount", "monthly_impairment_amount",
-        "opening_impairment_amount", "monthly_total_impairment_amount", "monthly_writeoff_amount"}
+        "opening_impairment_amount", "monthly_total_impairment_amount", "monthly_writeoff_amount",
+        "inventory_amount", "original_quantity", "sold_quantity", "quantity", "previous_month_quantity", "provision_quantity"}
     for raw in payload["inventory"]:
         item = dict(raw)
         item["arrived_at"] = date.fromisoformat(item["arrived_at"])

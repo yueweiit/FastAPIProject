@@ -201,9 +201,10 @@ class BatchVoidTests(unittest.IsolatedAsyncioTestCase):
         response = await self.request("GET", "/batches/export?voided_only=true")
         self.assertEqual(response.status_code, 200, response.text)
         sheet = load_workbook(io.BytesIO(response.content)).active
-        self.assertEqual(sheet.cell(1, sheet.max_column).value, "作废原因")
-        self.assertEqual(sheet.cell(2, sheet.max_column).value, reason)
-        self.assertEqual(sheet.cell(2, sheet.max_column).data_type, "s")
+        column = next(cell.column for cell in sheet[1] if cell.value == "作废原因")
+        self.assertEqual(sheet.cell(2, column).value, reason)
+        self.assertEqual(sheet.cell(2, column).data_type, "s")
+        self.assertEqual(sheet.cell(1, sheet.max_column).value, "跌价归属店铺（均分）")
 
     async def test_audit_failure_rolls_back_void(self):
         def fail_audit(*_args):

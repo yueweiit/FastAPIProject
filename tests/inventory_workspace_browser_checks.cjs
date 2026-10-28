@@ -60,6 +60,12 @@ async function main() {
         let productGate = null, productStatus = 200;
         const productCalls = [];
         const exportCalls = [];
+        const assignmentCalls = [];
+        const assignmentStores = [{id: 7, name: '店铺A', is_active: true}, {id: 8, name: '<店铺B>', is_active: true}];
+        const batchFixture = {id: 1, product_id: 1, batch_no: 'IN-TEST-1', user_id: 10, quantity: 100, remaining_quantity: 70,
+            purchase_price: '10.0000', total_amount: '1000.0000', unit_cost: '10.0000', shipping_cost: '0.0000', last_mile_cost: '0.0000',
+            other_cost: '0.0000', arrived_at: '2026-09-01T00:00:00', shipping_date: null, edit_version: 'a'.repeat(64),
+            impairment_store_ids: [7, 8], impairment_store_names: ['店铺A', '<店铺B>']};
         const pageErrors = [];
         page.on('pageerror', error => pageErrors.push(error.message));
         await page.route('**/*', async route => {
@@ -80,6 +86,14 @@ async function main() {
             }
             if (url.pathname === '/products/options') return fulfill(products);
             if (url.pathname === '/finance-masters/platform-sku-mappings') return fulfill([]);
+            if (url.pathname === '/finance-masters/stores') return fulfill(assignmentStores);
+            if (url.pathname === '/batches' || url.pathname === '/batches/1') {
+                if (route.request().method() !== 'GET') {
+                    const payload = route.request().postDataJSON(); assignmentCalls.push(payload);
+                    return fulfill({...batchFixture, ...payload, impairment_store_names: payload.impairment_store_ids.map(id => assignmentStores.find(store => store.id === id).name)});
+                }
+                return fulfill({items: [batchFixture], total: 1, page: 1, page_size: 20});
+            }
             if (url.pathname === '/inventory/export') {
                 exportCalls.push(Object.fromEntries(url.searchParams));
                 const status = exportStatus, html = exportHtml;
@@ -483,7 +497,34 @@ async function main() {
         if (process.env.INVENTORY_QA_DIR) await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'inventory-product-search-mobile.png'), fullPage: true});
         await page.locator('#iw-product').press('Escape');
         if (process.env.INVENTORY_QA_DIR) await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'inventory-mobile.png'), fullPage: true});
+        // 两份真实入库页面都支持多选归属，新建与编辑提交相同的稳定店铺ID。
         await page.setViewportSize({width: 1440, height: 1000});
+        for (const suffix of ['/', '/copy']) {
+            await page.goto(address + suffix);
+            await page.waitForFunction(() => CURRENT_USER_ID === 10);
+            await page.getByRole('button', {name: '入库管理', exact: true}).click();
+            await page.locator('#b-impairment-stores input[value="7"]').waitFor();
+            await page.locator('#b-impairment-stores input[value="7"]').check();
+            await page.locator('#b-impairment-stores input[value="8"]').check();
+            check(await page.locator('#b-impairment-stores small').innerText().then(text => text.includes('2家')), true);
+            if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.locator('#b-impairment-stores').screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'batch-impairment-stores-create.png')});
+            check(await page.locator('#b-impairment-stores 店铺B').count(), 0);
+            await page.locator('#b-pid').selectOption('1');
+            await page.locator('#b-qty').fill('100');
+            await page.locator('#b-total-amount').fill('1000');
+            await page.getByRole('button', {name: '入库', exact: true}).click();
+            await page.waitForFunction(() => document.getElementById('batches-tbody').textContent.includes('店铺A'));
+            check(assignmentCalls.at(-1).impairment_store_ids, [7, 8]);
+            check(assignmentCalls.at(-1).quantity, 100);
+            await page.locator('#batches-tbody button').filter({hasText: '编辑'}).click();
+            check(await page.locator('#eb-impairment-stores input[value="8"]').isChecked(), true);
+            if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.locator('#eb-impairment-stores').screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'batch-impairment-stores-edit.png')});
+            await page.locator('#eb-impairment-stores input[value="8"]').uncheck();
+            await page.locator('#eb-save').click();
+            await page.waitForFunction(() => document.getElementById('edit-batch-modal').style.display === 'none');
+            check(assignmentCalls.at(-1).impairment_store_ids, [7]);
+            check(assignmentCalls.at(-1).quantity, 100);
+        }
         role = 'viewer';
         await page.evaluate(async () => {handleSessionExpired(); await loadCurrentUser();});
         await page.locator('[data-inventory-nav]').click();

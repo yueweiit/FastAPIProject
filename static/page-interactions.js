@@ -10,6 +10,12 @@
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
         batchExport: '导出', batchEdit: '编辑',
+        batchImpairmentStores: '跌价归属店铺', batchImpairmentDefault: '未指定（沿用原归属）',
+        batchImpairmentHelp: '可多选；按剩余库存的跌价金额均分，不限制销售。更正后从入库日起重算，旧月度版本保留。',
+        batchImpairmentLoading: '正在加载归属店铺…', batchImpairmentFailed: '归属店铺加载失败，请刷新批次列表后重试。',
+        batchImpairmentInactive: '（已停用）',
+        batchImpairmentInvalid: '请选择存在且启用的跌价归属店铺。',
+        batchImpairmentSelected: '已选{count}家店铺，跌价金额均分',
         batchDeleteRetired: '直接删除已停用，请刷新页面后使用强制删除并填写作废原因。',
         batchForceDelete: '强制删除', batchVoidConfirm: '作废批次', batchVoidReason: '作废原因',
         batchVoided: '已作废', batchVoidedOnly: '查看已作废批次',
@@ -49,7 +55,8 @@
             shipping_cost: '头程运费', shipping_cost_no: '头程运费单号', last_mile_cost: '尾程派送费',
             last_mile_cost_no: '尾程派送费单号', other_cost: '其他成本', other_cost_no: '其他成本单号',
             shipping_date: '头程发货时间', arrived_at: '入库时间',
-            voided_at: '作废时间（UTC）', voided_by: '作废人ID', void_reason: '作废原因'},
+            voided_at: '作废时间（UTC）', voided_by: '作废人ID', void_reason: '作废原因',
+            impairment_store_ids: '跌价归属店铺ID', impairment_store_names: '跌价归属店铺'},
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 
@@ -206,12 +213,68 @@
         logNode('[data-log-close]').focus();
         return loadBatchLogs(1);
     }
+    let allocationStores = null, allocationSerial = 0;
+    const allocationSelections = {b: [], eb: []};
+    function renderAllocationStores(prefix, selected = allocationSelections[prefix], names = []) {
+        const root = document.getElementById(`${prefix}-impairment-stores`);
+        if (!root) return;
+        allocationSelections[prefix] = [...selected];
+        const ids = new Set(selected.map(Number));
+        const options = [...(allocationStores || [])];
+        selected.forEach((id, index) => {
+            if (!options.some(store => store.id === id)) options.push({id, name: names[index] || String(id), is_active: false});
+        });
+        root.innerHTML = `<fieldset style="border:1px solid var(--line);border-radius:8px;padding:12px">
+            <legend>${escapeHtml(text('batchImpairmentStores'))}</legend>
+            <p class="cost-detail">${escapeHtml(text('batchImpairmentHelp'))}</p>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;max-height:140px;overflow:auto">${options.map(store =>
+                `<label style="display:flex;gap:6px;align-items:center;max-width:100%;overflow-wrap:anywhere"><input type="checkbox" value="${Number(store.id)}" ${ids.has(store.id) ? 'checked' : ''}
+                    ${allocationStores === null || !store.is_active && !ids.has(store.id) ? 'disabled' : ''}>${escapeHtml(store.name)}${store.is_active ? '' : escapeHtml(text('batchImpairmentInactive'))}</label>`).join('')}</div>
+            <small>${escapeHtml(allocationStores === null ? text('batchImpairmentLoading') : selected.length
+                ? text('batchImpairmentSelected').replace('{count}', selected.length) : text('batchImpairmentDefault'))}</small></fieldset>`;
+        root.onchange = () => {
+            allocationSelections[prefix] = [...root.querySelectorAll('input:checked')].map(input => Number(input.value));
+            root.querySelector('small').textContent = allocationSelections[prefix].length
+                ? text('batchImpairmentSelected').replace('{count}', allocationSelections[prefix].length) : text('batchImpairmentDefault');
+        };
+    }
+    async function loadAllocationStores() {
+        const serial = ++allocationSerial, userId = CURRENT_USER_ID;
+        allocationStores = null;
+        renderAllocationStores('b');
+        try {
+            const response = await fetch('/finance-masters/stores', {credentials: 'same-origin', headers: authHeaders()});
+            if (serial !== allocationSerial || CURRENT_USER_ID !== userId) return;
+            if (response.status === 401) {handleSessionExpired(); return;}
+            const data = await response.json();
+            if (serial !== allocationSerial || CURRENT_USER_ID !== userId) return;
+            if (!response.ok) throw new Error(text('batchImpairmentFailed'));
+            allocationStores = data;
+            renderAllocationStores('b');
+            if (document.getElementById('edit-batch-modal')?.style.display !== 'none') renderAllocationStores('eb');
+        } catch (error) {
+            if (serial !== allocationSerial || CURRENT_USER_ID !== userId) return;
+            const root = document.getElementById('b-impairment-stores');
+            if (root) root.textContent = text('batchImpairmentFailed');
+        }
+    }
+    const batchStores = {
+        load: loadAllocationStores,
+        edit: batch => renderAllocationStores('eb', batch.impairment_store_ids || [], batch.impairment_store_names || []),
+        read: prefix => {
+            if (allocationStores === null) throw new Error(text('batchImpairmentFailed'));
+            return [...allocationSelections[prefix]];
+        },
+        label: batch => batch.impairment_store_names?.join(' / ') || text('batchImpairmentDefault'),
+        reset: () => {allocationSerial++; allocationStores = null; allocationSelections.b = []; allocationSelections.eb = [];},
+    };
     window.PageInteractions = {
+        batchStores,
         text,
         batchDateTimeInput, batchDateTimeValue,
         reason: options => request({...options, reason: true}),
         confirmSalesRollback: () => request({title: text('rollbackTitle'), message: text('rollbackMessage')}),
         batchLogs,
-        cancel: () => { finish(null); closeBatchLogs(); },
+        cancel: () => { finish(null); closeBatchLogs(); batchStores.reset(); },
     };
 })();

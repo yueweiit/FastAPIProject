@@ -27,6 +27,8 @@ function setup(file) {
     resetProductImportPreview: () => {}, resetStoreProfitLossState: () => {},
     clearLegacyAuth: () => {}, showLogin: () => {}});
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
+  // 本文件验证批次编辑状态机；多店选择器的真实DOM/载入/提交另由浏览器回归验证。
+  c.window.PageInteractions.batchStores = {read: () => undefined, edit: () => {}, reset: () => {}, label: () => ''};
   vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,batchEditSessionEpoch=0,currentBatchList=[],CURRENT_USER_ID=7;' +
     'let batchTotal=1,batchPage=1,batchPageSize=20,batchListRequestId=0,visibleBatchColumns=new Set(),selectedBatchIds=new Set();', c);
   for (const name of ['formatApiError', 'handleSessionExpired', 'batchEditBlockedReason', 'renderBatchPage',
