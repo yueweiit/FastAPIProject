@@ -112,7 +112,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("shipping_revenue", "  运费收入", "manual", None),
     ("other_revenue", "  其他收入", "manual", None),
     ("operating_cost", "减：营业成本（对应）", "formula", None),
-    ("product_purchase_cost", "  应商品采购成本", "auto", "按批次采购金额权重分配已保存的FIFO销售成本"),
+    ("product_purchase_cost", "  商品采购成本", "auto", "按批次采购金额权重分配已保存的FIFO销售成本"),
     ("head_logistics_cost", "  头程尾程物流成本", "auto", "按批次头尾程费用权重分配已保存的FIFO销售成本"),
     ("inventory_other_cost", "  入库其他成本", "auto", "按批次其他费用权重分配已保存的FIFO销售成本"),
     ("customs_import_tax", "  关税及进口税费（正报）", "manual", None),
