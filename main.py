@@ -15,6 +15,7 @@ from migrate import migrate
 from routers import products, batches, sales, reports, auth, finance_masters
 from routers import eims_auth
 from routers import financial_control
+from routers import inventory
 from auth import seed_users
 from services.accounting_periods import ensure_period_snapshot, previous_month_end
 from services.auth_sessions import store as auth_session_store
@@ -102,6 +103,7 @@ app.include_router(sales.router)
 app.include_router(reports.router)
 app.include_router(finance_masters.router)
 app.include_router(financial_control.router)
+app.include_router(inventory.router)
 
 uploads_dir = BASE_DIR / "uploads"
 uploads_dir.mkdir(exist_ok=True)
@@ -123,4 +125,10 @@ async def financial_control_script():
 @app.get("/page-interactions.js", include_in_schema=False)
 async def page_interactions_script():
     return FileResponse(BASE_DIR / "static" / "page-interactions.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/inventory-workspace.js", include_in_schema=False)
+async def inventory_workspace_script():
+    return FileResponse(BASE_DIR / "static" / "inventory-workspace.js", media_type="text/javascript",
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})

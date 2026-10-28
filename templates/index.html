@@ -246,6 +246,64 @@
         .product-import-preview td:nth-child(3), .product-import-preview td:last-child { min-width:160px; max-width:300px; }
         .product-import-actions { justify-content:flex-end; margin-top:18px; }
         .product-import-dialog button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+        /* 库存工作台：商品固定列 + 数量日结，延续现有蓝白/红色操作体系。 */
+        .inventory-heading, .inventory-tabs, .inventory-filters, .inventory-footer { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+        .inventory-heading { justify-content:space-between; margin-bottom:18px; }
+        .inventory-heading h3 { margin:0 0 6px; }
+        .inventory-heading p, .inventory-note { color:var(--muted); font-size:13px; line-height:1.7; }
+        .inventory-tabs { margin-bottom:18px; }
+        .inventory-tabs [aria-pressed="true"] { background:var(--ink); color:#fff; border-color:var(--ink); }
+        .inventory-filters { align-items:flex-end; margin-bottom:16px; }
+        .inventory-filters .form-group span, .inventory-footer .form-group span { font-size:12px; color:var(--muted); }
+        .inventory-filters .form-group input, .inventory-filters .form-group select { min-width:160px; }
+        #iw-keyword { width:260px; max-width:100%; }
+        .inventory-product-picker { width:min(360px,100%); }
+        .inventory-keyword-picker { width:260px; max-width:100%; }
+        .inventory-product-control { position:relative; }
+        .inventory-product-picker label, .inventory-product-picker small { color:var(--muted); font-size:12px; }
+        .inventory-product-picker input { width:100%; }
+        .inventory-product-popup { position:absolute; top:100%; margin-top:4px; left:0; right:0; z-index:8; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #101d3624; }
+        .inventory-product-options { max-height:280px; overflow-y:auto; }
+        .inventory-product-options button { display:block; width:100%; border:0; border-bottom:1px solid var(--line); border-radius:0; padding:10px 12px; background:transparent; text-align:left; color:var(--ink); cursor:pointer; overflow-wrap:anywhere; }
+        .inventory-product-options button:hover, .inventory-product-options [aria-selected="true"] { background:var(--canvas); outline:2px solid var(--accent); outline-offset:-2px; }
+        .inventory-product-options strong, .inventory-product-options span { display:block; }
+        .inventory-product-search-status { margin:0; padding:8px 12px; color:var(--muted); font-size:12px; }
+        .inventory-product-search-status:empty { display:none; }
+        .inventory-workspace [hidden], .inventory-detail [hidden] { display:none !important; }
+        .inventory-status { margin:12px 0; color:var(--accent-dark); overflow-wrap:anywhere; }
+        .inventory-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; margin:20px 0; }
+        .inventory-stats > div { border-left:3px solid var(--line); padding:4px 16px; }
+        .inventory-stats span { display:block; color:var(--muted); font-size:12px; }
+        .inventory-stats strong { display:block; margin-top:5px; font-size:23px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+        .inventory-table-scroll { max-height:62vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+        .inventory-table { width:100%; margin:0; font-variant-numeric:tabular-nums; }
+        .inventory-table td { white-space:nowrap; }
+        .inventory-table th { position:sticky; top:0; z-index:2; white-space:nowrap; }
+        .inventory-table th:first-child { left:0; z-index:3; min-width:240px; }
+        .inventory-fixed { position:sticky; left:0; z-index:1; min-width:240px; background:var(--surface); }
+        .inventory-product { display:flex; gap:12px; align-items:center; min-width:210px; max-width:290px; white-space:normal; }
+        .inventory-product img, .inventory-image-empty { width:40px; height:40px; flex:none; object-fit:contain; }
+        .inventory-image-empty { display:flex; align-items:center; justify-content:center; color:var(--muted); background:var(--canvas); font-size:11px; border-radius:5px; }
+        .inventory-product small { display:block; color:var(--muted); margin-top:4px; }
+        .inventory-quantity { color:var(--teal); background:none; border:0; border-bottom:1px dotted currentColor; padding:4px 6px; font:inherit; cursor:pointer; }
+        .inventory-quantity:hover { color:var(--accent-dark); }
+        .inventory-quantity:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        .inventory-balance { font-weight:700; }
+        .inventory-matrix-cell { min-width:100px; line-height:1.8; }
+        .inventory-matrix-cell > div { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .inventory-matrix-cell > div:last-child { border-top:1px solid var(--line); }
+        .inventory-footer { justify-content:space-between; margin-top:18px; font-size:13px; color:var(--muted); }
+        .inventory-footer button + button { margin-left:8px; }
+        .inventory-detail { width:min(1000px,94vw); }
+        .inventory-detail .inventory-heading h3 { overflow-wrap:anywhere; min-width:0; }
+        @media(max-width:700px) {
+            .inventory-stats { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .inventory-fixed, .inventory-table th:first-child { min-width:165px; }
+            .inventory-product { min-width:140px; max-width:190px; gap:8px; }
+            .inventory-filters .form-group, #iw-keyword { width:100%; }
+            .inventory-filters .form-group input, .inventory-filters .form-group select { width:100%; }
+            .inventory-workspace { padding:16px; }
+        }
     </style>
 </head>
 <body>
@@ -276,6 +334,7 @@
 
 <div class="nav">
     <button class="active" onclick="switchTab('products')">商品管理</button>
+    <button onclick="switchTab('inventory')" data-inventory-nav></button>
     <button onclick="switchTab('batches')">入库管理</button>
     <button onclick="switchTab('gallery')">产品图册</button>
     <button onclick="switchTab('sales')">销售记录</button>
@@ -285,6 +344,8 @@
 
 <div class="container">
     <div id="msg"></div>
+
+    <div id="sec-inventory" class="section"><div id="inventory-workspace-root"></div></div>
 
     <!-- ========== 商品管理 ========== -->
     <div id="sec-products" class="section active">
@@ -873,7 +934,10 @@ function handleSessionExpired() {
     resetStoreProfitLossState();
     clearLegacyAuth();
     AUTH_CSRF = ''; CURRENT_ROLE = ''; CURRENT_USER = ''; CURRENT_USER_ID = 0;
-    if (typeof window !== 'undefined') window.FinanceControl?.reset();
+    if (typeof window !== 'undefined') {
+        window.FinanceControl?.reset();
+        window.InventoryWorkspace?.reset();
+    }
     document.querySelectorAll('#sec-sales tbody, #sec-reports tbody, #sec-reports tfoot, #users-tbody').forEach(node => node.innerHTML = '');
     document.getElementById('login-overlay').style.display = 'flex';
     showLogin();
@@ -1050,6 +1114,7 @@ function switchTab(name) {
     event.target.classList.add('active');
     if (name === 'products') loadProducts();
     if (name === 'batches') loadBatches();
+    if (name === 'inventory') window.InventoryWorkspace?.open();
     if (name === 'gallery') loadGallery();
     if (name === 'sales') {
         if (!salesMonth) setSalesMonthToCurrent();
@@ -3010,6 +3075,7 @@ document.getElementById('inventory-impairment-date').value = new Date().toLocale
 initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
+<script src="/inventory-workspace.js" defer></script>
 <script src="/financial-control.js" defer></script>
 </body>
 </html>
