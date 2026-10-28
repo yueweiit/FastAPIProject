@@ -225,7 +225,7 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result.created_count, result.skipped_count), (1, 1))
         self.assertEqual(len(db.added), 2)
         self.assertEqual(db.added[1].product_id, db.added[0].id)
-        self.assertEqual(db.added[1].product_type, "stable")
+        self.assertEqual(db.added[1].product_type, "safe_stock")
         self.assertEqual(db.added[1].safe_stock_quantity, 12)
         db.commit.assert_awaited_once()
         self.assertEqual(result.rows[1].status, "created")

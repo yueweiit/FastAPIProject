@@ -8,8 +8,8 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from services.inventory_impairment import (
-    ImpairmentRule, InventoryLayer, MAX_IMPAIRMENT_RATE, PRODUCT_TYPE_STABLE,
-    daily_impairment_rate, normalized_product_type,
+    ImpairmentRule, InventoryLayer, MAX_IMPAIRMENT_RATE,
+    daily_impairment_rate, effective_product_type, protected_stock_quantity,
 )
 
 ZERO = Decimal("0")
@@ -86,6 +86,7 @@ class ProvisionReplay:
     accruals: list[ProvisionAccrual]
     writeoffs: list[ProvisionWriteoff]
     notes: dict[int, str]
+    product_types: dict[int, str] = field(default_factory=dict)
     _accrual_totals: dict[int, _PeriodTotals] = field(init=False, repr=False, compare=False)
     _writeoff_totals: dict[int, _PeriodTotals] = field(init=False, repr=False, compare=False)
 
@@ -212,7 +213,7 @@ def replay_inventory_provisions(
             if not active_rules:
                 continue
             rule = active_rules[-1]
-            safe = max(0, rule.safe_stock_quantity) if normalized_product_type(rule.product_type) == PRODUCT_TYPE_STABLE else 0
+            safe = protected_stock_quantity(rule.product_type, rule.safe_stock_quantity)
             daily_rate = daily_impairment_rate(day, rule.product_type)
             quantities = {layer.batch_id: sum(part.quantity for part in parts[layer.batch_id]) for layer in group}
             if safe and any(
@@ -288,5 +289,9 @@ def replay_inventory_provisions(
                 )
             balances[day] = snapshot
         day += timedelta(days=1)
-    return ProvisionReplay(balances, accruals, writeoffs,
-                           {batch_id: "；".join(sorted(messages)) for batch_id, messages in notes.items()})
+    return ProvisionReplay(
+        balances, accruals, writeoffs,
+        {batch_id: "；".join(sorted(messages)) for batch_id, messages in notes.items()},
+        {product_id: effective_product_type(rules[-1].product_type, rules[-1].safe_stock_quantity)
+         for product_id, rules in rules_by_product.items()},
+    )

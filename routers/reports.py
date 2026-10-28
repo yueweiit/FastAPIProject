@@ -51,7 +51,8 @@ from services.cost_layers import load_cost_layers, base_cost_components, categor
 from services.inventory_impairment import (
     InventoryLayer,
     ImpairmentRule,
-    PRODUCT_TYPE_NEW,
+    PRODUCT_TYPE_NO_IMPAIRMENT,
+    IMPAIRMENT_STATUS_NAMES,
     batch_impairments,
 )
 
@@ -211,6 +212,9 @@ def _inventory_status(item):
         return "历史流水待核对"
     if not item["quantity"]:
         return "已售完"
+    if item.get("impairment_product_type") == PRODUCT_TYPE_NO_IMPAIRMENT:
+        key = "retained_provision" if item["impairment_amount"] else "no_impairment"
+        return IMPAIRMENT_STATUS_NAMES[key]
     if not item["provision_quantity"]:
         return "安全库存内"
     if item["impairment_rate"] >= Decimal("0.9"):
@@ -874,6 +878,7 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
         "账面价值=现存库存成本−期末准备；售完期末余额为0，本月总计提及销售转销仍可能非0。",
         "本月计提（现存库存）仅为期末仍在库部分本月形成的准备，不等于本月计提总额。",
         "安全库存按当天销售前实际数量保护最新批次/批内靠后数量层；已形成准备保留。",
+        "四类商品分别计提后汇总：稳健1%/日、新品0.5%/日、安全库存商品超额部分1%/日、不计跌价商品不新增；切换规则不清零历史准备。",
         "原始入库及保存销售成本独立保留；多批按自身成本/日期计算后加总，批次号在备注列。",
         "历史时序或数量异常的相关准备留空且不作不完整合计；推定规则及成本差异见备注。",
         "本表按现有流水重算，不读写或补建快照；缺失、撤销的真实历史不能自动恢复。",
@@ -1695,6 +1700,7 @@ async def _load_inventory_impairment_report_rows(
         result.append({
             "product_id": batch.product_id, "store_name": store or "未关联店铺", "store_id": owner,
             "sku": sku, "product_name": name, "product_type": kind, "safe_stock_quantity": safe,
+            "impairment_product_type": replay.product_types.get(batch.product_id),
             "arrived_at": batch.arrived_at.date(), "unit_cost": batch.unit_cost, "batch_no": batch.batch_no,
             "batch_id": batch.id,
             "base_unit_cost": getattr(batch, "base_unit_cost", batch.unit_cost),

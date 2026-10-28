@@ -22,9 +22,11 @@ from models import (
     User,
 )
 from services.inventory_impairment import (
-    PRODUCT_TYPE_NEW,
+    PRODUCT_TYPE_NAMES,
+    PRODUCT_TYPE_SAFE_STOCK,
     PRODUCT_TYPE_STABLE,
     VALID_PRODUCT_TYPES,
+    effective_product_type,
 )
 from schemas import ProductOptionResponse, ProductPageResponse, ProductResponse
 from auth import RequireAnyRole, SECRET_KEY, get_current_user
@@ -50,13 +52,11 @@ BASE_DIR = Path(__file__).parent.parent
 
 def _impairment_settings(product_type: str, safe_stock_quantity: int) -> tuple[str, int]:
     if product_type not in VALID_PRODUCT_TYPES:
-        raise HTTPException(status_code=422, detail="商品类型必须是稳健商品或新品")
+        raise HTTPException(status_code=422, detail="商品类型必须是" + "、".join(PRODUCT_TYPE_NAMES.values()))
     if safe_stock_quantity < 0:
         raise HTTPException(status_code=422, detail="安全库存不能小于 0")
-    return (
-        product_type,
-        0 if product_type == PRODUCT_TYPE_NEW else safe_stock_quantity,
-    )
+    product_type = effective_product_type(product_type, safe_stock_quantity)
+    return product_type, safe_stock_quantity if product_type == PRODUCT_TYPE_SAFE_STOCK else 0
 
 
 async def _save_product_image(normalized: tuple[str, bytes] | None) -> Path | None:
@@ -291,7 +291,7 @@ async def export_products(
     for row_index, (product, stock_qty, stock_value, last_batch) in enumerate(rows, start=2):
         sheet.append([
             "", product.id, product.sku, product.name,
-            "新品" if product.product_type == PRODUCT_TYPE_NEW else "稳健商品",
+            PRODUCT_TYPE_NAMES[effective_product_type(product.product_type, product.safe_stock_quantity)],
             product.safe_stock_quantity, stock_qty, stock_value, last_batch, product.created_at,
         ])
         # 导入的 SKU/名称按原始文本导出，保留前导零并避免被当作公式。

@@ -23,6 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Product, ProductImpairmentRule
 from schemas import ProductImportError, ProductImportResponse, ProductImportRow
+from services.inventory_impairment import (
+    PRODUCT_TYPE_NAMES, PRODUCT_TYPE_NEW, PRODUCT_TYPE_NO_IMPAIRMENT,
+    effective_product_type,
+)
 
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -37,8 +41,9 @@ HEADER_FIELDS = {
     "sku": "sku", "商品名称": "name", "产品名称": "name",
     "商品类型": "product_type", "安全库存": "safe_stock_quantity",
 }
-TYPE_NAMES = {"new": "新品", "stable": "稳健商品"}
-TYPE_VALUES = {"new": "new", "stable": "stable", "新品": "new", "稳健商品": "stable"}
+TYPE_NAMES = PRODUCT_TYPE_NAMES
+TYPE_VALUES = {**{key: key for key in TYPE_NAMES}, **{label: key for key, label in TYPE_NAMES.items()}}
+TYPE_OPTIONS = "、".join(TYPE_NAMES.values())
 STATUS_NAMES = {"new": "可新增", "skipped": "已存在，跳过", "error": "错误", "created": "已新增"}
 
 
@@ -76,9 +81,9 @@ def build_product_import_template() -> BytesIO:
         sheet.cell(row, 1).number_format = "@"
         sheet.cell(row, 2).number_format = "@"
         sheet.cell(row, 4).number_format = "0"
-    types = DataValidation(type="list", formula1='"新品,稳健商品"', allow_blank=False)
+    types = DataValidation(type="list", formula1='"' + ",".join(TYPE_NAMES.values()) + '"', allow_blank=False)
     types.errorTitle = "商品类型无效"
-    types.error = "请选择新品或稳健商品"
+    types.error = "请选择" + TYPE_OPTIONS
     types.showErrorMessage = True
     types.errorStyle = "stop"
     sheet.add_data_validation(types)
@@ -88,7 +93,7 @@ def build_product_import_template() -> BytesIO:
         allow_blank=True,
     )
     stock.errorTitle = "安全库存无效"
-    stock.error = "请输入非负整数；新品填写 0"
+    stock.error = "请输入非负整数；新品和不计跌价商品填写 0"
     stock.showErrorMessage = True
     stock.errorStyle = "stop"
     sheet.add_data_validation(stock)
@@ -97,8 +102,10 @@ def build_product_import_template() -> BytesIO:
     for note in (
         "在“商品导入”工作表填写数据；一行一个商品，最多 2000 条，文件不超过 5 MB。",
         "SKU 必须按文本填写，最多 64 字符；数字 SKU 丢失的前导零无法自动恢复。",
-        "商品名称必填，最多 255 字符；商品类型必填，选择新品或稳健商品。",
-        "安全库存留空按 0 处理；新品必须为 0；关键列不接受公式。",
+        "商品名称必填，最多 255 字符；商品类型必填，选择" + TYPE_OPTIONS + "。",
+        "安全库存留空按 0 处理；新品和不计跌价商品必须为 0；关键列不接受公式。",
+        "稳健商品全部库存每日计提1%；新品0.5%；安全库存商品超出安全库存部分每日1%；不计跌价商品不新增准备。",
+        "兼容旧文件：稳健商品填写正安全库存时，按安全库存商品导入；已有历史准备不因改为不计跌价而清零。",
         "数据库已有 SKU 默认跳过；文件内重复 SKU 为错误，需修正后再导入。",
         "预览包含隐藏行；有错误时整批不写入。确认时会再次校验数据库状态。",
         "这里只新增商品基础资料及当天规则，不导入图片、库存数量、成本或历史日期。",
@@ -109,7 +116,9 @@ def build_product_import_template() -> BytesIO:
     instructions.append([])
     instructions.append(list(IMPORT_HEADERS))
     instructions.append(["DEMO001", "示例商品 A", "新品", 0])
-    instructions.append(["DEMO002", "示例商品 B", "稳健商品", 100])
+    instructions.append(["DEMO002", "示例商品 B", "稳健商品", 0])
+    instructions.append(["DEMO003", "示例商品 C", "安全库存商品", 100])
+    instructions.append(["DEMO004", "示例商品 D", "不计跌价商品", 0])
     instructions.column_dimensions["A"].width = 105
     instructions.column_dimensions["B"].width = 30
     instructions.column_dimensions["C"].width = 18
@@ -213,7 +222,7 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
             raw_type = selected["product_type"].value
             type_value = TYPE_VALUES.get(str(raw_type or "").strip().casefold())
             if "product_type" not in invalid_fields and type_value is None:
-                error("商品类型", "请选择新品或稳健商品")
+                error("商品类型", "请选择" + TYPE_OPTIONS)
             raw_stock = selected["safe_stock_quantity"].value
             stock_value = None
             if "safe_stock_quantity" not in invalid_fields:
@@ -232,8 +241,10 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
                 if stock_value is None or not 0 <= stock_value <= MAX_SAFE_STOCK:
                     error("安全库存", "安全库存必须是 0 至 2147483647 的整数")
                     stock_value = None
-                elif type_value == "new" and stock_value != 0:
-                    error("安全库存", "新品的安全库存必须为 0")
+                elif type_value in (PRODUCT_TYPE_NEW, PRODUCT_TYPE_NO_IMPAIRMENT) and stock_value != 0:
+                    error("安全库存", TYPE_NAMES[type_value] + "的安全库存必须为 0")
+            if type_value is not None and stock_value is not None:
+                type_value = effective_product_type(type_value, stock_value)
             rows.append(ProductImportRow(
                 row_number=row_number, sku=sku, name=name,
                 product_type=type_value or _display(raw_type, 64) or None,

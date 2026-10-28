@@ -294,11 +294,12 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="p-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="p-name" placeholder="蓝牙耳机"></div>
-                    <div class="form-group"><label>商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable">稳健商品</option><option value="new">新品</option></select></div>
+                    <div class="form-group"><label>商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="safe_stock" data-product-type-text="safe_stock"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
                     <div class="form-group"><label>安全库存</label><input id="p-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片</label><input id="p-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createProduct()">添加</button></div>
                 </div>
+                <p class="product-import-hint" data-product-type-text="ruleHelp"></p>
                 <div id="p-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
@@ -307,7 +308,7 @@
                 <h3 id="product-import-title">批量导入商品</h3>
                 <button type="button" class="btn btn-secondary" data-product-import-control onclick="closeProductImport()">关闭</button>
             </div>
-            <p class="product-import-hint">新增商品基础资料，已有 SKU 自动跳过。库存、成本和图片通过对应功能单独维护；新品安全库存填 0。</p>
+            <p class="product-import-hint" data-product-type-text="importHelp"></p>
             <div class="product-import-toolbar">
                 <button type="button" class="btn btn-secondary" data-product-import-control onclick="downloadProductImportTemplate()">下载模板</button>
                 <input type="file" id="product-import-file" accept=".xlsx" aria-label="选择商品 Excel 文件" data-product-import-control onchange="resetProductImportPreview()">
@@ -333,11 +334,12 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="ep-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="ep-name" placeholder="蓝牙耳机"></div>
-                    <div class="form-group"><label>商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable">稳健商品</option><option value="new">新品</option></select></div>
+                    <div class="form-group"><label>商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="safe_stock" data-product-type-text="safe_stock"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
                     <div class="form-group"><label>安全库存</label><input id="ep-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片(留空不换)</label><input id="ep-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditProduct()">保存</button></div>
                 </div>
+                <p class="product-import-hint" data-product-type-text="ruleHelp"></p>
                 <div id="ep-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
@@ -1083,11 +1085,42 @@ function clearImage() {
     document.getElementById('p-preview').innerHTML = '';
 }
 
+function productTypeText(key) {
+    const messages = {'zh-CN': {
+        stable: '稳健商品', new: '新品', safe_stock: '安全库存商品', no_impairment: '不计跌价商品',
+        ruleHelp: '四选一：稳健商品全部库存每日计提1%；新品0.5%；安全库存商品仅超出安全库存部分每日1%；不计跌价商品停止新增计提。累计上限90%，已有准备保留并随销售转销。',
+        importHelp: '新增商品基础资料，已有 SKU 自动跳过。库存、成本和图片通过对应功能单独维护；新品和不计跌价商品安全库存填0。旧文件中稳健商品填写正安全库存时，按安全库存商品导入。',
+    }};
+    return (messages[document.documentElement.lang] || messages['zh-CN'])[key];
+}
+
+function productTypeValue(product) {
+    const type = product.product_type || 'stable';
+    return type === 'stable' && Number(product.safe_stock_quantity) > 0 ? 'safe_stock' : type;
+}
+
+function productTypeLabel(product) {
+    const type = productTypeValue(product);
+    return productTypeText(type) || type;
+}
+
+function productTypeTagClass(product) {
+    return ({stable: 'tag-blue', new: 'tag-orange', safe_stock: 'tag-green', no_impairment: ''})[productTypeValue(product)] || '';
+}
+
+function initializeProductTypes() {
+    document.querySelectorAll('[data-product-type-text]').forEach(node => {
+        node.textContent = productTypeText(node.dataset.productTypeText);
+    });
+    toggleSafeStockField('p');
+    toggleSafeStockField('ep');
+}
+
 function toggleSafeStockField(prefix) {
-    const isNew = document.getElementById(`${prefix}-product-type`).value === 'new';
+    const supportsSafeStock = document.getElementById(`${prefix}-product-type`).value === 'safe_stock';
     const input = document.getElementById(`${prefix}-safe-stock-quantity`);
-    input.disabled = isNew;
-    if (isNew) input.value = 0;
+    input.disabled = !supportsSafeStock;
+    if (!supportsSafeStock) input.value = 0;
 }
 
 async function createProduct() {
@@ -1234,7 +1267,7 @@ function renderProductImportReport(report) {
     document.getElementById('product-import-preview').hidden = false;
     document.getElementById('product-import-tbody').innerHTML = report.rows.map(row => {
         const [label, css] = statuses[row.status] || ['未知', 'tag-red'];
-        const type = row.product_type === 'new' ? '新品' : row.product_type === 'stable' ? '稳健商品' : row.product_type;
+        const type = row.product_type ? productTypeLabel(row) : '-';
         const errors = row.errors.map(error => `${error.field}：${error.message}`).join('；');
         const existing = row.existing_product_name ? `已有商品：${row.existing_product_name}；` : '';
         return `<tr><td>${row.row_number}</td><td>${escapeHtml(row.sku)}</td>
@@ -1330,8 +1363,8 @@ function renderProductPage() {
         <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
         <td><strong>${escapeHtml(p.sku)}</strong></td>
         <td>${escapeHtml(p.name)}</td>
-        <td><span class="tag ${p.product_type === 'new' ? 'tag-orange' : 'tag-blue'}">${p.product_type === 'new' ? '新品' : '稳健商品'}</span></td>
-        <td>${p.product_type === 'new' ? '-' : `${p.safe_stock_quantity}件`}</td>
+        <td><span class="tag ${productTypeTagClass(p)}">${escapeHtml(productTypeLabel(p))}</span></td>
+        <td>${productTypeValue(p) === 'safe_stock' ? `${p.safe_stock_quantity}件` : '-'}</td>
         <td><span class="tag ${p.stock_quantity > 0 ? 'tag-green' : 'tag-red'}">${p.stock_quantity}件</span></td>
         <td>¥${Number(p.stock_value).toFixed(2)}</td>
         <td>${p.last_batch_at || '-'}</td>
@@ -1578,7 +1611,7 @@ async function openEditProduct(id) {
     editingProductId = id;
     document.getElementById('ep-sku').value = p.sku;
     document.getElementById('ep-name').value = p.name;
-    document.getElementById('ep-product-type').value = p.product_type || 'stable';
+    document.getElementById('ep-product-type').value = productTypeValue(p);
     document.getElementById('ep-safe-stock-quantity').value = p.safe_stock_quantity || 0;
     toggleSafeStockField('ep');
     document.getElementById('ep-preview').innerHTML = p.image ? `<img src="${p.image}" style="max-height:80px;border-radius:6px">` : '';
@@ -2952,6 +2985,7 @@ async function loadProductLineProfit() {
 }
 
 // 初始加载
+initializeProductTypes();
 document.getElementById('inventory-impairment-date').value = new Date().toLocaleDateString('sv-SE');
 initializeAuth();
 </script>

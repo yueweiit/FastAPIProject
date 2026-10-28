@@ -8,7 +8,19 @@ from decimal import Decimal
 
 PRODUCT_TYPE_STABLE = "stable"
 PRODUCT_TYPE_NEW = "new"
-VALID_PRODUCT_TYPES = {PRODUCT_TYPE_STABLE, PRODUCT_TYPE_NEW}
+PRODUCT_TYPE_SAFE_STOCK = "safe_stock"
+PRODUCT_TYPE_NO_IMPAIRMENT = "no_impairment"
+PRODUCT_TYPE_NAMES = {
+    PRODUCT_TYPE_STABLE: "稳健商品",
+    PRODUCT_TYPE_NEW: "新品",
+    PRODUCT_TYPE_SAFE_STOCK: "安全库存商品",
+    PRODUCT_TYPE_NO_IMPAIRMENT: "不计跌价商品",
+}
+VALID_PRODUCT_TYPES = set(PRODUCT_TYPE_NAMES)
+IMPAIRMENT_STATUS_NAMES = {
+    "no_impairment": "不计跌价",
+    "retained_provision": "停止新增计提（保留历史准备）",
+}
 MAX_IMPAIRMENT_RATE = Decimal("0.9")
 
 
@@ -43,6 +55,22 @@ def normalized_product_type(value: str | None) -> str:
     return value if value in VALID_PRODUCT_TYPES else PRODUCT_TYPE_STABLE
 
 
+def effective_product_type(product_type: str, safe_stock_quantity: int) -> str:
+    """兼容旧 stable + 正安全库存；不重写商品或历史规则。"""
+    kind = normalized_product_type(product_type)
+    if kind == PRODUCT_TYPE_STABLE and safe_stock_quantity > 0:
+        return PRODUCT_TYPE_SAFE_STOCK
+    return kind
+
+
+def protected_stock_quantity(product_type: str, safe_stock_quantity: int) -> int:
+    return (
+        max(0, int(safe_stock_quantity))
+        if effective_product_type(product_type, safe_stock_quantity) == PRODUCT_TYPE_SAFE_STOCK
+        else 0
+    )
+
+
 def impairment_rate(as_of: date, arrived_at: date, product_type: str) -> Decimal:
     """Return the legacy cumulative rate for one batch as of a reporting date."""
     age_days = max((as_of - arrived_at).days, 0)
@@ -55,6 +83,8 @@ def impairment_rate(as_of: date, arrived_at: date, product_type: str) -> Decimal
 
 
 def daily_impairment_rate(as_of: date, product_type: str) -> Decimal:
+    if normalized_product_type(product_type) == PRODUCT_TYPE_NO_IMPAIRMENT:
+        return Decimal("0")
     if normalized_product_type(product_type) == PRODUCT_TYPE_NEW:
         return Decimal("0.005")
     return Decimal("0.01")
@@ -89,10 +119,8 @@ def _legacy_batch_impairments(
     results: dict[int, BatchImpairment] = {}
     for group_layers in grouped.values():
         product_type = normalized_product_type(group_layers[0].product_type)
-        safe_stock_remaining = (
-            max(0, int(group_layers[0].safe_stock_quantity))
-            if product_type == PRODUCT_TYPE_STABLE
-            else 0
+        safe_stock_remaining = protected_stock_quantity(
+            product_type, group_layers[0].safe_stock_quantity
         )
         for layer in sorted(
             group_layers,
@@ -160,10 +188,8 @@ def _historical_batch_impairments(
             if index + 1 < len(rules)
             else as_of + timedelta(days=1)
         )
-        protected = (
-            _safe_stock_protection(group_layers, max(0, int(rule.safe_stock_quantity)))
-            if normalized_product_type(rule.product_type) == PRODUCT_TYPE_STABLE
-            else {}
+        protected = _safe_stock_protection(
+            group_layers, protected_stock_quantity(rule.product_type, rule.safe_stock_quantity)
         )
         for layer in group_layers:
             days = max(
@@ -181,11 +207,7 @@ def _historical_batch_impairments(
                     interval_start, min(interval_end, period_start), rule.product_type
                 ) if period_start is not None else rate
             )
-            protected_quantity = (
-                protected.get(layer.batch_id, 0)
-                if normalized_product_type(rule.product_type) == PRODUCT_TYPE_STABLE
-                else 0
-            )
+            protected_quantity = protected.get(layer.batch_id, 0)
             updated_components = []
             for quantity, accumulated_rate in components[layer.batch_id]:
                 protected_part = min(quantity, protected_quantity)
