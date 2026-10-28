@@ -12,7 +12,7 @@
 | `sku` | `String(64)` | 否 | 本地商品 SKU | 唯一；索引 |
 | `name` | `String(255)` | 否 | 名称 | — |
 | `image` | `String(500)` | 是 | 图片访问路径 | — |
-| `product_type` | `String(16)` | 否 | stable 或 new | Python 默认：'stable' |
+| `product_type` | `String(16)` | 否 | stable / new / safe_stock / no_impairment，详见[业务规则](overview.md#业务规则) | Python 默认：'stable' |
 | `safe_stock_quantity` | `Integer` | 否 | 安全库存数量 | Python 默认：0 |
 | `created_at` | `DateTime` | 否 | 创建时间 | 数据库默认：func.now() |
 
@@ -24,7 +24,7 @@
 | --- | --- | --- | --- | --- |
 | `id` | `Integer` | 否 | 自增主键 | 主键 |
 | `product_id` | `Integer` | 否 | 本地商品关联 | 索引；ForeignKey('products.id', ondelete='CASCADE') |
-| `product_type` | `String(16)` | 否 | stable 或 new | Python 默认：'stable' |
+| `product_type` | `String(16)` | 否 | stable / new / safe_stock / no_impairment | Python 默认：'stable' |
 | `safe_stock_quantity` | `Integer` | 否 | 安全库存数量 | Python 默认：0 |
 | `effective_date` | `Date` | 否 | 规则生效日 | — |
 | `created_at` | `DateTime` | 否 | 创建时间 | 数据库默认：func.now() |
@@ -40,6 +40,8 @@
 ProductImpairmentRule 的 (product_id,effective_date) 唯一，按商品和生效日建复合索引；relationship 使用 all/delete-orphan，外键 ON DELETE CASCADE。同日修改覆盖当日规则，按日而非精确时间保留版本。
 
 products.sku 唯一；name 没有唯一约束，名称匹配可出现歧义。product_type/safe_stock_quantity 没有数据库级枚举或非负约束，主要依赖路由和导入服务校验。商品不含 store_id、user_id，不能推定是单店商品。
+
+2026-10-28扩展两种类型复用原有String(16)，没有新增列、表或迁移。历史`stable`+正安全库存的规则仍按安全库存保护解释，不批量回填；`no_impairment`仅停止后续增提，历史准备保留。旧月末快照和财务月度版本均不重写。
 
 products 被批次、销售、店铺映射、组件、结算及快照引用，除规则历史外不能假定级联删除。依据：[models.py](../../../models.py) 的 Product、ProductImpairmentRule；[products.py](../../../routers/products.py)。
 

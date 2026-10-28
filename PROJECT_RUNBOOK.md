@@ -4,6 +4,26 @@
 
 > 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
 
+## 库存查看工作台（2026-10-28）
+
+### 批次手工跌价归属（新增结构）
+
+新建/编辑批次增加“跌价归属店铺”多选，用于按剩余库存跌价金额均分；A/B可多卖少卖，不设库存配额、不改变共享FIFO。归属更正从入库日起重算查询报表，旧月度版本不覆盖；未指定沿用原口径。字段、事务及金额尾差见[库存规则](docs/modules/inventory/workflow.md#批次跌价归属)和[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。
+
+新增基础表batch_impairment_stores（batch_id/store_id复合主键、外键、店铺索引），不依赖财务增强开关，不自动回填旧批次。离线生成：`.\.venv\Scripts\python.exe migrations/add_batch_impairment_stores.py --write-sql output/batch_impairment_stores.sql`。脚本不连接数据库；2026-10-28经用户明确授权，仅在本地127.0.0.1:3309 / inventory_fifo_test新建该表，复合主键、外键/索引核验通过，新表0行，9张既有业务表记录数及校验值一致，证据位于output/batch-store-allocation/verification.json。没有回填数据、重启8010或部署生产。其他目标环境应先备份、核验父表INT/InnoDB、外键/字符集、权限及现存表结构，取得相应环境变更授权后建表，再统一加载models/schemas、batch_store_allocations、批次/报表/店铺路由、financial_versions、page-interactions及两份页面。启动会create_all且有其他写入，不能作为结构预检。回退应保留关联表/日志与旧版本，不删除业务数据。
+
+回归：`python -m unittest tests.test_batch_store_allocations -v`验证真实隔离批次路由、旧客户端保留、冲突、回滚、停用/权限、均分/历史更正/未知/尾差和产品线；`node tests/inventory_workspace_browser_checks.cjs`验证两份真实页面的多选创建、编辑和ID提交。真实MySQL锁等待/目标库结构及生产历史数据仍待环境验证。
+
+新增库存总览、每日进出、来源弹窗及Excel导出，包含按天/按商品/横向日期表。新增代码为`routers/inventory.py`、`services/inventory_activity.py`、`services/inventory_export.py`、`static/inventory-workspace.js`，`main.py`注册4个只读API和静态脚本；两份首页同步菜单、挂载、样式及退出清理。不能只更新HTML；获准发布时应同时更新这些文件并按既有流程加载后端/刷新页面。本功能无新表、迁移、业务数据回填或新增运行依赖；代码验证未启动业务应用或发布服务器。
+
+总览是共享记录余额与成本；完整每日期初/调整/期末仅管理员可见，其他绑定账号只看可见入库及本店出库。更正/作废单列调整，源记录矛盾返回null及待核对，不能补0或虚构平账数。历史按当前有效单据及既有日志重建，撤销删除的销售不重造；规则、权限和字段见[库存查看流程](docs/modules/inventory/workflow.md#库存查看与每日进出)及[API](docs/modules/inventory/api.md#库存查看-api)。
+
+导出当前查询全部商品，不限当前页；每日视图导出所选整月，按商品查看仅导出所选商品。上限2,000个商品，超限须缩小查询；Excel保留权限/未知空白并含范围说明。新`/inventory/export`需重启后端才能注册；仅刷新旧进程会返回未加载，页面有明确提示。本地8010可在运行终端手动重启，随后强制刷新页面；生产加载仍须遵循既有授权和发布流程。
+
+验证用`python -m unittest tests.test_inventory_workspace -v`（独立SQLite/ASGI）和`node tests/inventory_workspace_browser_checks.cjs`（现有Playwright/已安装浏览器、本地静态服务与模拟API）；详见[代码映射](docs/modules/inventory/code-map.md)。这些验证不运行main生命周期，不等于目标MySQL或生产历史数据验收。完整更新仍遵循本文既有备份、授权和启动副作用边界。
+
+顶部“商品名称 / SKU”和按商品查看均支持输入联想，复用现有`GET /products`分页搜索全部商品，不限当前库存页；候选展示SKU及名称。点选按ID精确筛选和导出，不选则保留关键字查询。总览增量支持可选product_id，不改原响应、权限或数据库结构；这次需加载更新后的Python路由及共享JS/两份页面，手动重启本地后端并强制刷新。交互和导出选择规则见[库存查看流程](docs/modules/inventory/workflow.md#库存查看与每日进出)。
+
 ## 批次跨创建人编辑与修改日志
 
 2026-10-26起，admin/operator可编辑任意创建人的历史批次并同事务写batch_change_logs；后续已开放已出库及已有补差批次的数量、金额和资料更正，处理规则见下节。原创建人、商品和库存归属不变；批次删除统一采用下节的软作废并保留日志。页面“日志”可只读核对前后值。
@@ -137,7 +157,7 @@ Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执�
 main.py                 应用入口、生命周期、首页、静态 uploads
 database.py             .env、异步 MySQL 引擎、会话、建表
 auth.py                 Cookie/Bearer 认证、密码、角色与初始用户
-models.py               28 张 ORM 表，含批次修改日志；8 张财务增强表默认关闭
+models.py               29 张 ORM 表，含批次修改日志；8 张财务增强表默认关闭
 schemas.py              Pydantic 请求和响应模型
 migrate.py              启动时自动执行的兼容迁移
 routers/auth.py         本地登录、建号、启停、角色/店铺和密码管理
@@ -145,6 +165,9 @@ routers/eims_auth.py    EIMS 登录、回调、退出和登录配置
 services/auth_sessions.py  Cookie/CSRF、独立认证事务、刷新和撤销
 routers/products.py     商品和图片上传
 routers/batches.py      入库批次与单件成本
+routers/inventory.py    共享库存总览、日结与受限来源明细（只读）
+services/inventory_activity.py  当前有效批次/FIFO/日志重建每日进出
+static/inventory-workspace.js  库存三视图、来源弹窗及会话隔离
 routers/sales.py        销售记录和 FIFO 出库
 routers/reports.py      月度报表
 services/fifo.py        FIFO 扣减和利润计算核心
@@ -157,7 +180,7 @@ docker-compose.yml      web 服务、8006:8000、uploads 挂载、MySQL 环境�
 
 ## 数据模型与业务规则
 
-数据库 ORM 定义了 28 张表（8 张财务增强表默认关闭）。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
+数据库 ORM 定义了 29 张表（8 张财务增强表默认关闭）。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
 
 - `users`：用户名唯一、密码哈希、角色 `admin`、`operator`、`viewer`，非管理员可绑定一个店铺。
 - `products`：SKU 唯一、名称、图片路径。

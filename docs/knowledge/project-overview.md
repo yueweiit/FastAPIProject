@@ -30,7 +30,7 @@ main.py                 应用组装、生命周期、首页、静态图片
 database.py / models.py  异步会话与 27张ORM表（8张财务增强表默认关闭）
 schemas.py / auth.py     数据契约、认证和角色依赖
 migrate.py              启动兼容迁移和历史记录修复
-routers/                八组HTTP路由，认证含本地与 EIMS 两组
+routers/                九组HTTP路由，认证含本地与 EIMS 两组，库存查看独立于批次写入
 services/               认证会话、EIMS、商品导入、FIFO、汇率、跌价、快照和 OA
 templates/index.html    实际运行首页，内嵌 CSS/JavaScript
 static/financial-control.js 财务工作台脚本与集中zh-CN文案

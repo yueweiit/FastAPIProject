@@ -11,7 +11,7 @@
 | [project-overview.md](project-overview.md) | 项目定位、技术栈、入口、目录 |
 | [architecture.md](architecture.md) | 系统关系、启动生命周期、事务与外部依赖 |
 | [business-map.md](business-map.md) | 功能清单、模块依赖、尚未实现的目标 |
-| [database.md](database.md) | 28张ORM表（其中8张默认关闭）、关系图、迁移与数据边界 |
+| [database.md](database.md) | 29张ORM表（其中8张默认关闭）、关系图、迁移与数据边界 |
 | [data-dictionary.md](data-dictionary.md) | 模块字段字典导航、跨模块字段及状态编码 |
 | [api-overview.md](api-overview.md) | 路由、调用关系、分页、错误与导出 |
 | [authentication.md](authentication.md) | 登录、角色矩阵、店铺隔离和例外 |
@@ -28,7 +28,7 @@
 | --- | --- | --- |
 | 认证与用户 | EIMS/本地登录、Cookie/CSRF、用户启停/管理、店铺绑定 | [auth/overview.md](../modules/auth/overview.md) |
 | 商品 | SKU、Excel 批量新增、图片、图册、安全库存与商品类型历史 | [products/overview.md](../modules/products/overview.md) |
-| 入库与库存 | 批次、采购和物流成本、库存编辑约束 | [inventory/overview.md](../modules/inventory/overview.md) |
+| 入库与库存 | 批次、库存总览/每日进出、采购和物流成本、库存编辑约束 | [inventory/overview.md](../modules/inventory/overview.md) |
 | 销售与导入 | FIFO、平台文件、组合 SKU、人民币金额、待确认和撤销 | [sales/overview.md](../modules/sales/overview.md) |
 | 财务主数据 | 店铺、产品线、店铺 SKU 和平台 SKU 映射 | [finance-masters/overview.md](../modules/finance-masters/overview.md) |
 | 报表与快照 | 存货跌价、店铺损益、产品线、财务附件、OA 取数 | [reports/overview.md](../modules/reports/overview.md) |

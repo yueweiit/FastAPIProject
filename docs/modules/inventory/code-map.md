@@ -1,9 +1,22 @@
 # 入库模块代码映射
 
+批次跌价多选由PageInteractions.batchStores及两份页面提供；POST/PUT在批次事务内调用[batch_store_allocations.py](../../../services/batch_store_allocations.py)校验/写入关联，AssignedBatch包含归属与内容版本。均分计算供报表复用，FIFO不调用。测试入口[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)，真实DOM见既有inventory_workspace_browser_checks.cjs；离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)。
+
+库存Excel由[services/inventory_export.py](../../../services/inventory_export.py)格式化，只消费页面共用的overview_row/activity_rows，不连接数据库或另算库存。接口测试核对总览/整月/横向格式、全查询范围、指定商品、跨店权限、未知合计空白、文本/公式安全、上限和分组期间一致性；浏览器测试核对下载文件名/参数、忙时重复点击、失败恢复、无效文件和旧会话响应。
+
+库存工作台入口为[routers/inventory.py](../../../routers/inventory.py)、[services/inventory_activity.py](../../../services/inventory_activity.py)、[static/inventory-workspace.js](../../../static/inventory-workspace.js)。两份首页同步菜单、挂载、样式及退出清理，保留此前非本功能差异。`python -m unittest tests.test_inventory_workspace -v`以独立SQLite/ASGI验证数量勾稽、更正/作废时点、取消未来到货、补差、权限、参数、分页及只SELECT。
+
+`node tests/inventory_workspace_browser_checks.cjs`使用现有Playwright、本地静态服务器及模拟API，真实无头浏览器检查两份页面、三视图、弹窗、转义、错误、退出/重登与晚响应、重复重建及窄屏。可用INVENTORY_PLAYWRIGHT_MODULE指定现有模块、INVENTORY_BROWSER_CHANNEL选择已安装浏览器、INVENTORY_QA_DIR保存截图；不安装依赖、不启动main、不连接业务库或外网，不代表目标MySQL/生产验收。
+
 | 页面/流程 | 前端函数 | 后端函数 | 数据/依赖 |
 | --- | --- | --- | --- |
 | 入库成本预览/创建 | calcUnitCost、createBatch | create_batch、_resolve_purchase_values、_calc_unit_cost、_next_batch_no | products、inventory_batches |
 | SKU 下拉 | loadBatchSkuOptions、loadProductOptions | list_product_options | products |
+| 库存总览/预警 | InventoryWorkspace.open、refresh、render | inventory.overview；复用products.list_products | 活动批次余量及有效成本 |
+| 每日进出/三种视图 | inventory-workspace.js | inventory.daily、product_page、activity_data | inventory_activity.load_activity_sources/build_activity |
+| 顶部联想/按商品输入检索 | searchField、bindProductSearch、searchProducts、chooseProduct、applyKeywordQuery | products.list_products；inventory.overview/daily/export(product_id) | 共用候选20项与键盘逻辑，独立请求状态；精确ID、关键字查询、输入法、取消及会话隔离 |
+| 来源弹窗 | openDetail、loadDetail、closeDetail | inventory.movements | 分页FIFO、到货基数、更正及作废负调整 |
+| 库存/整月/横向Excel导出 | exportInventory；固定条件、会话隔离 | inventory.export_inventory；overview_row、activity_rows | services/inventory_export.py只格式化查询结果，含范围/空值说明 |
 | 搜索/分页 | loadBatches、searchBatches、renderBatchPage | list_batches | 批次、商品 |
 | 字段显示 | toggleBatchColumn、applyBatchColumnSelection | 无后端写入 | 浏览器列状态 |
 | 编辑 | batchEditBlockedReason、openEditBatch、saveEditBatch | _locked_batch、update_batch | 库存剩余数、成本调整当前读、InventoryBatch.edit_version |

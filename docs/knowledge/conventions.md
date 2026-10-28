@@ -34,9 +34,11 @@
 | 认证/商品权限/店铺隔离 | test_user_creation_permissions、test_product_feature_permissions、test_store_data_isolation |
 | EIMS/Cookie/CSRF/启停/刷新/退出 | test_eims_sso；node tests/auth_page_checks.cjs；授权后 mysql_auth_sessions 专用本地验证 |
 | 商品批量新增/模板/预览/结果 | test_product_import、test_product_feature_permissions；必要时授权的 mysql_product_import 专用本地库验证 |
+| 四种商品类型/历史切换/混合汇总 | test_product_types（隔离SQLite/API、导入导出、快照算法及损益勾稽）；node tests/product_types_page_checks.cjs（两份实际页面的DOM模拟） |
 | 商品图片/历史上传隔离/失败清理 | test_product_images（临时目录、独立ASGI应用，不运行main生命周期） |
 | FIFO/组合分摊/汇率/导入格式/订单防重 | test_sales_rules、test_fifo_concurrency、test_sales_integrity；必要时授权的mysql_sales_integrity本地InnoDB验证 |
 | 商品规则/跌价/快照/批次成本及SKU汇总 | test_inventory_provision_movements、test_provision_reporting、test_inventory_impairment_report（快照历史）、test_inventory_cost_summary、test_accounting_period_snapshots、test_accounting_period_removal；node tests/inventory_page_checks.cjs |
+| 库存工作台/每日进出/来源/Excel与权限 | test_inventory_workspace（隔离SQLite/ASGI、只读SQL、勾稽/更正/作废/成本/店铺范围、xlsx内容/空值/合计/文本安全/上限）；inventory_workspace_browser_checks.cjs（现有Playwright、模拟API、两份页面真实DOM、下载/失败/重复点击/会话隔离） |
 | 店铺损益/OA/财务附件 | test_store_profit_loss_report、test_provision_reporting、test_oa_office_expenses、test_financial_attachments_export；node tests/profit_loss_page_checks.cjs |
 | 独立结算、人工年累计、缺失汇率及跨入口勾稽 | test_financial_facts（独立内存SQLite，不连接业务MySQL）；test_sales_rules；覆盖列表分页和Excel未知合计 |
 | 前端交互 | 核对模板与副本；在获准运行的环境检查分页、选择、表单、错误和导出 |

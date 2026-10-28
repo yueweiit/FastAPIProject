@@ -19,6 +19,8 @@
 
 单条商品 POST/PUT 使用 multipart/form-data；sku、name 必填，image 可选。POST 的 product_type 默认 stable、safe_stock_quantity 默认 0；PUT 的两个规则字段可不传，保留现值。PUT 是商品表单更新，不是 JSON ProductCreate；schemas.py 中 ProductCreate 不能直接当该接口的接收契约。
 
+`product_type`接受`stable`、`new`、`safe_stock`、`no_impairment`，规则见[模块概览](overview.md#业务规则)。未知值或负安全库存返回422；新品/不计跌价商品的安全库存保存为0。兼容旧调用，`stable`带正安全库存规范为`safe_stock`；显式切换到全部库存计提的稳健商品时同时传`safe_stock_quantity=0`。查询仍返回商品实际保存的类型，不批量规范旧数据；页面和导出将旧`stable`正安全库存显示为安全库存商品。规则更新沿用当日生效与同一事务；列表数组/分页响应结构及现有角色权限不变。
+
 图片仅接受可解码的JPEG/PNG/GIF/WebP；扩展名不支持、内容伪造或损坏返回422，原文件超过5 MiB、像素超过2000万或重新编码后超过10 MiB返回413。图片会重新编码，动图保留首帧；保存和静态访问规则见[图片流程](workflow.md#创建与图片)。`/uploads`中非图片扩展名返回404，已有图片地址仍公开。
 
 GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认20，1–100）；名称或 SKU 模糊查询。不传 page 是数组，传 page 是 ProductPageResponse。options 返回 id、sku、name、image，适合下拉选择。

@@ -10,7 +10,7 @@ flowchart LR
     U -->|"同源 Cookie；写请求 CSRF"| A
     A --> T["templates/index.html"]
     A --> UP["/uploads 静态文件"]
-    A --> R["routers：认证、商品、批次、销售、主数据、报表、财务增强"]
+    A --> R["routers：认证、商品、批次、库存查看、销售、主数据、报表、财务增强"]
     R --> AU["auth.py：当前用户及角色"]
     R --> S["services：商品导入、FIFO、汇率、跌价、快照、OA"]
     AU --> SS["独立认证事务：会话、刷新、撤销"]
@@ -19,7 +19,7 @@ flowchart LR
     U -->|"授权与退出跳转"| EI
     R --> DB["database.py / AsyncSession"]
     S --> DB
-    DB --> M["外置 MySQL：28张ORM表，8张需显式启用"]
+    DB --> M["外置 MySQL：29张ORM表，8张需显式启用"]
     S -->|"HTTPS 历史汇率"| FX["Frankfurter"]
     S -->|"SELECT，只读"| OA["外置 OA PostgreSQL"]
     A --> W["asyncio 月末快照检查"]

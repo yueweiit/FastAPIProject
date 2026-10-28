@@ -6,12 +6,12 @@
 | --- | --- | --- | --- |
 | 认证与用户 | 本地/EIMS 混合登录、会话/CSRF、主动退出、当前用户、建号、启停、角色/密码、删除及店铺绑定 | 账号管理 admin；SSO 保留本地角色/店铺 | [认证路由](../../routers/auth.py)、[EIMS 路由](../../routers/eims_auth.py)；[认证模块](../modules/auth/overview.md) |
 | 商品 | SKU/名称/图片维护、Excel 模板/预览/批量新增、图册、搜索分页、图片 Excel 导出、商品类型/安全库存和生效历史 | 三种角色均可读写，共享商品；导入已有 SKU 跳过 | [routers/products.py](../../routers/products.py)；[商品模块](../modules/products/overview.md) |
-| 入库与库存 | 批次、成本、数量更正、搜索导出、修改日志 | admin/operator跨创建人编辑历史批次；保留已售数、成本追加追溯；删除限制保留；普通读取共享，日志仅admin/operator | [routers/batches.py](../../routers/batches.py)；[库存模块](../modules/inventory/overview.md) |
+| 入库与库存 | 批次、成本、数量更正、搜索导出、日志、库存总览/每日进出/来源 | admin/operator维护批次；总览共享，日结管理员全量、其他账号仅本店出库，完整调整仅admin | [批次](../../routers/batches.py)、[库存查看](../../routers/inventory.py)；[库存模块](../modules/inventory/overview.md) |
 | 销售与导入 | 指定店铺手工销售、FIFO、成本来源、CSV/Excel 导入、组合组件成本分摊、待确认查询/导出、导入记录及撤销、人民币月度汇总 | 写入 admin/operator；非 admin 的敏感数据按绑定店铺 | [routers/sales.py](../../routers/sales.py)；[销售模块](../modules/sales/overview.md) |
 | 财务主数据 | 店铺、产品线、店铺 SKU 生效映射、平台 SKU 及组件倍数 | 店铺/产品线/店铺 SKU 写入仅 admin；平台 SKU 三种角色均可写 | [routers/finance_masters.py](../../routers/finance_masters.py)；[主数据模块](../modules/finance-masters/overview.md) |
 | 报表与快照 | 月度销量/当前库存、存货跌价、月末快照、店铺损益人工项、产品线毛利、财务附件、OA 费用读取 | 损益保存 admin/operator；各接口隔离不同，见权限文档 | [routers/reports.py](../../routers/reports.py)；[报表模块](../modules/reports/overview.md) |
 
-上述模块加财务增强共七个业务模块，对应八组注册路由，认证包含本地和 EIMS 两组；图册属于商品展示，OA、汇率和快照属于服务能力，不虚构独立业务系统。EIMS 真实客户端与生产联调状态见[接入说明](../modules/auth/eims-sso-setup.md)。
+上述模块加财务增强共七个业务模块，对应九组注册路由，认证包含本地和EIMS两组，库存查看独立于批次写入；图册属于商品展示，OA、汇率和快照属于服务能力，不虚构独立业务系统。EIMS真实客户端与生产联调状态见[接入说明](../modules/auth/eims-sso-setup.md)。
 
 财务增强提供成本补差、费用来源、平台分类/回款和不可变月度版本，默认关闭；权限、边界和目标库待办见[财务增强模块](../modules/financial-control/overview.md)。
 

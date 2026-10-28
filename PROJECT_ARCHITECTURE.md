@@ -2,6 +2,14 @@
 
 > 本文档是本项目后续开发、排障和部署前的必读说明。任何代码、数据库结构、配置或部署方式发生变化后，必须同步更新本文档和 `PROJECT_RUNBOOK.md`。
 
+## 2026-10-28 库存查看工作台
+
+批次另新增batch_impairment_stores关联表维护手工跌价归属，POST/PUT与日志同事务，单店全额/多店均分，归属更正从入库日起重算动态报表，旧版本不变。由services/batch_store_allocations.py统一余额/期间增提/转销分摊；不改变共享FIFO、销售额度、原成本或历史批次数量。新表/部署前提见[运行说明](PROJECT_RUNBOOK.md#批次手工跌价归属新增结构)，业务/尾差定义见[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。以下只读库存页面的“无新表”限定于该页面自身，批次归属功能需独立结构准备。
+
+库存查看另增`GET /inventory/export`，按当前查询全部商品导出总览、月度汇总/每日明细或日期横向Excel。服务复用库存/日结响应构建，保留店铺权限及未知空值，文件格式化集中于`services/inventory_export.py`；读完数据后释放事务再生成文件，原FIFO/表结构不变。接口总计4个只读GET，导出范围及保护见[库存API](docs/modules/inventory/api.md#库存导出)。
+
+新增只读`/inventory/overview`、`/inventory/daily`、`/inventory/movements`及独立库存菜单，支持库存总览、按天/商品/横向日期表和来源明细。复用批次/FIFO/已有更正日志，原写入事务和表结构不变；全量日结仅admin，其他绑定账号仅本店出库，不能以本店流水勾稽共享库存。历史按当前有效事实重算，不声称可恢复撤销前销售。详细口径、空值及接口统一维护于[库存模块](docs/modules/inventory/overview.md)。本轮未迁移、启动业务服务或部署。
+
 ## 2026-10-16 安全及财务一致性更新
 
 本次增加商品图片有界解码/重新编码及历史活动文件隔离；销售新增可空order_claim及唯一索引，只由新订单首条明细占位，仍为19张ORM表。FIFO和导入预分配排除销售日之后到货的批次，保持原锁序和事务；损益页面隔离过期响应、保存绑定已加载条件，以新增current保存范围保留人工比较值（默认API仍完整替换）；09/10/12成本纳入批次other_cost。源代码和模块入口见[修复记录](docs/development/2026-10-16-project-safety-fixes.md)。
@@ -151,7 +159,7 @@ test_main.http          手工请求示例
 
 批次修改权限与日志：运营/管理员可编辑任意历史批次，保留已售数；已售或已补差批次的数量/金额更正须启用财务增强，以cost_basis冻结原依据、追加差额追溯原销售月，不回写FIFO单价或旧月度版本。编辑与日志/凭证同事务；删除统一采用有原因、有版本校验的软作废，保留原批次和关联记录，旧DELETE接口返回410。规则见[库存模块](docs/modules/inventory/overview.md)，结构准备见[运行说明](PROJECT_RUNBOOK.md#已出库批次编辑与成本重述)。
 
-当前 ORM 定义28张表（8张财务增强表默认关闭）；以下为FIFO核心的五张，其余为店铺、平台SKU、导入、结算、财务及两张认证状态表，完整字典见[数据库总览](docs/knowledge/database.md)：
+当前 ORM 定义29张表（8张财务增强表默认关闭）；以下为FIFO核心的五张，其余为店铺、平台SKU、导入、结算、财务及两张认证状态表，完整字典见[数据库总览](docs/knowledge/database.md)：
 
 ```text
 users

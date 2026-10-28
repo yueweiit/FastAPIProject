@@ -3,6 +3,7 @@
 | 页面/功能 | 前端函数 | 后端方法 | 表/服务 |
 | --- | --- | --- | --- |
 | 创建/修改 | createProduct、openEditProduct、saveEditProduct | create_product、update_product、_impairment_settings | products、product_impairment_rules |
+| 类型/安全库存/旧规则兼容 | productTypeValue、productTypeLabel、productTypeText、toggleSafeStockField | effective_product_type、protected_stock_quantity | services/inventory_impairment.py；商品及规则历史 |
 | 商品批量新增 | openProductImport、previewProductImport、confirmProductImport | preview_products、import_products | services/product_import.py；products、product_impairment_rules |
 | 模板/结果清单 | downloadProductImportTemplate、downloadProductImportResult | product_import_template、export_product_import_result | openpyxl；ProductImportResponse、ProductImportResultRequest |
 | 搜索/分页/汇总 | loadProducts、searchProducts、renderProductPage | list_products、_product_summary_stmt、_enrich_product | products、inventory_batches |

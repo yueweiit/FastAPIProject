@@ -8,7 +8,7 @@
 
 ## 业务规则
 
-SKU 唯一；类型只接受 stable（稳健）和 new（新品）；安全库存不能负数，新品强制为 0。创建或修改商品规则时，写入 product_impairment_rules 的生效历史，用于跌价计算，不只维护产品当前字段。依据：_impairment_settings、create_product、update_product。
+SKU 唯一；商品类型四选一：`stable`（稳健商品，全部库存每日1%）、`new`（新品，全部库存每日0.5%）、`safe_stock`（安全库存商品，仅超出安全库存部分每日1%）、`no_impairment`（不计跌价商品，停止新增计提）。每日为成本的线性比例，累计上限90%；报表分别计算后汇总，不对同一商品重复套用类型。安全库存不能负数，仅安全库存商品可设置，其他类型保存为0。兼容旧客户端/旧Excel：`stable`携带正安全库存时归为`safe_stock`；旧商品及历史规则不批量改写，计算与页面展示保留原安全库存语义。创建或修改规则仍记录生效历史；停止计提不会清零已形成准备，销售时照常转销。依据：[inventory_impairment.py](../../../services/inventory_impairment.py)的类型常量、`effective_product_type`、`protected_stock_quantity`及路由`_impairment_settings`、`create_product`、`update_product`。
 
 批量新增采用“下载模板 → 上传校验预览 → 确认导入 → 下载清单”。只支持 .xlsx，每次最多 2,000 个非空数据行、5 MB；SKU 必须按文本填写，保留前导零。已有 SKU 跳过且不更新，文件内重复 SKU 和字段错误阻止整批提交。确认时重新校验文件及数据库，新增商品与当日规则一起提交；不导入图片、库存、成本或历史日期。细节见[批量导入流程](workflow.md#商品-excel-批量新增)。
 

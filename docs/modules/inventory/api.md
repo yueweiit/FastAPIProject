@@ -1,4 +1,4 @@
-# 入库批次 API
+# 入库批次与库存查看 API
 
 前缀 /batches，共7个端点（含1个已停用的兼容入口）。admin/operator可编辑或作废任意创建人的历史批次（含已售），强制留痕。页面统一通过“强制删除”执行软作废，未出库批次也保留原记录；旧物理删除接口返回410。活动批次共享读取，修改日志仅admin/operator可读。
 
@@ -12,11 +12,44 @@
 | `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、keyword、page、page_size、voided_only | list[BatchResponse] \| BatchPageResponse |
 | `GET /batches/export` | [export_batches](../../../routers/batches.py) | admin/operator/viewer | batch_ids、product_id、keyword、voided_only | Excel 文件 |
 
+## 库存查看 API
+
+新增[inventory.py](../../../routers/inventory.py)的4个只读GET接口，既有批次/商品契约和写入权限不变：
+
+| 方法与路径 | 参数 | 范围与响应 |
+| --- | --- | --- |
+| GET /inventory/overview | keyword≤255、可选product_id>0、page≥1、page_size=20（1–100） | 既有角色共享，可未绑定；items/total/page/page_size、scope=shared、summary |
+| GET /inventory/daily | month为过去/当前月首日；可选product_id>0、keyword、page/page_size | admin为global；其他账号须绑定，scope=store_outbound；items/total/page/page_size、month/start/end、scope、warnings |
+| GET /inventory/movements | product_id>0、day、kind=inbound/outbound/adjustment（默认outbound）、page/page_size | 出库按销售权限，adjustment仅admin，viewer入库来源排除作废；items/total/page/page_size、product_id/sku/name/day/kind |
+| GET /inventory/export | view=overview/daily/matrix（默认overview）、keyword、可选product_id；daily/matrix必传month | 总览共享，日结沿用绑定店铺权限；xlsx附件，不按页面分页截断 |
+
+overview.items沿用商品响应，旧stable正安全库存显示safe_stock，追加stock_status=zero/low/normal/pending（负库存待核对）；summary.quantity/inventory_amount/low_count/zero_count仅为本页小计。预警只针对安全库存商品；金额含启用的成本补差，不扣跌价准备。
+
+overview的可选product_id用于联想候选精确筛选，复用商品有效成本聚合；与keyword按AND组合，无匹配返回空页，页码归一为1。未传时保留原搜索/分页契约。联想继续复用`GET /products?keyword=...&page=1&page_size=20`，不新增候选API或变更商品接口；总览、日结和导出均携带所选ID。
+
+daily.items含product_id/sku/name/image/warnings及days，每日字段为date、opening_quantity、inbound、outbound、adjustment、closing_quantity，含无变动日。非管理员期初/调整/期末为null，不在客户端补0或通过额外店铺参数越权。矛盾日结返回null及warning；更正链不连续导致入库基数不可信时，inbound及对应来源quantity也为null，不能输出按矛盾日志推导的件数。口径见[日结流程](workflow.md#库存查看与每日进出)。
+
+movements.items含source_id、batch_id、batch_no、occurred_at、kind、quantity、reference；kind为inbound/outbound/quantity_correction/void，入库正数、出库负数、更正为差额、未知作废量null。reference为入库单号或有权读取的订单号，不返回其他店铺订单、日志身份、成本、原始JSON。日志/作废显示上海业务时间，不替代审计日志接口。
+
+非法月份、未来日或源超限422，商品不存在404，未绑定/越权403；新增detail={code,message}，稳定码为inventory_month_invalid、inventory_future_date、inventory_sources_too_large、inventory_product_missing、inventory_adjustment_restricted。当前月截止上海当天，超过末页调整页码。GET /inventory-workspace.js是静态脚本。
+
+### 库存导出
+
+view=overview输出“库存总览”“说明”；daily输出“月度汇总”“每日进出”“说明”；matrix输出“月度汇总”“每日横向表”“说明”，每天有入库/出库/调整/期末四列。商品追踪传所选product_id，其他视图导出当前查询全部匹配商品，不限当前页；daily为所选月全期间，不只当前选中日期。
+
+单次最多2,000个商品，每100个分组复用页面查询/日结构建并固定同一期间；10,000条源记录保护仍有效。结果转成普通数据后释放只读事务，再在线程中生成Excel，不创建业务记录或补快照。MIME为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet，附件名inventory_overview_YYYYMMDD.xlsx或inventory_daily/matrix_YYYYMM.xlsx。
+
+非管理员期初/调整/期末在明细、月汇总、横向表及相关合计中均为空白并注明范围；不可信入库基数和不完整合计同样留空。SKU/名称/筛选文本强制按Excel文本写入，保留前导零、防止公式注入。空结果404 inventory_export_empty；超商品上限422 inventory_export_too_large；缺月422 inventory_export_month_required；日结源超限422 inventory_export_sources_too_large，不下载不完整文件。
+
 ## 旧删除接口（停用）
 
 旧删除接口保留路径并在OpenAPI中标记deprecated，所有通过角色校验的请求均返回410 `batch_delete_retired`，提示刷新页面后使用强制删除。该入口不读取或修改库存、不追加成功日志，也不自动转为作废；调用方须显式提交`POST /batches/{batch_id}/void`及当前`edit_version`、非空`reason`，成功后同事务留痕。
 
 ## BatchCreate 请求
+
+新增可选`impairment_store_ids: list[int]`，最多100项，正ID、去重排序；创建默认[]，沿用创建人店铺推导。PUT遗漏保留，显式[]清空；无效/新选停用店铺422 `batch_impairment_store_invalid`，原有停用对象可保留。响应新增impairment_store_ids、impairment_store_names；ID纳入edit_version，旧表单不能覆盖新归属。仅admin/operator可写，支持已售批次的纯归属更正，无需财务增强开关，不改余量/原FIFO成本，日志保存前后归属。规则见[批次跌价归属](workflow.md#批次跌价归属)。
+
+批次Excel在既有列末尾追加“跌价归属店铺（均分）”，显示手工店铺名或“未指定（沿用原归属）”；该列和作废原因均强制按文本写入，原列顺序保持兼容。
 
 必填 product_id、quantity，quantity>0。采购信息优先 total_amount（≥0）；没有该字段时兼容 purchase_price（≥0，默认0）。shipping_cost、last_mile_cost、other_cost 是整批费用，默认0；钉钉单号和三个成本单号可空，最大长度64。shipping_date、arrived_at 可省略。
 
