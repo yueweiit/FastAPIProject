@@ -787,6 +787,16 @@ function authHeaders() {
 clearLegacyAuth();
 
 // ========== 认证 ==========
+function authText(key) {
+    // 登录反馈必须在外部交互脚本不可用时仍可显示。
+    const messages = {'zh-CN': {
+        authLoginFailed: '登录失败，请稍后重试。',
+        authSessionMissing: '登录后未能保存登录状态，请检查浏览器 Cookie 设置。局域网 HTTP 测试须启用指定来源配置；正式环境请使用 HTTPS。',
+        authProductsLoadFailed: '已登录，但商品列表加载失败，请刷新页面重试。',
+    }};
+    return (messages[document.documentElement.lang] || messages['zh-CN'])[key];
+}
+
 function formatApiError(detail, fallback) {
     if (Array.isArray(detail)) {
         return detail.map(item => {
@@ -848,7 +858,12 @@ async function loadCurrentUser() {
     document.getElementById('sec-products').classList.add('active');
     document.querySelectorAll('.nav button').forEach(button => button.classList.remove('active'));
     document.querySelector('.nav button').classList.add('active');
-    await loadProducts();
+    try {
+        await loadProducts();
+    } catch (error) {
+        if (!CURRENT_USER_ID) throw error; // 401 已清理会话，交由登录框显示。
+        showMsg(authText('authProductsLoadFailed'), false);
+    }
     return true;
 }
 
@@ -896,16 +911,18 @@ async function doLogin() {
     const username = document.getElementById('l-user').value;
     const password = document.getElementById('l-pass').value;
     const errEl = document.getElementById('l-err');
+    errEl.textContent = '';
+    errEl.style.display = 'none';
     try {
         const res = await fetch('/auth/login', {
             method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({username, password})
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(formatApiError(data.detail, '登录失败'));
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(formatApiError(data?.detail, authText('authLoginFailed')));
         document.getElementById('l-pass').value = '';
-        await loadCurrentUser();
+        if (!await loadCurrentUser()) throw new Error(authText('authSessionMissing'));
     } catch (error) {
         errEl.textContent = error.message; errEl.style.display = 'block';
     }
