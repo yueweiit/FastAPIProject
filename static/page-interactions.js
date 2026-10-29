@@ -11,10 +11,20 @@
         importFailed: '导入失败',
         batchExport: '导出', batchEdit: '编辑',
         batchImpairmentStores: '跌价归属店铺', batchImpairmentDefault: '未指定（沿用原归属）',
-        batchImpairmentHelp: '可多选；按剩余库存的跌价金额均分，不限制销售。更正后从入库日起重算，旧月度版本保留。',
+        batchImpairmentHelp: '可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
+        batchImpairmentMode: '归属生效范围',
+        batchImpairmentFromArrival: '从入库日开始（历史更正）',
+        batchImpairmentFromChange: '从修改日开始（北京时间）',
+        batchImpairmentArrivalHelp: '重算该批次全部历史期间的归属，替换已有归属历史；已保存的月度版本保留。',
+        batchImpairmentChangeHelp: '修改前费用保留原归属；修改日开始前的剩余准备转入新店铺，单列转入、转出，不重复计入费用。当天再次修改合并为当日最终归属。',
+        batchImpairmentOldServer: '当前服务尚不支持按修改日生效，仅可从入库日更正。',
+        batchImpairmentHistory: '已有生效记录：',
+        provisionTransferIn: '本月准备转入(元)', provisionTransferOut: '本月准备转出(元)',
+        provisionEquation: '期初准备 + 本月计提总额 − 本月销售转销 + 准备转入 − 准备转出 = 期末准备；账面价值 = 现存库存成本金额 − 期末累计跌价准备。准备转移不计入费用；入库当天0天，销售当天先计提再转销。',
         batchImpairmentLoading: '正在加载归属店铺…', batchImpairmentFailed: '归属店铺加载失败，请刷新批次列表后重试。',
         batchImpairmentInactive: '（已停用）',
         batchImpairmentInvalid: '请选择存在且启用的跌价归属店铺。',
+        storeHasImpairmentBatches: '店铺被当前或历史跌价归属引用，不能删除；可停用店铺。',
         batchImpairmentSelected: '已选{count}家店铺，跌价金额均分',
         batchDeleteRetired: '直接删除已停用，请刷新页面后使用强制删除并填写作废原因。',
         batchForceDelete: '强制删除', batchVoidConfirm: '作废批次', batchVoidReason: '作废原因',
@@ -56,9 +66,14 @@
             last_mile_cost_no: '尾程派送费单号', other_cost: '其他成本', other_cost_no: '其他成本单号',
             shipping_date: '头程发货时间', arrived_at: '入库时间',
             voided_at: '作废时间（UTC）', voided_by: '作废人ID', void_reason: '作废原因',
-            impairment_store_ids: '跌价归属店铺ID', impairment_store_names: '跌价归属店铺'},
+            impairment_store_ids: '跌价归属店铺ID', impairment_store_names: '跌价归属店铺',
+            impairment_store_history: '归属生效历史'},
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
+    const translateProvisionLabels = () => document.querySelectorAll?.('[data-provision-text]')?.forEach(node => {
+        node.textContent = text(node.dataset.provisionText);
+    });
+    translateProvisionLabels();
 
     // MySQL DateTime/API 是无时区的业务时间；不能经过 Date/UTC 转换。
     const batchDateTimeInput = value => String(value || '').slice(0, 16);
@@ -142,7 +157,9 @@
     const logNode = selector => logDialog.querySelector(selector);
     const logEscape = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-    const logValue = value => logEscape(value == null ? text('batchLogNull') : value);
+    const historyLabel = history => history.map(rule => `${rule.effective_date}：${rule.store_names?.join(' / ') || text('batchImpairmentDefault')}`).join('；');
+    const logValue = (value, key) => logEscape(value == null ? text('batchLogNull')
+        : key === 'impairment_store_history' && Array.isArray(value) ? historyLabel(value) : value);
     function closeBatchLogs() {
         logSerial++; logTarget = null;
         if (logDialog?.open) logDialog.close();
@@ -185,11 +202,11 @@
             const fields = text('batchLogFields');
             logNode('[data-log-entries]').innerHTML = result.items.map(row => {
                 const before = row.before_values, after = row.after_values;
-                const changed = Object.keys({...before, ...after}).filter(key => before[key] !== after[key]);
+                const changed = Object.keys({...before, ...after}).filter(key => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
                 const time = new Date(row.created_at).toLocaleString(document.documentElement.lang || 'zh-CN');
                 return `<article class="batch-change-log-entry"><p><strong>${logEscape(row.actor_username)} (#${row.actor_id})</strong> · ${logEscape(time)}</p>
                     ${changed.length ? `<div class="table-scroll"><table><thead><tr><th>${text('batchLogField')}</th><th>${text('batchLogBefore')}</th><th>${text('batchLogAfter')}</th></tr></thead>
-                    <tbody>${changed.map(key => `<tr><td>${logEscape(fields[key] || key)}</td><td>${logValue(before[key])}</td><td>${logValue(after[key])}</td></tr>`).join('')}</tbody></table></div>` : `<p>${text('batchLogNoChanges')}</p>`}</article>`;
+                    <tbody>${changed.map(key => `<tr><td>${logEscape(fields[key] || key)}</td><td>${logValue(before[key], key)}</td><td>${logValue(after[key], key)}</td></tr>`).join('')}</tbody></table></div>` : `<p>${text('batchLogNoChanges')}</p>`}</article>`;
             }).join('');
             logNode('[data-log-status]').textContent = result.items.length ? '' : text('batchLogEmpty');
             logNode('[data-log-page]').textContent = `${logPage} / ${Math.max(1, Math.ceil(logTotal / result.page_size))}`;
@@ -215,10 +232,17 @@
     }
     let allocationStores = null, allocationSerial = 0;
     const allocationSelections = {b: [], eb: []};
-    function renderAllocationStores(prefix, selected = allocationSelections[prefix], names = []) {
+    const allocationNames = {b: [], eb: []};
+    let allocationMode = 'from_arrival', allocationHistory = [], allocationHistorySupported = false;
+    function allocationModeHelp() {
+        return text(!allocationHistorySupported ? 'batchImpairmentOldServer' : allocationMode === 'from_change_date'
+            ? 'batchImpairmentChangeHelp' : 'batchImpairmentArrivalHelp');
+    }
+    function renderAllocationStores(prefix, selected = allocationSelections[prefix], names = allocationNames[prefix]) {
         const root = document.getElementById(`${prefix}-impairment-stores`);
         if (!root) return;
         allocationSelections[prefix] = [...selected];
+        allocationNames[prefix] = [...names];
         const ids = new Set(selected.map(Number));
         const options = [...(allocationStores || [])];
         selected.forEach((id, index) => {
@@ -231,16 +255,28 @@
                 `<label style="display:flex;gap:6px;align-items:center;max-width:100%;overflow-wrap:anywhere"><input type="checkbox" value="${Number(store.id)}" ${ids.has(store.id) ? 'checked' : ''}
                     ${allocationStores === null || !store.is_active && !ids.has(store.id) ? 'disabled' : ''}>${escapeHtml(store.name)}${store.is_active ? '' : escapeHtml(text('batchImpairmentInactive'))}</label>`).join('')}</div>
             <small>${escapeHtml(allocationStores === null ? text('batchImpairmentLoading') : selected.length
-                ? text('batchImpairmentSelected').replace('{count}', selected.length) : text('batchImpairmentDefault'))}</small></fieldset>`;
+                ? text('batchImpairmentSelected').replace('{count}', selected.length) : text('batchImpairmentDefault'))}</small>
+            ${prefix === 'eb' ? `<fieldset style="margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:12px">
+                <legend>${escapeHtml(text('batchImpairmentMode'))}</legend>
+                <div style="display:flex;flex-wrap:wrap;gap:16px">${[['from_change_date', 'batchImpairmentFromChange'], ['from_arrival', 'batchImpairmentFromArrival']].map(([mode, label]) =>
+                    `<label><input type="radio" name="impairment-change-mode" value="${mode}" ${allocationMode === mode ? 'checked' : ''} ${mode === 'from_change_date' && !allocationHistorySupported ? 'disabled' : ''}> ${escapeHtml(text(label))}</label>`).join('')}</div>
+                <p data-allocation-mode-help class="cost-detail">${escapeHtml(allocationModeHelp())}</p>
+                ${allocationHistory.length ? `<small>${escapeHtml(text('batchImpairmentHistory') + historyLabel(allocationHistory))}</small>` : ''}
+            </fieldset>` : ''}</fieldset>`;
         root.onchange = () => {
-            allocationSelections[prefix] = [...root.querySelectorAll('input:checked')].map(input => Number(input.value));
+            allocationSelections[prefix] = [...root.querySelectorAll('input[type="checkbox"]:checked')].map(input => Number(input.value));
             root.querySelector('small').textContent = allocationSelections[prefix].length
                 ? text('batchImpairmentSelected').replace('{count}', allocationSelections[prefix].length) : text('batchImpairmentDefault');
+            if (prefix === 'eb') {
+                allocationMode = root.querySelector('input[type="radio"]:checked').value;
+                root.querySelector('[data-allocation-mode-help]').textContent = allocationModeHelp();
+            }
         };
     }
     async function loadAllocationStores() {
         const serial = ++allocationSerial, userId = CURRENT_USER_ID;
         allocationStores = null;
+        translateProvisionLabels();
         renderAllocationStores('b');
         try {
             const response = await fetch('/finance-masters/stores', {credentials: 'same-origin', headers: authHeaders()});
@@ -260,13 +296,21 @@
     }
     const batchStores = {
         load: loadAllocationStores,
-        edit: batch => renderAllocationStores('eb', batch.impairment_store_ids || [], batch.impairment_store_names || []),
+        edit: batch => {
+            allocationHistorySupported = Array.isArray(batch.impairment_store_history);
+            allocationHistory = batch.impairment_store_history || [];
+            allocationMode = allocationHistorySupported ? 'from_change_date' : 'from_arrival';
+            renderAllocationStores('eb', batch.impairment_store_ids || [], batch.impairment_store_names || []);
+        },
+        readMode: () => allocationMode,
         read: prefix => {
             if (allocationStores === null) throw new Error(text('batchImpairmentFailed'));
             return [...allocationSelections[prefix]];
         },
         label: batch => batch.impairment_store_names?.join(' / ') || text('batchImpairmentDefault'),
-        reset: () => {allocationSerial++; allocationStores = null; allocationSelections.b = []; allocationSelections.eb = [];},
+        reset: () => {allocationSerial++; allocationStores = null; allocationSelections.b = []; allocationSelections.eb = [];
+            allocationNames.b = []; allocationNames.eb = [];
+            allocationMode = 'from_arrival'; allocationHistory = []; allocationHistorySupported = false;},
     };
     window.PageInteractions = {
         batchStores,

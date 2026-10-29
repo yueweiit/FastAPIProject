@@ -65,7 +65,7 @@ async function main() {
         const batchFixture = {id: 1, product_id: 1, batch_no: 'IN-TEST-1', user_id: 10, quantity: 100, remaining_quantity: 70,
             purchase_price: '10.0000', total_amount: '1000.0000', unit_cost: '10.0000', shipping_cost: '0.0000', last_mile_cost: '0.0000',
             other_cost: '0.0000', arrived_at: '2026-09-01T00:00:00', shipping_date: null, edit_version: 'a'.repeat(64),
-            impairment_store_ids: [7, 8], impairment_store_names: ['店铺A', '<店铺B>']};
+            impairment_store_ids: [7, 8], impairment_store_names: ['店铺A', '<店铺B>'], impairment_store_history: []};
         const pageErrors = [];
         page.on('pageerror', error => pageErrors.push(error.message));
         await page.route('**/*', async route => {
@@ -502,6 +502,8 @@ async function main() {
         for (const suffix of ['/', '/copy']) {
             await page.goto(address + suffix);
             await page.waitForFunction(() => CURRENT_USER_ID === 10);
+            check(await page.locator('[data-provision-text="provisionTransferIn"]').first().textContent(), '本月准备转入(元)');
+            check(await page.locator('[data-provision-text="provisionEquation"]').textContent().then(value => value.includes('准备转入 − 准备转出')), true);
             await page.getByRole('button', {name: '入库管理', exact: true}).click();
             await page.locator('#b-impairment-stores input[value="7"]').waitFor();
             await page.locator('#b-impairment-stores input[value="7"]').check();
@@ -518,12 +520,26 @@ async function main() {
             check(assignmentCalls.at(-1).quantity, 100);
             await page.locator('#batches-tbody button').filter({hasText: '编辑'}).click();
             check(await page.locator('#eb-impairment-stores input[value="8"]').isChecked(), true);
+            check(await page.locator('#eb-impairment-stores input[value="from_change_date"]').isChecked(), true);
+            check(await page.locator('[data-allocation-mode-help]').innerText().then(value => value.includes('不重复计入费用')), true);
             if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.locator('#eb-impairment-stores').screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'batch-impairment-stores-edit.png')});
             await page.locator('#eb-impairment-stores input[value="8"]').uncheck();
             await page.locator('#eb-save').click();
             await page.waitForFunction(() => document.getElementById('edit-batch-modal').style.display === 'none');
             check(assignmentCalls.at(-1).impairment_store_ids, [7]);
             check(assignmentCalls.at(-1).quantity, 100);
+            check(assignmentCalls.at(-1).impairment_change_mode, 'from_change_date');
+            await page.locator('#batches-tbody button').filter({hasText: '编辑'}).click();
+            await page.locator('#eb-impairment-stores input[value="from_arrival"]').check();
+            check(await page.locator('[data-allocation-mode-help]').innerText().then(value => value.includes('替换已有归属历史')), true);
+            await page.locator('#eb-save').click();
+            await page.waitForFunction(() => document.getElementById('edit-batch-modal').style.display === 'none');
+            check(assignmentCalls.at(-1).impairment_change_mode, 'from_arrival');
+            check(assignmentCalls.at(-1).impairment_store_ids, [7, 8]); // 单选模式值不能混入店铺ID。
+            await page.evaluate(() => {delete currentBatchList[0].impairment_store_history; openEditBatch(1);});
+            check(await page.locator('#eb-impairment-stores input[value="from_change_date"]').isDisabled(), true);
+            check(await page.locator('#eb-impairment-stores input[value="from_arrival"]').isChecked(), true);
+            await page.evaluate(() => closeEditBatch());
         }
         role = 'viewer';
         await page.evaluate(async () => {handleSessionExpired(); await loadCurrentUser();});

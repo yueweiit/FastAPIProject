@@ -7,6 +7,7 @@ const fixture = {store_name: '<测试店铺>', sku: 'SKU-1', product_name: '财�
   original_inventory_amount: 1000, sold_quantity: 40, sold_cost_amount: 400,
   quantity: 60, provision_quantity: 60, inventory_amount: 600, impairment_rate: .2,
   impairment_amount: 120, monthly_impairment_amount: 90, opening_impairment_amount: 30, monthly_total_impairment_amount: 90, monthly_writeoff_amount: 0, book_value: 480,
+  monthly_transfer_in_amount: 31, monthly_transfer_out_amount: 31,
   book_value_difference: -90, comparison_note: '', status: '正常计提', batch_count: 1};
 let checks = 0;
 
@@ -39,15 +40,18 @@ async function verify(path) {
     const prefix = view === 'batch' ? 'inventory-impairment' : 'inventory-summary';
     const body = element(`${prefix}-tbody`).innerHTML;
     const footer = element(`${prefix}-tfoot`).innerHTML;
-    assert.equal((body.match(/<td\b/g) || []).length, view === 'batch' ? 23 : 18);
+    assert.equal((body.match(/<td\b/g) || []).length, view === 'batch' ? 25 : 20);
     assert(body.includes('120.00') && body.includes('480.00') && body.includes('90.00'));
     assert(footer.includes('480.00') && footer.includes('120.00'));
+    assert.equal((footer.match(/31\.00/g) || []).length, 2);
+    checks++;
     assert(body.includes('&lt;测试店铺&gt;') && !body.includes('undefined'));
     assert(element('inventory-report-scope').textContent.includes('全部已到货批次'));
     checks += 5;
     const unknown = {...fixture, provision_quantity: null, impairment_rate: null,
       impairment_amount: null, monthly_impairment_amount: null, opening_impairment_amount: null,
       monthly_total_impairment_amount: null, monthly_writeoff_amount: null, book_value: null,
+      monthly_transfer_in_amount: null, monthly_transfer_out_amount: null,
       book_value_difference: null, comparison_note: '历史流水待核对', status: '历史流水待核对'};
     context.api = async () => [unknown];
     await vm.runInContext('loadInventoryImpairment()', context);
@@ -58,7 +62,7 @@ async function verify(path) {
     assert(unknownFooter.includes('合计留空') && unknownFooter.includes('1,000.00'));
     checks += 3;
   }
-  assert(html.includes('账面价值(元)') && html.includes('现存库存成本金额 − 期末累计跌价准备'));
+  assert(html.includes('账面价值(元)') && html.includes('data-provision-text="provisionEquation"'));
   checks += 1;
 }
 

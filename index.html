@@ -711,10 +711,10 @@
             <div>
                 <div id="report-pane-inventory" class="report-pane active card">
                     <div class="flex-between"><h3 id="inventory-report-title">存货跌价准备明细表</h3><div class="inventory-report-actions"><select id="inventory-report-view" aria-label="存货报表视图" onchange="setInventoryImpairmentView(this.value)"><option value="batch">批次明细</option><option value="sku">按SKU汇总</option></select><button class="btn btn-secondary" onclick="exportInventoryImpairmentReport()">导出当前视图</button><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div></div>
-                    <p style="font-size:12px;color:#64748b;margin:8px 0">期初准备 + 本月计提总额 − 本月销售转销 = 期末准备；账面价值 = 现存库存成本金额 − 期末累计跌价准备。入库当天0天，销售当天先计提再转销。</p>
+                    <p data-provision-text="provisionEquation" style="font-size:12px;color:#64748b;margin:8px 0"></p>
                     <p id="inventory-report-scope" style="font-size:12px;color:#64748b;margin:8px 0">批次明细展示现存或上月仍有库存的批次；按SKU汇总包含截止日前全部批次，包括已售完旧批次。</p>
-                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>累计跌价比例</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th></tr></thead><tbody id="inventory-impairment-tbody"></tbody><tfoot id="inventory-impairment-tfoot"></tfoot></table></div>
-                    <div id="inventory-summary-scroll" class="table-scroll" hidden><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>入库批次数</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th></tr></thead><tbody id="inventory-summary-tbody"></tbody><tfoot id="inventory-summary-tfoot"></tfoot></table></div>
+                    <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>累计跌价比例</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-impairment-tbody"></tbody><tfoot id="inventory-impairment-tfoot"></tfoot></table></div>
+                    <div id="inventory-summary-scroll" class="table-scroll" hidden><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>入库批次数</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-summary-tbody"></tbody><tfoot id="inventory-summary-tfoot"></tfoot></table></div>
                 </div>
                 <div id="report-pane-profit-loss" class="report-pane card">
                     <div class="flex-between"><h3>店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
@@ -800,7 +800,7 @@ function formatApiError(detail, fallback) {
         const batchErrorKey = {batch_edit_version_required: 'batchEditVersionRequired', batch_edit_conflict: 'batchEditConflict',
             batch_quantity_inconsistent: 'batchQuantityInconsistent', batch_quantity_below_sold: 'batchQuantityBelowSold',
             batch_cost_controls_required: 'batchCostControlsRequired', batch_delete_retired: 'batchDeleteRetired',
-            batch_restatement_mode_required: 'batchRestatementModeRequired', batch_cost_out_of_range: 'batchCostOutOfRange', batch_impairment_store_invalid: 'batchImpairmentInvalid'}[detail.code];
+            batch_restatement_mode_required: 'batchRestatementModeRequired', batch_cost_out_of_range: 'batchCostOutOfRange', batch_impairment_store_invalid: 'batchImpairmentInvalid', store_has_impairment_batches: 'storeHasImpairmentBatches'}[detail.code];
         if (batchErrorKey) return window.PageInteractions?.text(batchErrorKey)?.replace('{quantity}', detail.sold_quantity ?? '') || detail.message;
         return detail.message || JSON.stringify(detail);
     }
@@ -2136,6 +2136,7 @@ async function saveEditBatch() {
             cost_edit_mode: 'restate',
             product_id: batch.product_id,
             impairment_store_ids: window.PageInteractions.batchStores?.read('eb'),
+            impairment_change_mode: window.PageInteractions.batchStores?.readMode?.() || 'from_arrival',
             quantity: +document.getElementById('eb-qty').value,
             dingtalk_order_no: document.getElementById('eb-dingtalk-order').value.trim() || null,
             total_amount: document.getElementById('eb-total-amount').value,
@@ -2985,6 +2986,7 @@ function inventoryReportTotals(rows, view) {
     if (view === 'batch') fields.push(null);
     fields.push('impairment_amount', 'monthly_impairment_amount', 'opening_impairment_amount', 'monthly_total_impairment_amount', 'monthly_writeoff_amount', 'book_value', 'book_value_difference');
     if (view === 'batch') fields.push(null);
+    fields.push('monthly_transfer_in_amount', 'monthly_transfer_out_amount');
     const quantityFields = new Set(['original_quantity', 'sold_quantity', 'quantity', 'provision_quantity']);
     const missingComparison = rows.some(row => row.book_value_difference == null);
     const start = view === 'sku'
@@ -3004,7 +3006,7 @@ async function loadInventoryImpairment() {
     const prefix = isSummary ? 'inventory-summary' : 'inventory-impairment';
     const tbody = document.getElementById(`${prefix}-tbody`);
     const tfoot = document.getElementById(`${prefix}-tfoot`);
-    const columnCount = isSummary ? 18 : 23;
+    const columnCount = isSummary ? 20 : 25;
     const reportDate = document.getElementById('inventory-impairment-date').value;
     const requestId = ++inventoryImpairmentRequestId;
     document.getElementById('inventory-impairment-scroll').hidden = isSummary;
@@ -3026,12 +3028,12 @@ async function loadInventoryImpairment() {
         tbody.innerHTML = rows.length ? rows.map(row => isSummary ? `<tr>
             <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td>${row.batch_count}</td>
             <td>${row.original_quantity}</td><td>${reportMoney(row.original_inventory_amount)}</td><td>${row.sold_quantity}</td><td>${reportMoney(row.sold_cost_amount)}</td><td>${row.quantity}</td><td>${row.provision_quantity ?? '-'}</td>
-            <td>${reportMoney(row.inventory_amount)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.opening_impairment_amount)}</td><td>${reportMoney(row.monthly_total_impairment_amount)}</td><td>${reportMoney(row.monthly_writeoff_amount)}</td><td>${reportMoney(row.book_value)}</td>${inventoryComparisonCell(row)}
+            <td>${reportMoney(row.inventory_amount)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.opening_impairment_amount)}</td><td>${reportMoney(row.monthly_total_impairment_amount)}</td><td>${reportMoney(row.monthly_writeoff_amount)}</td><td>${reportMoney(row.book_value)}</td>${inventoryComparisonCell(row)}<td>${reportMoney(row.monthly_transfer_in_amount)}</td><td>${reportMoney(row.monthly_transfer_out_amount)}</td>
         </tr>` : `<tr>
             <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td class="text-left">${escapeHtml(row.batch_no)}</td>
             <td>${escapeHtml(row.arrived_at)}</td><td>${row.age_days}天</td><td>${reportMoney(row.unit_cost)}</td><td>${row.original_quantity}</td><td>${reportMoney(row.original_inventory_amount)}</td><td>${row.sold_quantity}</td><td>${reportMoney(row.sold_cost_amount)}</td>
             <td>${row.quantity}</td><td>${row.provision_quantity ?? '-'}</td><td>${reportMoney(row.inventory_amount)}</td><td>${reportPercent(row.impairment_rate)}</td><td>${reportMoney(row.impairment_amount)}</td><td>${reportMoney(row.monthly_impairment_amount)}</td><td>${reportMoney(row.opening_impairment_amount)}</td><td>${reportMoney(row.monthly_total_impairment_amount)}</td><td>${reportMoney(row.monthly_writeoff_amount)}</td><td>${reportMoney(row.book_value)}</td>
-            ${inventoryComparisonCell(row)}<td class="text-left">${escapeHtml(row.status)}</td>
+            ${inventoryComparisonCell(row)}<td class="text-left">${escapeHtml(row.status)}</td><td>${reportMoney(row.monthly_transfer_in_amount)}</td><td>${reportMoney(row.monthly_transfer_out_amount)}</td>
         </tr>`).join('') : `<tr><td colspan="${columnCount}" class="empty">当前截止日无${isSummary ? '入库批次' : '库存'}记录</td></tr>`;
         tfoot.innerHTML = inventoryReportTotals(rows, view);
     } catch (e) {
