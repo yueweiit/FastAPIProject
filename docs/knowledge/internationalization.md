@@ -61,6 +61,8 @@
 
 批次操作列新增的编辑/强制删除标签、受限原因、编辑说明和保存反馈也通过 `PageInteractions.text` 的 `batch*` 键维护，语言缺失时回退 zh-CN。旧普通删除按钮及其标签已移除，停用接口的稳定码`batch_delete_retired`映射到`batchDeleteRetired`提示刷新后使用作废入口。沿用已有表单标签；没有新增支持语言或变更导入/导出契约。
 
+认证关键提示集中于两份首页内联 `authText` 的局部 zh-CN 字典：`authLoginFailed`、`authSessionMissing`、`authProductsLoadFailed`。它们从公共交互字典移入页面，确保外部脚本不可用时仍能提示；按 `document.documentElement.lang` 选择并回退中文，不新增语言或依赖。商品首屏加载失败只显示固定文案，通过现有 `showMsg` 渲染；已有后端登录错误 detail 仍按原格式以 textContent 安全显示。
+
 批次修改日志弹窗复用该字典的`batchLog*`标签、字段映射、分页、空态和错误提示；日志绝对时间含UTC偏移，按浏览器语言/时区显示，快照金额按精确字符串展示，不将其转换成浮点数。历史发货/入库业务日期仍原样展示，不统一改动其他时间口径。
 
 批次并发编辑错误使用稳定码`batch_edit_conflict`、`batch_edit_version_required`；两份页面的formatApiError映射到该字典`batchEditConflict`、`batchEditVersionRequired`，服务端message保留为兼容回退。当前仅支持zh-CN，未增加语言或依赖。

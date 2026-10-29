@@ -36,6 +36,12 @@ sequenceDiagram
 
 正常鉴权先校验 Cookie；无 Cookie 且模式允许才使用传统 Bearer。两者均读取当前启用用户和本地角色。Cookie 写请求先验证 `X-CSRF-Token`，有 Origin/Referer 时严格匹配公开来源；无来源头的非浏览器兼容请求仍须正确 CSRF。无效身份为 401，权限/CSRF 为 403，提供方或配置暂不可用为 503。
 
+非 loopback 默认使用 Secure `__Host-fifo_session`。仅在 local/hybrid、公开来源为空且 HTTP 请求精确匹配 `FIFO_LAN_HTTP_TEST_ORIGINS` 的 RFC1918 IPv4 来源时，允许使用普通 `fifo_session` 测试 Cookie；HttpOnly、SameSite=Lax、CSRF 和来源校验不变。HTTPS、公开来源已配置及 eims 模式不受白名单降级；SSO issuer/回调规则不变。默认关闭及配置步骤见[局域网测试](eims-sso-setup.md#局域网-http-本地测试)。
+
+本地登录成功响应后，页面必须继续取得 `/auth/me` 才完成登录；若 Cookie 未被保存或会话已失效而返回 401，`doLogin` 显示会话未保存提示。密码错误、非 JSON 错误响应和网络失败也显示错误，重试清除旧提示；页面首次恢复未登录状态的 401 仍保持安静。两份首页的认证提示由内联 `authText` 的局部 zh-CN 字典提供，不依赖公共交互脚本，脚本缺失或加载迟到不会掩盖服务端错误；未知界面语言回退中文。
+
+`loadCurrentUser` 取得用户及 CSRF 后进入已登录页面，再加载商品列表。首屏 500/503 或网络失败通过遮罩外的 `showMsg` 显示“已登录，但商品列表加载失败”，保留会话，可刷新重试；本地登录和刷新页面恢复会话都适用。首屏 401 仍由 `api` 清除会话，再将错误交给登录框显示，不以普通商品加载失败处理。源码：[templates/index.html](../../../templates/index.html) 的 `authText`、`loadCurrentUser`、`doLogin`；根目录副本同步认证逻辑，其他既有页面差异保留。
+
 本地密码校验后，创建会话在独立事务锁定 User，并复查与已校验密码哈希一致、账号仍启用。改密、重置密码和账号启停同样先锁 User，再更新/撤销 AuthSession，统一锁序为 **User → AuthSession**。自助改密在取得锁后刷新用户并校验旧密码，不使用鉴权阶段缓存的密码哈希。先创建的会话会被后续改密撤销；先提交改密时，旧密码校验结果不能再创建 Cookie 会话。旧哈希只在后端瞬时比对，不持久化或输出。依据：[login/密码与状态路由](../../../routers/auth.py)、[create_session](../../../services/auth_sessions.py)。
 
 ## 会话复核与刷新

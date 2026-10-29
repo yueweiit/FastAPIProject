@@ -45,7 +45,29 @@ SSO_TOKEN_ENCRYPTION_KEY 是 urlsafe base64 编码的 32 字节 Fernet 密钥，
 
 源码 [docker-compose.yml](../../../docker-compose.yml) 已显式传入上述变量，JWT_SECRET 必填；[.dockerignore](../../../.dockerignore) 排除 `.env`，不能仅上传 `.env` 后期待旧容器自动生效。修改环境必须按[部署手册](../../../DEPLOYMENT_HANDOFF.md)重新创建服务；增加 httpx 依赖后需更新镜像。首次发布使用 hybrid，保留现有本地账号恢复入口，联调完成后再决定是否切 eims。
 
-开发与生产分别配置客户端及账号绑定；本地回调若使用 `http://127.0.0.1:8010` 也须由 EIMS 单独注册允许，不能借用生产回调。只测试本地密码登录可保持 SSO 三项密钥为空，public base 留空或填本地地址。**不要在本地复制生产公开域名配置**，否则来源检查和 Secure Cookie 会与 HTTP 本地访问不匹配。公网环境必须 HTTPS；HTTP Cookie/issuer 例外仅用于字面 loopback 开发来源。
+开发与生产分别配置客户端及账号绑定；本地回调若使用 `http://127.0.0.1:8010` 也须由 EIMS 单独注册允许，不能借用生产回调。只测试本地密码登录可保持 SSO 三项密钥为空，public base 留空或填本地地址。**不要在本地复制生产公开域名配置**，否则来源检查和 Secure Cookie 会与 HTTP 本地访问不匹配。公网环境必须 HTTPS；SSO 的 HTTP issuer/回调例外仍仅用于字面 loopback 开发来源，下面的局域网配置只调整本地登录 Cookie。
+
+### 局域网 HTTP 本地测试
+
+默认关闭。需要从同一可信局域网测试本地密码登录时，仅在测试机 `.env` 配置：
+
+```dotenv
+FIFO_AUTH_MODE=hybrid
+FIFO_PUBLIC_BASE_URL=
+FIFO_LAN_HTTP_TEST_ORIGINS=http://192.168.5.238:8010
+```
+
+白名单用英文逗号分隔，精确匹配 HTTP 协议、IP 和端口；仅接受 `10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16` 的字面 IPv4，不接受域名、通配符、凭据、路径、查询或片段。IP/端口变更须同步修改。只有 local/hybrid 且 `FIFO_PUBLIC_BASE_URL` 留空时生效；任何非空公开来源、eims 模式或 HTTPS 请求都不能通过此项降低 Cookie 安全规则。EIMS 可用性及 issuer/回调校验不变。
+
+匹配的 HTTP 请求使用不带 Secure 和 `__Host-` 前缀的 `fifo_session`，仍保留 HttpOnly、SameSite=Lax、会话撤销、CSRF 和原来源校验；未匹配的非 loopback 请求继续使用 Secure `__Host-fifo_session`。HTTP 不加密，仅用于可信局域网测试，生产保持 HTTPS 并将白名单留空。源码：[AuthSettings.allows_lan_http_test_origin](../../../services/eims_sso.py)、[cookie_secure](../../../services/auth_sessions.py)。
+
+确认现有 `.env` 指向本地测试库后，重启原测试服务并刷新页面、重新登录：
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 8010
+```
+
+配置更改需重启；Docker 环境需重新创建对应服务，不能只更新 `.env`。测试结束清空 `FIFO_LAN_HTTP_TEST_ORIGINS` 并重启，恢复默认策略。本功能无新增数据库结构；原启动的建表、迁移、修复和快照副作用仍存在。登录后 `/auth/me` 无法读取会话时，两份首页会显示 Cookie/局域网配置提示，不再静默返回登录页；提示不依赖公共交互脚本。会话已恢复但首屏商品加载失败时，在已登录页面显示错误；具体边界见[认证流程](workflow.md)。页面首次打开未登录仍正常显示登录页。
 
 ## 3. 数据与代理发布前核对
 

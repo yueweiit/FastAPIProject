@@ -12,6 +12,8 @@ EIMS 采用授权码 + PKCE S256，RS256 ID Token 验签并校验 issuer/audienc
 
 首页、静态图片和默认接口文档仍公开；缺失/无效认证由 get_current_user 返回 401，CSRF 拒绝为 403，提供方暂不可达为 503。EIMS 账号停用、门户撤权/解绑的实际提供方生效行为待真实联调。配置与验收见[接入说明](../modules/auth/eims-sso-setup.md)。
 
+`FIFO_LAN_HTTP_TEST_ORIGINS` 提供默认关闭的局域网 HTTP 本地登录测试白名单，仅在 local/hybrid 且公开来源为空时精确匹配内网 IPv4 来源。HTTPS、生产公开来源和 EIMS 安全规则保留，CSRF/来源校验不变；登录成功后未能恢复 Cookie 会话会显示提示。配置、关闭及重启要求见[局域网测试](../modules/auth/eims-sso-setup.md#局域网-http-本地测试)。
+
 ## 实际权限矩阵
 
 “当前店铺”指非管理员 users.store_id；未绑定时敏感销售/损益操作会拒绝。下表以实际依赖和业务判断为准，不能把 viewer 默认理解为所有功能只读。

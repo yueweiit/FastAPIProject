@@ -340,6 +340,10 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 
 缺省 hybrid；客户端未配置时本地登录仍可用，SSO 按钮不可用。生产域名为 https://fifo.yueweiportal.com，issuer 为 https://eims.yueweiportal.com。配置/注册/账号绑定/验收统一见[接入说明](docs/modules/auth/eims-sso-setup.md)。不要在本地 .env 使用生产公开来源；8010 开发使用空来源或 loopback。
 
+局域网 HTTP 本地登录测试可将 `FIFO_PUBLIC_BASE_URL` 留空，并设置 `FIFO_LAN_HTTP_TEST_ORIGINS=http://192.168.5.238:8010`；该白名单默认空，仅精确接受内网 IPv4 来源且只在 local/hybrid 生效，生产公开来源和 HTTPS 不降级，CSRF/来源校验保留。配置后须重启测试服务，测试结束清空并重启；无新增数据库结构。具体边界、启动命令及会话失败提示见[局域网 HTTP 本地测试](docs/modules/auth/eims-sso-setup.md#局域网-http-本地测试)。
+
+登录反馈由两份首页内联 `authText` 提供，公共交互脚本缺失时仍可用；已登录后商品首屏失败在页面消息区提示，401 仍清会话并返回登录框。验证用 `node tests/auth_page_checks.cjs` 执行实际函数链，不需要启动服务或写数据库；流程及测试边界见[认证流程](docs/modules/auth/workflow.md)与[代码映射](docs/modules/auth/code-map.md)。
+
 新增 users.is_active 和两张认证表会随启动创建/兼容迁移，旧用户默认启用；启动仍有原修复/快照副作用，发布前先备份。每小时清过期认证记录，提供方网络请求按需发生，不在启动时认证真实用户。环境或加密密钥变更后重启应用；密钥更换需重新登录。改密/停用撤销 Cookie，传统 Bearer 吊销限制见[认证概览](docs/modules/auth/overview.md)。
 
 2026-10-13 本地验证：150项 unittest、两份页面48项认证检查通过；真实本地InnoDB验证单次消费/并发一次刷新/撤销，校验既有业务记录一致。8010已更新，Cookie me、商品/72条存货、CSRF和退出通过；旧登录缓存已清理，浏览器需重新登录一次。未安装依赖、修改生产配置/数据库或发布；真实 EIMS 授权、绑定及退出尚未验收。

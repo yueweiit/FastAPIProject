@@ -33,6 +33,8 @@
 
 请求类与响应在 [schemas.py](../../../schemas.py) 和认证路由内。页面采用同源相对地址，Cookie 写请求统一通过 authHeaders 附加 CSRF，文件上传同样覆盖。
 
+`FIFO_LAN_HTTP_TEST_ORIGINS` 默认空；仅在 local/hybrid、公开来源留空时允许匹配的局域网 HTTP 来源使用非 Secure `fifo_session`。HTTPS、生产公开来源及 eims 模式保留原安全规则；请求/响应 JSON、CSRF、来源校验和 EIMS 回调规则不变。配置限制见[接入说明](eims-sso-setup.md#局域网-http-本地测试)。`POST /auth/login` 返回成功但随后 `/auth/me` 返回 401 时，页面显示登录状态未保存提示；不将登录 JSON 当作会话已建立的证明。提示由内联 `authText` 提供，公共交互脚本不可用时仍显示服务端错误或回退文案。`/auth/me` 成功后商品列表加载失败使用已登录页面消息，401 仍清会话并显示登录框，详见[流程](workflow.md)。
+
 ## 安全响应
 
 认证信息响应设置 `Cache-Control: no-store`；授权跳转另设 `Referrer-Policy: no-referrer`。config 的 sso_available 表示配置完整，不代表 EIMS 实时健康或客户端已注册成功。回调不回显提供方错误、code/state/Token，失败跳首页固定 auth_error 分类。
