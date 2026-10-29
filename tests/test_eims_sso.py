@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import secrets
 import tempfile
 import time
@@ -29,8 +30,8 @@ from database import Base, get_db
 from models import AuthLoginTransaction, AuthSession, User
 from routers import auth as auth_routes, eims_auth
 from services.auth_logging import OAuthAccessLogFilter
-from services.auth_sessions import SessionStore, credential_hash, utcnow
-from services.eims_sso import AuthSettings, EimsClient, SsoError, TokenCipher, app_user_id, pkce_pair, valid_origin
+from services.auth_sessions import SessionStore, cookie_secure, credential_hash, utcnow
+from services.eims_sso import AuthSettings, EimsClient, SsoError, TokenCipher, app_user_id, get_settings, pkce_pair, valid_origin
 
 
 class AsyncTransaction:
@@ -241,6 +242,54 @@ class SsoFixture(unittest.IsolatedAsyncioTestCase):
             db.commit()
 
 
+class LanHttpConfigTests(unittest.TestCase):
+    def test_default_closed_and_only_exact_private_http_origin_is_allowed(self):
+        origin = 'http://192.168.5.238:8010'
+        self.assertFalse(AuthSettings().allows_lan_http_test_origin(origin))
+        settings = AuthSettings(lan_http_test_origins=(origin,))
+        self.assertTrue(settings.allows_lan_http_test_origin(origin + '/'))
+        for private in ('http://10.0.0.1:8010', 'http://172.16.0.1:8010',
+                        'http://172.31.255.254:8010', 'http://192.168.0.1:8010'):
+            self.assertTrue(AuthSettings(lan_http_test_origins=(private,)).allows_lan_http_test_origin(private))
+        self.assertTrue(AuthSettings(lan_http_test_origins=('http://10.0.0.1',))
+                        .allows_lan_http_test_origin('http://10.0.0.1:80'))
+        for other in ('http://192.168.5.239:8010', 'http://192.168.5.238:8011',
+                      'https://192.168.5.238:8010'):
+            self.assertFalse(settings.allows_lan_http_test_origin(other), other)
+        for invalid in ('http://*.test:8010', 'http://fifo.test:8010', 'http://8.8.8.8:8010',
+                        'http://169.254.1.1:8010', 'http://198.18.0.1:8010',
+                        'http://172.15.255.254:8010', 'http://172.32.0.1:8010',
+                        'http://[fd00::1]:8010', origin + '/path', origin + '?x=1',
+                        origin + '#fragment', 'http://user@192.168.5.238:8010',
+                        'http://192.168.5.238:65536', 'http://192.168.5.238:0'):
+            rejected = AuthSettings(lan_http_test_origins=(invalid,))
+            self.assertFalse(rejected.allows_lan_http_test_origin(invalid), invalid)
+            self.assertFalse(rejected.allows_lan_http_test_origin(origin), invalid)
+
+    def test_public_origin_eims_and_https_cannot_be_downgraded(self):
+        origin = 'http://192.168.5.238:8010'
+        settings = AuthSettings(lan_http_test_origins=(origin,))
+        def request(scheme='http'):
+            return Request({'type': 'http', 'scheme': scheme, 'path': '/', 'query_string': b'',
+                            'headers': [(b'host', b'192.168.5.238:8010')]})
+        self.assertFalse(cookie_secure(request(), settings))
+        self.assertTrue(cookie_secure(request('https'), settings))
+        for protected in (replace(settings, public_base_url='https://fifo.test'),
+                          replace(settings, public_base_url='http://127.0.0.1:8010'),
+                          replace(settings, mode='eims')):
+            self.assertFalse(protected.allows_lan_http_test_origin(origin))
+            self.assertTrue(cookie_secure(request(), protected))
+        self.assertFalse(valid_origin(origin))  # SSO回调及issuer规则未放宽。
+
+    def test_environment_parses_explicit_origins_and_defaults_to_disabled(self):
+        with patch.dict(os.environ, {'FIFO_LAN_HTTP_TEST_ORIGINS': ''}):
+            self.assertEqual(get_settings().lan_http_test_origins, ())
+        with patch.dict(os.environ, {'FIFO_LAN_HTTP_TEST_ORIGINS':
+                ' http://192.168.5.238:8010 , , http://10.0.0.2:8010 '}):
+            self.assertEqual(get_settings().lan_http_test_origins,
+                             ('http://192.168.5.238:8010', 'http://10.0.0.2:8010'))
+
+
 class ProtocolTests(SsoFixture):
     async def test_pkce_challenge_matches_verifier(self):
         verifier,challenge = pkce_pair()
@@ -390,6 +439,45 @@ class AuthFlowTests(SsoFixture):
             self.assertNotIn('__Host-',response.headers['set-cookie'])
             self.assertNotIn('; Secure',response.headers['set-cookie'])
             self.assertEqual((await browser.get('/auth/me')).status_code,200)
+
+    async def test_allowed_lan_http_login_preserves_csrf_and_logout(self):
+        origin = 'http://192.168.5.238:8010'
+        self.settings = replace(self.settings, public_base_url='', lan_http_test_origins=(origin,))
+        async with httpx.AsyncClient(transport=self.browser._transport, base_url=origin) as browser:
+            response = await browser.post('/auth/login', headers={'Origin': origin},
+                json={'username': 'fixture-admin', 'password': 'unit-test-password'})
+            self.assertEqual(response.status_code, 200, response.text)
+            cookie = response.headers['set-cookie']
+            self.assertIn('fifo_session=', cookie)
+            self.assertIn('HttpOnly', cookie)
+            self.assertIn('SameSite=lax', cookie)
+            self.assertNotIn('__Host-', cookie)
+            self.assertNotIn('; Secure', cookie)
+            me = await browser.get('/auth/me')
+            self.assertEqual(me.status_code, 200, me.text)
+            csrf = me.json()['csrf_token']
+            self.assertEqual((await browser.post('/auth/logout', headers={'Origin': origin})).status_code, 403)
+            self.assertEqual((await browser.post('/auth/logout', headers={
+                'Origin': 'http://192.168.5.239:8010', 'X-CSRF-Token': csrf})).status_code, 403)
+            logout = await browser.post('/auth/logout', headers={'Origin': origin, 'X-CSRF-Token': csrf})
+            self.assertEqual(logout.status_code, 200, logout.text)
+            self.assertIn('fifo_session=', logout.headers['set-cookie'])
+            self.assertIn('Max-Age=0', logout.headers['set-cookie'])
+            self.assertNotIn('; Secure', logout.headers['set-cookie'])
+            self.assertIsNone(browser.cookies.get('fifo_session'))
+            self.assertEqual((await browser.get('/auth/me')).status_code, 401)
+
+    async def test_unlisted_or_disabled_lan_http_keeps_secure_cookie(self):
+        origin = 'http://192.168.5.238:8010'
+        for allowed in ((), ('http://192.168.5.239:8010',)):
+            self.settings = replace(self.settings, public_base_url='', lan_http_test_origins=allowed)
+            async with httpx.AsyncClient(transport=self.browser._transport, base_url=origin) as browser:
+                response = await browser.post('/auth/login', headers={'Origin': origin},
+                    json={'username': 'fixture-admin', 'password': 'unit-test-password'})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIn('__Host-fifo_session=', response.headers['set-cookie'])
+                self.assertIn('; Secure', response.headers['set-cookie'])
+                self.assertEqual((await browser.get('/auth/me')).status_code, 401)
 
     async def test_local_mode_rejects_previous_eims_session(self):
         await self.sso_login()

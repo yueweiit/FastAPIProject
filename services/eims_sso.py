@@ -48,6 +48,22 @@ def valid_origin(value: str) -> bool:
         return False
 
 
+def _lan_http_test_origin(value: str) -> str | None:
+    """Only explicit RFC1918 IPv4 HTTP origins may opt into local testing."""
+    try:
+        parsed = urlsplit(value)
+        address = ipaddress.ip_address(parsed.hostname or "")
+        port = parsed.port if parsed.port is not None else 80
+        networks = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+        if (parsed.scheme != "http" or parsed.username or parsed.password
+                or parsed.path not in ("", "/") or parsed.query or parsed.fragment
+                or port < 1 or not any(address in ipaddress.ip_network(net) for net in networks)):
+            return None
+        return f"http://{address}:{port}"
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class AuthSettings:
     mode: str = "hybrid"
@@ -59,10 +75,20 @@ class AuthSettings:
     session_seconds: int = 86400
     transaction_seconds: int = 300
     recheck_seconds: int = 60
+    lan_http_test_origins: tuple[str, ...] = ()
 
     @property
     def local_enabled(self) -> bool:
         return self.mode in ("local", "hybrid")
+
+    def allows_lan_http_test_origin(self, origin: str) -> bool:
+        # A configured public origin or EIMS-only mode always retains secure cookies.
+        if not self.local_enabled or self.public_base_url:
+            return False
+        candidate = _lan_http_test_origin(origin)
+        return candidate is not None and any(
+            candidate == _lan_http_test_origin(value) for value in self.lan_http_test_origins
+        )
 
     @property
     def configured(self) -> bool:
@@ -101,6 +127,8 @@ def get_settings() -> AuthSettings:
         client_id=os.getenv("EIMS_CLIENT_ID", "").strip(),
         client_secret=os.getenv("EIMS_CLIENT_SECRET", ""),
         encryption_key=os.getenv("SSO_TOKEN_ENCRYPTION_KEY", ""),
+        lan_http_test_origins=tuple(value.strip() for value in
+            os.getenv("FIFO_LAN_HTTP_TEST_ORIGINS", "").split(",") if value.strip()),
     )
 
 

@@ -26,7 +26,8 @@ def credential_hash(value: str) -> str:
 
 def cookie_secure(request: Request, settings: AuthSettings) -> bool:
     return (settings.public_base_url.startswith("https://") or request.url.scheme == "https"
-            or not is_loopback(request.url.hostname))
+            or (not is_loopback(request.url.hostname)
+                and not settings.allows_lan_http_test_origin(str(request.base_url))))
 
 
 def cookie_name(request: Request, settings: AuthSettings, *, flow=False) -> str:
