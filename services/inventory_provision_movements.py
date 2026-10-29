@@ -89,6 +89,7 @@ class ProvisionReplay:
     product_types: dict[int, str] = field(default_factory=dict)
     _accrual_totals: dict[int, _PeriodTotals] = field(init=False, repr=False, compare=False)
     _writeoff_totals: dict[int, _PeriodTotals] = field(init=False, repr=False, compare=False)
+    writeoffs_by_batch: dict[int, list[ProvisionWriteoff]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         # 回放完成后供报表只读复用，逐批期间查询不再遍历全局流水。
@@ -98,6 +99,9 @@ class ProvisionReplay:
         self._writeoff_totals = _build_period_totals(
             (item.sale.batch_id, item.sale.sold_at.date(), item.units) for item in self.writeoffs
         )
+        self.writeoffs_by_batch = defaultdict(list)
+        for item in self.writeoffs:
+            self.writeoffs_by_batch[item.sale.batch_id].append(item)
 
     def accrued_units(self, batch_id: int, start: date, end: date) -> Decimal | None:
         writeoffs = self._writeoff_totals.get(batch_id)
@@ -133,7 +137,7 @@ def _merge(parts: list[_Part]) -> list[_Part]:
 
 def replay_inventory_provisions(
     original_layers: list[InventoryLayer], sales: list[ProvisionSale], as_of: date,
-    *, balance_dates: list[date] | None = None,
+    *, balance_dates: list[date] | None = None, batch_balance_dates: dict[int, list[date]] | None = None,
 ) -> ProvisionReplay:
     """入库日0天；按日先增提再出库，批内按整数数量层FIFO转销。
 
@@ -141,6 +145,11 @@ def replay_inventory_provisions(
     只有当天未保护部分增加比例。日期/数量异常传播未知金额，不修改事实。
     """
     requested = {day for day in (balance_dates or []) if day <= as_of} | {as_of}
+    partial_dates = defaultdict(set)
+    for batch_id, dates in (batch_balance_dates or {}).items():
+        for day in dates:
+            if day <= as_of:
+                partial_dates[day].add(batch_id)
     month_start = as_of.replace(day=1)
     layers = {layer.batch_id: layer for layer in original_layers}
     notes: defaultdict[int, set[str]] = defaultdict(set)
@@ -203,7 +212,7 @@ def replay_inventory_provisions(
     accruals: list[ProvisionAccrual] = []
     writeoffs: list[ProvisionWriteoff] = []
     balances: dict[date, dict[int, ProvisionBalance]] = {}
-    first_day = min([as_of, *requested, *arrivals, *by_day])
+    first_day = min([as_of, *requested, *partial_dates, *arrivals, *by_day])
     day = first_day
     while day <= as_of:
         for layer in arrivals.get(day, []):
@@ -270,9 +279,10 @@ def replay_inventory_provisions(
             deducted[sale.batch_id] += sale.quantity
             unknown = sale.batch_id in invalid_from and day >= invalid_from[sale.batch_id]
             writeoffs.append(ProvisionWriteoff(sale, None if unknown else transferred))
-        if day in requested:
+        if day in requested or day in partial_dates:
             snapshot = {}
-            for batch_id, layer in layers.items():
+            for batch_id in layers if day in requested else partial_dates[day]:
+                layer = layers[batch_id]
                 batch_parts = parts[batch_id]
                 quantity = sum(part.quantity for part in batch_parts)
                 unknown = quantity > 0 and batch_id in invalid_from and day >= invalid_from[batch_id]

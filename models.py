@@ -193,6 +193,25 @@ class BatchImpairmentStore(Base):
     store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), primary_key=True)
 
 
+class BatchImpairmentRule(Base):
+    """按上海自然日生效的归属版本；空明细表示当时缺失默认店铺。"""
+    __tablename__ = "batch_impairment_rules"
+    __table_args__ = (UniqueConstraint("batch_id", "effective_date", name="uq_batch_impairment_rule_date"),
+                      {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventory_batches.id"), index=True)
+    effective_date: Mapped[date] = mapped_column(Date)
+    is_explicit: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class BatchImpairmentRuleStore(Base):
+    __tablename__ = "batch_impairment_rule_stores"
+    __table_args__ = (Index("ix_batch_impairment_rule_stores_store", "store_id", "rule_id"),
+                      {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+    rule_id: Mapped[int] = mapped_column(Integer, ForeignKey("batch_impairment_rules.id"), primary_key=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), primary_key=True)
+
+
 class BatchChangeLog(Base):
     """追加式批次修改记录；保留身份快照，不随批次或账号删除级联丢失。"""
     __tablename__ = "batch_change_logs"

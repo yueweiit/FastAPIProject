@@ -19,6 +19,8 @@ from database import get_db
 from models import (
     InventoryBatch,
     BatchImpairmentStore,
+    BatchImpairmentRule,
+    BatchImpairmentRuleStore,
     Product,
     ProductImpairmentRule,
     ProductLine,
@@ -50,7 +52,9 @@ from services.financial_facts import (
 )
 from services.cost_layers import load_cost_layers, base_cost_components, category_adjustments, unit_adjustment, AdjustedBatch
 from services.batch_store_allocations import (AssignedBatch, allocated_batch_amount, allocated_provision_period,
-                                             allocated_provision_balance, load_batch_store_allocations)
+                                             allocated_provision_balance, allocated_provision_transfers,
+                                             load_batch_store_allocations)
+from services.batch_impairment_history import load_rules, rule_at, rule_segments
 from services.inventory_impairment import (
     InventoryLayer,
     ImpairmentRule,
@@ -86,6 +90,8 @@ INVENTORY_IMPAIRMENT_HEADERS = [
     "期初跌价准备余额(元)",
     "本月计提总额(元)",
     "本月销售转销(元)",
+    "本月准备转入(元)",
+    "本月准备转出(元)",
 ]
 INVENTORY_IMPAIRMENT_SUMMARY_SHEET = "07-存货SKU汇总表"
 INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
@@ -108,6 +114,8 @@ INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
     ("opening_impairment_amount", "期初跌价准备余额(元)"),
     ("monthly_total_impairment_amount", "本月计提总额(元)"),
     ("monthly_writeoff_amount", "本月销售转销(元)"),
+    ("monthly_transfer_in_amount", "本月准备转入(元)"),
+    ("monthly_transfer_out_amount", "本月准备转出(元)"),
 )
 
 STORE_PROFIT_LOSS_ROWS = (
@@ -211,7 +219,9 @@ def _margin_known(gross, revenue):
 
 
 def _inventory_status(item):
-    if item["impairment_amount"] is None or item.get("monthly_total_impairment_amount") is None:
+    if (item["impairment_amount"] is None or item.get("monthly_total_impairment_amount") is None
+        or any(item.get(key, Decimal(0)) is None for key in (
+            "monthly_writeoff_amount", "monthly_transfer_in_amount", "monthly_transfer_out_amount"))):
         return "历史流水待核对"
     if not item["quantity"]:
         return "已售完"
@@ -834,7 +844,8 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
                   item["provision_quantity"], inventory, item["impairment_rate"], item["impairment_amount"], book,
                   difference, item["monthly_impairment_amount"], _inventory_status(item),
                   f"批次号：{item['batch_no']}；上月末库存：{item['previous_month_quantity']}；上月末账面价值：{previous_note}；{item['comparison_note']}",
-                  item["opening_impairment_amount"], item["monthly_total_impairment_amount"], item["monthly_writeoff_amount"]]
+                  item["opening_impairment_amount"], item["monthly_total_impairment_amount"], item["monthly_writeoff_amount"],
+                  item.get("monthly_transfer_in_amount", Decimal(0)), item.get("monthly_transfer_out_amount", Decimal(0))]
         records.append(record)
         sheet.append(record)
         formulas = {
@@ -856,7 +867,7 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
         sheet.cell(number, 4).number_format = "yyyy-mm-dd"
     total_row = len(rows) + 2
     sheet.cell(total_row, 1, "合计")
-    sum_columns = (7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 21, 22, 23)
+    sum_columns = (7, 8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 21, 22, 23, 24, 25)
     for column in sum_columns:
         total = _sum_known(record[column - 1] for record in records)
         if total is None:
@@ -871,7 +882,7 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
     _style_financial_sheet(sheet, INVENTORY_IMPAIRMENT_HEADERS, "C00000")
     allocated_quantities = any(item.get("impairment_allocation_applied") for item in rows)
     for row in sheet.iter_rows(min_row=2, max_row=total_row):
-        for column in (6, 8, 10, 13, 15, 16, 17, 18, 21, 22, 23):
+        for column in (6, 8, 10, 13, 15, 16, 17, 18, 21, 22, 23, 24, 25):
             row[column - 1].number_format = '¥#,##0.00'
         for column in (7, 9, 11, 12):
             row[column - 1].number_format = '#,##0.####' if allocated_quantities else '#,##0'
@@ -882,7 +893,7 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
     notes = [
         f"报告截止日：{report_date.isoformat()}；上月末：{_previous_month_end(report_date).isoformat()}。",
         "入库当天0天；销售当天先计提，再出库转销；仅累加每天新增准备，累计比例最多90%。",
-        "期初准备+本月计提总额−本月销售转销=期末准备；销售转销可能含以前月份计提。",
+        "期初准备+本月计提总额−本月销售转销+准备转入−准备转出=期末准备；转移不重复计入费用。",
         "账面价值=现存库存成本−期末准备；售完期末余额为0，本月总计提及销售转销仍可能非0。",
         "本月计提（现存库存）仅为期末仍在库部分本月形成的准备，不等于本月计提总额。",
         "安全库存按当天销售前实际数量保护最新批次/批内靠后数量层；已形成准备保留。",
@@ -890,18 +901,18 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
         "原始入库及保存销售成本独立保留；多批按自身成本/日期计算后加总，批次号在备注列。",
         "历史时序或数量异常的相关准备留空且不作不完整合计；推定规则及成本差异见备注。",
         "本表按现有流水重算，不读写或补建快照；缺失、撤销的真实历史不能自动恢复。",
-        "单件成本包含采购、头程、尾程及其他成本，未单列关税；店铺为批次创建人当前绑定。",
+        "单件成本包含采购、头程、尾程及其他成本，未单列关税；店铺按归属生效历史，旧无历史批次沿用原归属。",
     ]
     for number, note in enumerate(notes, total_row + 2):
-        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=23)
+        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=25)
         sheet.cell(number, 1, note).alignment = Alignment(wrap_text=True, vertical="center")
         sheet.row_dimensions[number].height = 30
-    widths = [18,18,28,13,12,18,14,22,18,24,15,12,23,16,25,23,25,24,18,62,24,24,24]
+    widths = [18,18,28,13,12,18,14,22,18,24,15,12,23,16,25,23,25,24,18,62,24,24,24,24,24]
     for column, width in enumerate(widths, 1):
         sheet.column_dimensions[sheet.cell(1,column).column_letter].width = width
-    sheet.auto_filter.ref = f"A1:W{max(1,total_row - 1)}"
+    sheet.auto_filter.ref = f"A1:Y{max(1,total_row - 1)}"
     sheet.print_title_rows = "1:1"
-    sheet.print_area = f"A1:W{sheet.max_row}"
+    sheet.print_area = f"A1:Y{sheet.max_row}"
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
@@ -1014,19 +1025,20 @@ def _build_inventory_impairment_summary_sheet(
     notes = [
         f"报告截止日：{report_date.isoformat()}；与批次明细范围一致，包含全部已到货批次和售完批次。",
         "各批按自身单价、规则和实际持有期间增提、转销后加总；不合计单价、库龄和比例。",
-        "期初准备+本月计提总额−本月销售转销=期末准备；账面=现存成本−期末准备。",
+        "期初准备+本月计提总额−本月销售转销+准备转入−准备转出=期末准备；账面=现存成本−期末准备。",
         "售完余额0但本月总计提/转销可能非0；未知金额及不完整合计留空，原因见比较说明。",
         "本月计提（现存库存）不包含本月已售部分的增提；销售转销可能包含前月准备。",
     ]
     for number, note in enumerate(notes, total_row + 2):
-        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=19)
+        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=len(columns))
         sheet.cell(number, 1, note).alignment = Alignment(wrap_text=True, vertical="center")
         sheet.row_dimensions[number].height = 28
-    for number in range(1,20):
+    for number in range(1, len(columns) + 1):
         sheet.column_dimensions[sheet.cell(1,number).column_letter].width = 36 if number in (3,16) else 23
-    sheet.auto_filter.ref = f"A1:S{max(1,total_row - 1)}"
+    last_column = sheet.cell(1, len(columns)).column_letter
+    sheet.auto_filter.ref = f"A1:{last_column}{max(1,total_row - 1)}"
     sheet.print_title_rows = "1:1"
-    sheet.print_area = f"A1:S{sheet.max_row}"
+    sheet.print_area = f"A1:{last_column}{sheet.max_row}"
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
@@ -1418,12 +1430,14 @@ async def _product_line_profit_data(
         assigned_rows, _assigned_sales, assigned_replay = await _load_inventory_provision_data(db, ytd_end - timedelta(days=1))
         shares = []
         for batch, *_ in assigned_rows:
-            if not batch.impairment_stores:
+            if not (batch.impairment_stores or batch.allocation_rules):
                 continue
-            for owner in batch.impairment_store_ids:
+            owners = {s["id"] for r in ([rule_at(batch, date.min)] + batch.allocation_rules) for s in r.stores}
+            for owner in owners:
                 if owner not in store_ids:
                     continue
-                shares.append({period: allocated_provision_period(assigned_replay, batch, owner, start, end, writeoff=True)
+                shares.append({period: allocated_provision_period(assigned_replay, batch, owner, start, end,
+                                                                  writeoff=True, explicit_only=True)
                     for period, (start, end) in periods.items()})
         if shares:
             item = line_data.setdefault("impairment_store_allocation", {
@@ -1605,7 +1619,10 @@ async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
             "saved_unit_cost": row.saved_unit_cost + unit_adjustment(cost_layers.get(row.batch_id, []))})
             for row in sale_rows]
     assignments = await load_batch_store_allocations(db, batch_ids)
-    batch_rows = [(AssignedBatch(row[0], assignments.get(row[0].id, [])), *row[1:]) for row in batch_rows]
+    history = await load_rules(db, batch_ids)
+    batch_rows = [(AssignedBatch(row[0], assignments.get(row[0].id, []), history.get(row[0].id, []),
+                   [{"id": row[6], "name": row[3] or "未关联店铺"}] if row[6] is not None else []), *row[1:])
+                  for row in batch_rows]
     layers = [InventoryLayer(batch.id, batch.product_id, owner, batch.arrived_at.date(),
                              batch.quantity, kind, safe, tuple(rules[batch.product_id]))
               for batch, _sku, _name, _store, kind, safe, owner in batch_rows]
@@ -1613,7 +1630,11 @@ async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
                            int(row.report_quantity), row.sale_store_id) for row in sale_rows]
     previous_end = _previous_month_end(report_date)
     balance_dates = [previous_end, _previous_month_end(previous_end), date(report_date.year - 1, 12, 31)]
-    replay = replay_inventory_provisions(layers, sales, report_date, balance_dates=balance_dates)
+    boundary_dates = {row[0].id: [rule.effective_date - timedelta(days=1)
+                      for rule in row[0].allocation_rules[1:] if rule.effective_date > date.min]
+                      for row in batch_rows if row[0].allocation_rules}
+    replay = replay_inventory_provisions(layers, sales, report_date, balance_dates=balance_dates,
+                                         batch_balance_dates=boundary_dates)
     result = (batch_rows, sale_rows, replay)
     if isinstance(cache, dict):
         cache[key] = result
@@ -1622,11 +1643,14 @@ async def _load_inventory_provision_data(db: AsyncSession, report_date: date):
 
 async def _sale_provision_adjustments(db, as_of: date) -> dict:
     batch_rows, _sale_rows, replay = await _load_inventory_provision_data(db, as_of)
-    batches = {row[0].id: (row[0].unit_cost, row[6], row[0].impairment_stores) for row in batch_rows}
+    batches = {row[0].id: row[0] for row in batch_rows}
     result = {}
     for item in replay.writeoffs:
-        cost, owner, stores = batches[item.sale.batch_id]
-        if stores:
+        batch = batches[item.sale.batch_id]
+        rule = rule_at(batch, item.sale.sold_at.date())
+        cost = batch.unit_cost
+        owner = rule.stores[0]["id"] if rule.stores else None
+        if rule.is_explicit:
             # 显式归属的转销在产品线入口按归属店铺另行归集，不能全额抵到销售店铺。
             result[item.sale.detail_id] = (None, "历史流水异常，销售转销待核对") if item.units is None else (Decimal(0), "")
             continue
@@ -1643,18 +1667,21 @@ async def _voided_inventory_holding_counts(db, store_id: int, periods: dict) -> 
     rows = (await db.execute(
         select(InventoryBatch.id, InventoryBatch.arrived_at, InventoryBatch.voided_at,
                InventoryBatch.quantity, func.coalesce(func.sum(SaleCostDetail.quantity), 0),
-               func.max(Sale.sold_at))
+               func.max(Sale.sold_at), User.store_id)
         .outerjoin(User, User.id == InventoryBatch.user_id)
         .outerjoin(SaleCostDetail, SaleCostDetail.batch_id == InventoryBatch.id)
         .outerjoin(Sale, Sale.id == SaleCostDetail.sale_id)
         .where(InventoryBatch.voided_at.is_not(None), InventoryBatch.arrived_at < cutoff,
                _impairment_store_scope(store_id))
         .group_by(InventoryBatch.id, InventoryBatch.arrived_at, InventoryBatch.voided_at,
-                  InventoryBatch.quantity)
+                  InventoryBatch.quantity, User.store_id)
     )).all()
+    ids = [row[0] for row in rows]
+    assignments = await load_batch_store_allocations(db, ids)
+    history = await load_rules(db, ids)
     counts = {period: 0 for period in periods}
     business_timezone = ZoneInfo("Asia/Shanghai")
-    for _batch_id, arrived_at, voided_at, quantity, sold_quantity, last_sold_at in rows:
+    for batch_id, arrived_at, voided_at, quantity, sold_quantity, last_sold_at, owner in rows:
         # 入库当天0天；作废日沿用现有月度核算时区，不能直接截UTC日期。
         held_start = arrived_at.date() + timedelta(days=1)
         held_end = voided_at.replace(tzinfo=timezone.utc).astimezone(
@@ -1662,8 +1689,13 @@ async def _voided_inventory_holding_counts(db, store_id: int, periods: dict) -> 
         # 售完后的新月份没有该批次持有费用；部分出库或无销售持续到作废日。
         if sold_quantity >= quantity and last_sold_at is not None:
             held_end = min(held_end, last_sold_at.date() + timedelta(days=1))
+        batch = AssignedBatch(SimpleNamespace(id=batch_id, arrived_at=arrived_at),
+                              assignments.get(batch_id, []), history.get(batch_id, []),
+                              [{"id": owner, "name": ""}] if owner is not None else [])
         for period, (start, end) in periods.items():
-            if max(start, held_start) < min(end, held_end):
+            left, right = max(start, held_start), min(end, held_end)
+            if left < right and any(store_id in {s["id"] for s in rule.stores}
+                                    for _a, _b, rule in rule_segments(batch, left, right)):
                 counts[period] += 1
     return counts
 
@@ -1674,7 +1706,10 @@ def _impairment_store_scope(store_id):
     matches = select(BatchImpairmentStore.batch_id).where(
         BatchImpairmentStore.batch_id == InventoryBatch.id,
         BatchImpairmentStore.store_id == store_id).exists()
-    return or_(matches, and_(~assigned, User.store_id == store_id))
+    historical = select(BatchImpairmentRule.id).join(BatchImpairmentRuleStore,
+        BatchImpairmentRuleStore.rule_id == BatchImpairmentRule.id).where(
+        BatchImpairmentRule.batch_id == InventoryBatch.id, BatchImpairmentRuleStore.store_id == store_id).exists()
+    return or_(matches, historical, and_(~assigned, User.store_id == store_id))
 
 
 async def _store_provision_financial_values(db, store_id: int, periods: dict) -> dict:
@@ -1682,7 +1717,7 @@ async def _store_provision_financial_values(db, store_id: int, periods: dict) ->
     batch_rows, _sale_rows, replay = await _load_inventory_provision_data(db, as_of)
     voided_holdings = await _voided_inventory_holding_counts(db, store_id, periods)
     batch_info = {row[0].id: (row[0].unit_cost, row[6]) for row in batch_rows}
-    assignment_map = {row[0].id: row[0].impairment_stores for row in batch_rows}
+    assignment_map = {row[0].id: bool(row[0].impairment_stores or row[0].allocation_rules) for row in batch_rows}
     result = {"inventory_impairment": {}, "inventory_writeoff": {}, "_warnings": []}
     labels = {"current": "本月", "previous": "上月", "ytd": "本年累计"}
     for period, (start, end) in periods.items():
@@ -1691,7 +1726,7 @@ async def _store_provision_financial_values(db, store_id: int, periods: dict) ->
                             if not assignment_map[item.batch_id]
                             and batch_info[item.batch_id][1] == store_id and start <= item.day < end]
         for batch, *_ in batch_rows:
-            if batch.impairment_stores:
+            if batch.impairment_stores or batch.allocation_rules:
                 accrued_parts.append(allocated_provision_period(replay, batch, store_id, start, end))
         accrued = _sum_known(accrued_parts)
         transfers = []
@@ -1711,7 +1746,7 @@ async def _store_provision_financial_values(db, store_id: int, periods: dict) ->
             elif owner == store_id and sale.store_id == store_id:
                 transfers.append(_cost_units(cost, item.units))
         transfers.extend(allocated_provision_period(replay, batch, store_id, start, end, writeoff=True)
-            for batch, *_ in batch_rows if batch.impairment_stores)
+            for batch, *_ in batch_rows if batch.impairment_stores or batch.allocation_rules)
         transferred = _sum_known(transfers)
         if ambiguous or transferred is None:
             accrued = transferred = None
@@ -1746,9 +1781,17 @@ async def _load_inventory_impairment_report_rows(
     for batch, sku, name, store, kind, safe, owner in batch_rows:
         # A future-dated batch is selected above only when it already has a sale
         # by the cutoff. Keep that anomaly visible instead of dropping its sale.
-        stores = batch.impairment_stores
-        if store_id is not None and (store_id not in batch.impairment_store_ids if stores else owner != store_id):
-            continue
+        configured = bool(batch.impairment_stores or batch.allocation_rules)
+        stores = rule_at(batch, report_date).stores
+        previous_stores = rule_at(batch, previous_end).stores
+        if store_id is not None:
+            if configured:
+                visible = any(store_id in {s["id"] for s in rule.stores}
+                              for _a, _b, rule in rule_segments(batch, previous_end, end))
+                if not visible:
+                    continue
+            elif owner != store_id:
+                continue
         current = replay.balances[report_date][batch.id]
         previous = replay.balances[previous_end][batch.id]
         if batch.arrived_at.date() > report_date:
@@ -1758,11 +1801,13 @@ async def _load_inventory_impairment_report_rows(
         note = "；".join(filter(None, [note, replay.notes.get(batch.id, "")]))
         if batch.id in mismatched_cost:
             note += "；销售成本与当前批次单价不同，保留保存成本，准备按批次成本计算"
-        if stores:
+        if configured:
             store = " / ".join(item["name"] for item in stores) + ("（均分）" if len(stores) > 1 else "")
             if store_id is not None:
-                store = next(item["name"] for item in stores if item["id"] == store_id)
-            note += "；跌价归属按当前批次资料从入库日起均分；调整后重算，旧月度版本保留"
+                names = {s["id"]: s["name"] for r in ([rule_at(batch, date.min)] + batch.allocation_rules)
+                         for s in r.stores}
+                store = names[store_id]
+            note += "；按生效日归集归属，准备转移不重复计入费用，旧月度版本保留"
         row = {
             "product_id": batch.product_id, "store_name": store or "未关联店铺", "store_id": owner,
             "sku": sku, "product_name": name, "product_type": kind, "safe_stock_quantity": safe,
@@ -1783,25 +1828,31 @@ async def _load_inventory_impairment_report_rows(
             "opening_impairment_amount": _cost_units(batch.unit_cost, previous.impairment_units),
             "monthly_total_impairment_amount": _cost_units(batch.unit_cost, replay.accrued_units(batch.id, month_start, end)),
             "monthly_writeoff_amount": _cost_units(batch.unit_cost, replay.written_off_units(batch.id, month_start, end)),
-            "impairment_store_ids": batch.impairment_store_ids,
+            "impairment_store_ids": [s["id"] for s in stores] if configured else [],
             "inventory_amount": current.quantity * batch.unit_cost,
-            "impairment_allocation_applied": bool(stores and store_id is not None),
+            "impairment_allocation_applied": bool(configured and store_id is not None),
         }
-        if stores and store_id is not None:
+        if configured and store_id is not None:
             row["store_id"] = store_id
             for field in ("original_quantity", "sold_quantity", "quantity", "previous_month_quantity", "provision_quantity"):
                 if row[field] is not None:
-                    row[field] = Decimal(row[field]) / len(stores)
+                    selected = previous_stores if field == "previous_month_quantity" else stores
+                    row[field] = Decimal(row[field]) / len(selected) if store_id in {s["id"] for s in selected} else Decimal(0)
             for field in ("original_inventory_amount", "sold_cost_amount", "inventory_amount", "previous_book_value",
                           "impairment_amount", "monthly_impairment_amount", "opening_impairment_amount",
                           "monthly_total_impairment_amount", "monthly_writeoff_amount"):
-                row[field] = allocated_batch_amount(row[field], batch, store_id)
+                row[field] = allocated_batch_amount(row[field], batch, store_id, stores=stores)
             row["impairment_amount"] = allocated_provision_balance(replay, batch, store_id, report_date, current.impairment_units)
             row["opening_impairment_amount"] = allocated_provision_balance(replay, batch, store_id, previous_end, previous.impairment_units)
-            row["previous_book_value"] = _subtract_known(allocated_batch_amount(previous.quantity * batch.unit_cost, batch, store_id), row["opening_impairment_amount"])
+            row["previous_book_value"] = _subtract_known(allocated_batch_amount(previous.quantity * batch.unit_cost, batch, store_id,
+                                                                                 stores=previous_stores), row["opening_impairment_amount"])
             row["monthly_total_impairment_amount"] = allocated_provision_period(replay, batch, store_id, month_start, end)
             row["monthly_writeoff_amount"] = allocated_provision_period(replay, batch, store_id, month_start, end, writeoff=True)
             row["comparison_note"] += "；数量为归属折算，非店铺实际销售量；最小金额单位按店铺ID固定分配"
+        incoming, outgoing = allocated_provision_transfers(replay, batch, store_id, month_start, end)
+        row["monthly_transfer_in_amount"], row["monthly_transfer_out_amount"] = incoming, outgoing
+        if incoming is None or outgoing is None:
+            row["comparison_note"] += "；归属变更时准备余额或店铺缺失，准备转移待核对"
         result.append(row)
     return result
 
@@ -1844,6 +1895,8 @@ async def inventory_impairment_report(
             "opening_impairment_amount": item["opening_impairment_amount"],
             "monthly_total_impairment_amount": item["monthly_total_impairment_amount"],
             "monthly_writeoff_amount": item["monthly_writeoff_amount"],
+            "monthly_transfer_in_amount": item["monthly_transfer_in_amount"],
+            "monthly_transfer_out_amount": item["monthly_transfer_out_amount"],
             "book_value_difference": (
                 _subtract_known(book_value, previous_book_value)
             ),
@@ -1860,10 +1913,13 @@ def _summarize_inventory_impairment_rows(rows: list[dict]) -> list[dict]:
     quantities = ("original_quantity", "sold_quantity", "quantity", "provision_quantity")
     amounts = ("original_inventory_amount", "sold_cost_amount", "inventory_amount", "impairment_amount",
                "monthly_impairment_amount", "book_value", "opening_impairment_amount",
-               "monthly_total_impairment_amount", "monthly_writeoff_amount")
+               "monthly_total_impairment_amount", "monthly_writeoff_amount",
+               "monthly_transfer_in_amount", "monthly_transfer_out_amount")
     result = []
     for items in grouped.values():
-        calculated = [{**item, "inventory_amount": item.get("inventory_amount", item["unit_cost"] * item["quantity"]),
+        calculated = [{**item, "monthly_transfer_in_amount": item.get("monthly_transfer_in_amount", Decimal(0)),
+                       "monthly_transfer_out_amount": item.get("monthly_transfer_out_amount", Decimal(0)),
+                       "inventory_amount": item.get("inventory_amount", item["unit_cost"] * item["quantity"]),
                        "book_value": _subtract_known(item.get("inventory_amount", item["unit_cost"] * item["quantity"]), item["impairment_amount"])}
                       for item in items]
         summary = {"store_name": " / ".join(sorted({item["store_name"] for item in items})),

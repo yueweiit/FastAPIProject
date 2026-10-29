@@ -11,6 +11,7 @@ from database import get_db
 from models import (
     Product,
     BatchImpairmentStore,
+    BatchImpairmentRuleStore,
     ProductLine,
     PlatformSkuComponent,
     PlatformSkuMapping,
@@ -314,10 +315,11 @@ async def delete_store(
     store = await db.get(Store, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="店铺不存在")
-    if await db.scalar(select(BatchImpairmentStore.batch_id).where(
-        BatchImpairmentStore.store_id == store_id).limit(1)):
+    if (await db.scalar(select(BatchImpairmentStore.batch_id).where(
+        BatchImpairmentStore.store_id == store_id).limit(1)) or await db.scalar(
+        select(BatchImpairmentRuleStore.rule_id).where(BatchImpairmentRuleStore.store_id == store_id).limit(1))):
         raise HTTPException(status_code=409, detail={"code": "store_has_impairment_batches",
-            "message": "店铺已有跌价归属批次，请先调整批次归属后再删除。"})
+            "message": "店铺被当前或历史跌价归属引用，不能删除；可停用店铺。"})
     count = await db.scalar(
         select(func.count()).select_from(StoreProduct).where(StoreProduct.store_id == store_id)
     )

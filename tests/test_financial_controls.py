@@ -489,6 +489,47 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         self.assertTrue(comparison["changed"])
         self.assertEqual(len(third.payload["cost_manifest"]), 2)
 
+    async def test_ownership_change_preserves_saved_version_and_exports_reserve_transfers(self):
+        from services.batch_impairment_history import save_change
+        from services.batch_store_allocations import replace_stores, validate_stores
+        batch = self.session.get(InventoryBatch, 1)
+        old = await validate_stores(self.db, [7])
+        new = await validate_stores(self.db, [8])
+        history = await save_change(self.db, batch, [], old, [], "from_arrival", arrived_at=batch.arrived_at)
+        await replace_stores(self.db, batch.id, old)
+        await self.db.commit()
+        original = await save_version(self.db, self.admin, FinancialVersionRequest(
+            request_key="ownership-version-old", store_id=7, report_month=date(2026, 9, 1)),
+            oa_values={"office": {}, "shared_admin": {}, "salaries": {}}, active_store_count=2)
+        await self.db.commit()
+        saved = copy.deepcopy(original.payload)
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await save_change(self.db, batch, old, new, history, "from_change_date", arrived_at=batch.arrived_at)
+        await replace_stores(self.db, batch.id, new)
+        await self.db.commit()
+        changed = await save_version(self.db, self.admin, FinancialVersionRequest(
+            request_key="ownership-version-new", store_id=7, report_month=date(2026, 9, 1)),
+            oa_values={"office": {}, "shared_admin": {}, "salaries": {}}, active_store_count=2)
+        await self.db.commit()
+        self.assertEqual(original.payload, saved)
+        self.assertGreater(changed.version, original.version)
+        self.assertEqual(Decimal(changed.payload["inventory"][0]["impairment_amount"]), 0)
+        outgoing = Decimal(changed.payload["inventory"][0]["monthly_transfer_out_amount"])
+        self.assertGreater(outgoing, 0)
+        old_excel = load_workbook(version_workbook(original), data_only=True).worksheets[0]
+        new_excel = load_workbook(version_workbook(changed), data_only=True).worksheets[0]
+        self.assertEqual(old_excel["Y2"].value, 0)
+        self.assertEqual(new_excel["Y2"].value, float(outgoing))
+        self.assertGreater(old_excel["O2"].value, 0)
+        # 新导出器能读取新字段尚未出现的不可变旧payload。
+        legacy = copy.deepcopy(saved)
+        for row in legacy["inventory"]:
+            row.pop("monthly_transfer_in_amount")
+            row.pop("monthly_transfer_out_amount")
+        legacy_excel = load_workbook(version_workbook(SimpleNamespace(payload=legacy,
+            report_month=original.report_month, version=1, status=original.status)), data_only=True)
+        self.assertEqual(legacy_excel.worksheets[0]["Y2"].value, 0)
+
     async def test_legacy_settlement_owner_fallback_is_visible_and_warned(self):
         entry = self.session.get(SettlementEntry, 1)
         entry.store_id = None

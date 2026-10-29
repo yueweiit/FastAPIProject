@@ -4,11 +4,12 @@ from io import BytesIO
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from sqlalchemy import event, select
 from openpyxl import load_workbook
 
-from models import BatchChangeLog, BatchImpairmentStore, InventoryBatch, Product, Sale, Store
+from models import BatchChangeLog, BatchImpairmentStore, BatchImpairmentRule, InventoryBatch, Product, Sale, Store, User
 from routers.batches import router as batch_router
 from routers.finance_masters import router as master_router
 from routers.reports import (_load_inventory_impairment_report_rows, _month_periods,
@@ -40,19 +41,21 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
                                country_or_region="CN", settlement_currency="CNY"))
         self.session.commit()
 
-    async def batch(self):
+    async def batch(self, batch_id=1):
         response = await self.client.get("/batches")
         self.assertEqual(response.status_code, 200, response.text)
-        return next(row for row in response.json() if row["id"] == 1)
+        return next(row for row in response.json() if row["id"] == batch_id)
 
-    async def save(self, ids=None, *, omit=False, version=None):
-        row = await self.batch()
+    async def save(self, ids=None, *, omit=False, version=None, mode=None, batch_id=1):
+        row = await self.batch(batch_id)
         payload = {key: row[key] for key in ("product_id", "quantity", "total_amount", "shipping_cost",
                     "last_mile_cost", "other_cost", "arrived_at", "shipping_date")}
         payload["edit_version"] = version or row["edit_version"]
         if not omit:
             payload["impairment_store_ids"] = ids
-        return await self.client.put("/batches/1", json=payload)
+        if mode is not None:
+            payload["impairment_change_mode"] = mode
+        return await self.client.put(f"/batches/{batch_id}", json=payload)
 
     async def test_create_many_stores_and_preserve_single_stock_quantity(self):
         response = await self.client.post("/batches", json={"product_id": 1, "quantity": 100,
@@ -219,6 +222,246 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sum(allocated_amount(value, stores, owner) for owner in (7, 8, 9)), value)
         self.assertIsNone(allocated_amount(None, stores, 7))
         self.assertEqual(allocated_amount(None, stores, 99), 0)
+
+    async def report_row(self, owner, day=date(2026, 9, 30)):
+        rows = await _load_inventory_impairment_report_rows(InventoryReadSession(self.session), day, owner)
+        return next((row for row in rows if row["batch_id"] == 1), None)
+
+    def assert_rollforward(self, row):
+        self.assertEqual(row["opening_impairment_amount"] + row["monthly_total_impairment_amount"]
+                         - row["monthly_writeoff_amount"] + row["monthly_transfer_in_amount"]
+                         - row["monthly_transfer_out_amount"], row["impairment_amount"])
+
+    async def test_change_date_preserves_expense_and_transfers_unsold_reserve(self):
+        await self.save([7])
+        old = await self.report_row(7, date(2026, 9, 14))
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            response = await self.save([8], mode="from_change_date")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual([r["effective_date"] for r in response.json()["impairment_store_history"]],
+                         ["2026-09-01", "2026-09-15"])
+        self.assertEqual(await self.report_row(7, date(2026, 9, 14)), old)
+        a, b, total = await self.report_row(7), await self.report_row(8), await self.report_row(None)
+        self.assertEqual((a["monthly_total_impairment_amount"], a["monthly_writeoff_amount"],
+                          a["monthly_transfer_out_amount"], a["impairment_amount"]), (98, 7, 91, 0))
+        self.assertEqual((b["monthly_total_impairment_amount"], b["monthly_transfer_in_amount"],
+                          b["impairment_amount"]), (112, 91, 203))
+        for row in (a, b, total): self.assert_rollforward(row)
+        for key in ("monthly_total_impairment_amount", "monthly_writeoff_amount", "impairment_amount",
+                    "monthly_transfer_in_amount", "monthly_transfer_out_amount"):
+            self.assertEqual(a[key] + b[key], total[key])
+        for owner, expense in ((7, 98), (8, 112)):
+            values = await _store_provision_financial_values(InventoryReadSession(self.session), owner,
+                                                            _month_periods(date(2026, 9, 1)))
+            self.assertEqual(values["inventory_impairment"]["current"], expense)
+
+    async def test_change_day_sale_accrues_and_writes_off_for_new_owner(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+        self.add_sale(99, 1, 10, datetime(2026, 9, 15), 7)  # 归属不限制跨店销售。
+        self.session.get(InventoryBatch, 1).remaining_quantity = 60
+        self.session.commit()
+        old, new = await self.report_row(7), await self.report_row(8)
+        self.assertEqual((old["monthly_writeoff_amount"], new["monthly_writeoff_amount"]), (7, 14))
+        self.assertEqual((new["monthly_transfer_in_amount"], new["monthly_total_impairment_amount"],
+                          new["impairment_amount"]), (91, 97, 174))
+        self.assert_rollforward(old)
+        self.assert_rollforward(new)
+
+    async def test_same_day_replacement_and_unchanged_save_do_not_duplicate_transfer(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+            await self.save([7, 8], mode="from_change_date")
+            row = (await self.save([7, 8], mode="from_change_date")).json()
+        self.assertEqual(len(row["impairment_store_history"]), 2)
+        self.assertEqual(self.session.query(BatchImpairmentRule).filter_by(batch_id=1).count(), 2)
+        a, b = await self.report_row(7), await self.report_row(8)
+        self.assertEqual((a["monthly_transfer_out_amount"], b["monthly_transfer_in_amount"]),
+                         (Decimal("45.5"), Decimal("45.5")))
+        self.assert_rollforward(a)
+        self.assert_rollforward(b)
+
+    async def test_arrival_mode_replaces_timeline_and_old_client_defaults_to_it(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+        # 旧客户端改变归属仍保持历史更正契约。
+        response = await self.save([7])
+        self.assertEqual(len(response.json()["impairment_store_history"]), 1)
+        self.assertIsNone(await self.report_row(8))
+        row = await self.report_row(7)
+        self.assertEqual((row["monthly_total_impairment_amount"], row["monthly_transfer_in_amount"]), (210, 0))
+        self.assert_rollforward(row)
+
+    async def test_old_client_unchanged_selection_keeps_existing_dated_history(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+        before = await self.batch()
+        after = (await self.save([8])).json()
+        self.assertEqual(after["impairment_store_history"], before["impairment_store_history"])
+        self.assertEqual(after["edit_version"], before["edit_version"])
+
+    async def test_future_arrival_dated_change_supersedes_pending_baseline(self):
+        today, arrival, cutoff = date(2026, 10, 29), date(2026, 11, 1), date(2026, 11, 2)
+        for selected in ([7], [7, 8]):
+            with self.subTest(selected=selected):
+                created = await self.client.post("/batches", json={"product_id": 1, "quantity": 100,
+                    "total_amount": "1000", "arrived_at": arrival.isoformat() + "T00:00:00",
+                    "impairment_store_ids": [7]})
+                self.assertEqual(created.status_code, 200, created.text)
+                batch_id = created.json()["id"]
+                pending = await self.save([8], mode="from_arrival", batch_id=batch_id)
+                self.assertEqual(pending.status_code, 200, pending.text)
+                self.assertEqual(pending.json()["impairment_store_history"][0]["effective_date"], arrival.isoformat())
+                with patch("services.batch_impairment_history.business_today", return_value=today):
+                    changed = await self.save(selected, mode="from_change_date", batch_id=batch_id)
+                self.assertEqual(changed.status_code, 200, changed.text)
+                current = await self.batch(batch_id)
+                self.assertEqual(current["impairment_store_ids"], selected)
+                self.assertEqual(current["impairment_store_history"], [{"effective_date": today.isoformat(),
+                    "store_ids": selected, "store_names": [f"Store{owner}" for owner in selected], "is_explicit": True}])
+                for day, reserve in ((arrival, Decimal(0)), (cutoff, Decimal(10))):
+                    for owner in (None, 7, 8):
+                        rows = await _load_inventory_impairment_report_rows(InventoryReadSession(self.session), day, owner)
+                        row = next((row for row in rows if row["batch_id"] == batch_id), None)
+                        if owner is not None and owner not in selected:
+                            self.assertIsNone(row)
+                            continue
+                        share = len(selected) if owner is not None else 1
+                        self.assertEqual(row["quantity"], Decimal(100) / share)
+                        self.assertEqual(row["impairment_amount"], reserve / share)
+                        self.assertEqual(row["monthly_total_impairment_amount"], reserve / share)
+                        self.assertEqual((row["monthly_transfer_in_amount"], row["monthly_transfer_out_amount"]), (0, 0))
+                        self.assert_rollforward(row)
+
+    async def test_implicit_cross_store_writeoff_is_pending_in_store_rows_and_excel(self):
+        from routers.reports import _inventory_status, _summarize_inventory_impairment_rows
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            changed = await self.save([8], mode="from_change_date")
+        self.assertEqual(changed.status_code, 200, changed.text)
+        for owner in (7, 8):
+            with self.subTest(owner=owner):
+                row = await self.report_row(owner)
+                self.assertIsNone(row["monthly_writeoff_amount"])
+                for key in ("monthly_total_impairment_amount", "impairment_amount",
+                            "monthly_transfer_in_amount", "monthly_transfer_out_amount"):
+                    self.assertIsNotNone(row[key], key)
+                self.assertEqual(_inventory_status(row), "历史流水待核对")
+                self.assertIsNone(_summarize_inventory_impairment_rows([row])[0]["monthly_writeoff_amount"])
+                book, cache = _build_inventory_impairment_workbook([row], date(2026, 9, 30))
+                sheet = load_workbook(_workbook_bytes_with_formula_cache(book, cache), data_only=True).active
+                self.assertEqual(sheet["S2"].value, "历史流水待核对")
+                self.assertIsNone(sheet["W2"].value)
+                self.assertIsNone(sheet["W3"].value)
+
+    async def test_known_zero_writeoff_keeps_healthy_inventory_status(self):
+        from routers.reports import _inventory_status
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            changed = await self.save([8], mode="from_change_date")
+        self.assertEqual(changed.status_code, 200, changed.text)
+        old, new = await self.report_row(7), await self.report_row(8)
+        self.assertEqual(old["monthly_writeoff_amount"], 7)
+        self.assertEqual(new["monthly_writeoff_amount"], 0)
+        self.assertEqual(_inventory_status(old), "已售完")
+        self.assertEqual(_inventory_status(new), "正常计提")
+
+    async def test_first_dated_change_freezes_creator_binding_and_preserves_ambiguity(self):
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            response = await self.save([8], mode="from_change_date")
+        baseline = response.json()["impairment_store_history"][0]
+        self.assertEqual((baseline["store_ids"], baseline["is_explicit"]), ([7], False))
+        self.session.get(User, 7).store_id = 8
+        self.session.commit()
+        row = await self.report_row(7, date(2026, 9, 14))
+        self.assertEqual(row["impairment_amount"], 91)
+        values = await _store_provision_financial_values(InventoryReadSession(self.session), 7,
+                                                        _month_periods(date(2026, 9, 1)))
+        self.assertIsNone(values["inventory_writeoff"]["current"])  # 原跨店流水不能因新归属被抹掉。
+
+    async def test_first_day_of_month_transfer_keeps_previous_balance_visible(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 10, 1)):
+            await self.save([8], mode="from_change_date")
+        a, b = await self.report_row(7, date(2026, 10, 1)), await self.report_row(8, date(2026, 10, 1))
+        self.assertEqual((a["opening_impairment_amount"], a["monthly_transfer_out_amount"],
+                          b["monthly_transfer_in_amount"]), (203, 203, 203))
+        self.assert_rollforward(a)
+        self.assert_rollforward(b)
+
+    async def test_historical_owner_is_protected_from_deletion(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+        response = await self.client.delete("/finance-masters/stores/7")
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "store_has_impairment_batches")
+
+    async def test_dated_history_rolls_back_with_failed_audit(self):
+        await self.save([7])
+        before = await self.batch()
+        def fail(*_args): raise RuntimeError("audit failure")
+        event.listen(BatchChangeLog, "before_insert", fail)
+        try:
+            with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+                with self.assertRaisesRegex(RuntimeError, "audit failure"):
+                    await self.save([8], mode="from_change_date")
+        finally:
+            event.remove(BatchChangeLog, "before_insert", fail)
+        after = await self.batch()
+        self.assertEqual(after["impairment_store_history"], before["impairment_store_history"])
+        self.assertEqual(after["edit_version"], before["edit_version"])
+
+    async def test_invalid_mode_is_rejected_without_mutation(self):
+        before = await self.batch()
+        self.assertEqual((await self.save([8], mode="unknown")).status_code, 422)
+        self.assertEqual((await self.batch())["edit_version"], before["edit_version"])
+
+    async def test_history_only_change_invalidates_edit_version(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+        before = await self.batch()
+        after = (await self.save([8], mode="from_arrival")).json()
+        self.assertEqual(before["impairment_store_ids"], after["impairment_store_ids"])
+        self.assertNotEqual(before["edit_version"], after["edit_version"])
+        self.assertEqual((await self.save([7], version=before["edit_version"], mode="from_change_date")).status_code, 409)
+        log = self.session.scalar(select(BatchChangeLog).order_by(BatchChangeLog.id.desc()))
+        self.assertEqual(len(log.before_values["impairment_store_history"]), 2)
+        self.assertEqual(len(log.after_values["impairment_store_history"]), 1)
+
+    async def test_voided_holding_warning_follows_historical_effective_owners(self):
+        from routers.reports import _voided_inventory_holding_counts
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 10, 1)):
+            await self.save([8], mode="from_change_date")
+        batch = self.session.get(InventoryBatch, 1)
+        batch.voided_at = datetime(2026, 10, 14, 16)  # 上海10/15
+        self.session.commit()
+        periods = {"old": (date(2026, 9, 1), date(2026, 10, 1)),
+                   "new": (date(2026, 10, 1), date(2026, 11, 1))}
+        for owner, expected in ((7, {"old": 1, "new": 0}), (8, {"old": 0, "new": 1})):
+            counts = await _voided_inventory_holding_counts(InventoryReadSession(self.session), owner, periods)
+            self.assertEqual(counts, expected)
+
+    async def test_missing_original_owner_marks_transfer_unknown_in_report_and_excel(self):
+        from routers.reports import _inventory_status
+        self.session.get(User, 7).store_id = None
+        self.session.commit()
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            await self.save([8], mode="from_change_date")
+        row = await self.report_row(8)
+        self.assertIsNone(row["monthly_transfer_in_amount"])
+        self.assertIsNone(row["monthly_transfer_out_amount"])
+        self.assertIn("准备转移待核对", row["comparison_note"])
+        self.assertEqual(_inventory_status(row), "历史流水待核对")
+        book, cache = _build_inventory_impairment_workbook([row], date(2026, 9, 30))
+        sheet = load_workbook(_workbook_bytes_with_formula_cache(book, cache), data_only=True).active
+        for cell in ("X2", "Y2", "X3", "Y3"):
+            self.assertIsNone(sheet[cell].value)
 
     def test_cent_tails_reconcile_months_ytd_and_store_balance(self):
         from datetime import datetime

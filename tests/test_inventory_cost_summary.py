@@ -48,6 +48,7 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
             SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [rule])),
             SimpleNamespace(all=lambda: deductions),
             SimpleNamespace(all=lambda: []),
+            SimpleNamespace(all=lambda: []),  # 归属生效历史
         ]), commit=AsyncMock())
         rows = await _load_inventory_impairment_report_rows(db, REPORT_DATE, store_id)
         db.commit.assert_not_awaited()

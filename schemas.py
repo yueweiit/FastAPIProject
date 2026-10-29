@@ -208,6 +208,7 @@ class BatchUpdate(BatchCreate):
     # 缺省保持可解析，路由返回明确的升级提示；不允许旧客户端绕过并发保护。
     edit_version: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     cost_edit_mode: Literal["restate"] | None = None
+    impairment_change_mode: Literal["from_arrival", "from_change_date"] = "from_arrival"
 
 
 class BatchVoidRequest(BaseModel):
@@ -222,6 +223,13 @@ class BatchVoidRequest(BaseModel):
         return self
 
 
+class BatchImpairmentRuleResponse(BaseModel):
+    effective_date: date
+    store_ids: list[int]
+    store_names: list[str]
+    is_explicit: bool
+
+
 class BatchResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -230,6 +238,7 @@ class BatchResponse(BaseModel):
     user_id: int | None = None
     impairment_store_ids: list[int] = Field(default_factory=list)
     impairment_store_names: list[str] = Field(default_factory=list)
+    impairment_store_history: list[BatchImpairmentRuleResponse] = Field(default_factory=list)
     batch_no: str
     quantity: int
     remaining_quantity: int

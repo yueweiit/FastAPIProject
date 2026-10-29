@@ -21,6 +21,7 @@ from services.cost_layers import load_cost_layers, AdjustedBatch
 from services.finance_config import financial_controls_enabled
 from services.batch_edits import freeze_cost_basis, restate_costs
 from services.batch_store_allocations import AssignedBatch, load_batch_store_allocations, replace_stores, validate_stores
+from services.batch_impairment_history import load_rules, save_change
 
 router = APIRouter(prefix="/batches", tags=["入库管理"])
 BASE_DIR = Path(__file__).parent.parent
@@ -153,7 +154,8 @@ async def update_batch(
 
     layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
     stores = (await load_batch_store_allocations(db, {batch_id}, lock=True)).get(batch_id, [])
-    current = AssignedBatch(AdjustedBatch(batch, layers), stores)
+    history = (await load_rules(db, {batch_id}, lock=True)).get(batch_id, [])
+    current = AssignedBatch(AdjustedBatch(batch, layers), stores, history)
 
     # 行锁内读取当前版本；排队的编辑必须携带打开表单时的版本，不能覆盖中途修改。
     if data.edit_version != current.edit_version:
@@ -174,9 +176,14 @@ async def update_batch(
             "message": f"入库数量不能小于已出库数量（{consumed}）。"})
     arrived = data.arrived_at or batch.arrived_at
 
-    before = _batch_change_values(batch, layers, stores)
+    before = _batch_change_values(batch, layers, stores, history)
     if "impairment_store_ids" in data.model_fields_set:
-        stores = await validate_stores(db, data.impairment_store_ids, existing=[store["id"] for store in stores])
+        selected = await validate_stores(db, data.impairment_store_ids, existing=[store["id"] for store in stores])
+        # 旧表单编辑其他资料会原样提交店铺；没有显式选历史更正时，不清掉日规则。
+        if ("impairment_change_mode" in data.model_fields_set
+            or [store["id"] for store in selected] != [store["id"] for store in stores]):
+            history = await save_change(db, batch, stores, selected, history, data.impairment_change_mode, arrived_at=arrived)
+        stores = selected
         await replace_stores(db, batch_id, stores)
     _, total_amount = _resolve_purchase_values(data, batch)
     effective = current.edit_values or {key: getattr(batch, key) for key in (
@@ -245,15 +252,15 @@ async def update_batch(
     db.add(BatchChangeLog(
         batch_id=batch.id, batch_no=batch.batch_no, action="update",
         actor_id=user.id, actor_username=user.username, actor_role=user.role,
-        before_values=before, after_values=_batch_change_values(batch, after_layers, stores),
+        before_values=before, after_values=_batch_change_values(batch, after_layers, stores, history),
     ))
-    response = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, after_layers), stores))
+    response = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, after_layers), stores, history))
     await db.commit()
     return response
 
 
-def _batch_change_values(batch, layers=(), stores=()):
-    values = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, layers), stores)).model_dump(mode="json", exclude={
+def _batch_change_values(batch, layers=(), stores=(), history=()):
+    values = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, layers), stores, history)).model_dump(mode="json", exclude={
         "base_unit_cost", "cost_adjustment_per_unit", "cost_status", "edit_version",
     })
     # 日志保留当时页面的实际金额，原始成本依据另存cost_basis且不接受客户端覆盖。
@@ -304,23 +311,24 @@ async def void_batch(
         raise HTTPException(status_code=409, detail={"code": "batch_voided", "message": "批次已作废。"})
     layers = (await load_cost_layers(db, {batch_id}, lock=True)).get(batch_id, [])
     stores = (await load_batch_store_allocations(db, {batch_id}, lock=True)).get(batch_id, [])
-    if data.edit_version != AssignedBatch(AdjustedBatch(batch, layers), stores).edit_version:
+    history = (await load_rules(db, {batch_id}, lock=True)).get(batch_id, [])
+    if data.edit_version != AssignedBatch(AdjustedBatch(batch, layers), stores, history).edit_version:
         raise HTTPException(status_code=409, detail={"code": "batch_edit_conflict",
             "message": "批次或成本来源已改变，请刷新后核对再作废。"})
-    before = _batch_change_values(batch, layers, stores)
+    before = _batch_change_values(batch, layers, stores, history)
     batch.voided_at = datetime.now(timezone.utc).replace(tzinfo=None)
     batch.voided_by = user.id
     batch.void_reason = data.reason
     # 先按数据库字段精度落库，再将实际保存值用于日志、版本和响应。
     await db.flush()
     await db.refresh(batch, with_for_update=True)
-    after = _batch_change_values(batch, layers, stores)
+    after = _batch_change_values(batch, layers, stores, history)
     db.add(BatchChangeLog(
         batch_id=batch.id, batch_no=batch.batch_no, action="void",
         actor_id=user.id, actor_username=user.username, actor_role=user.role,
         before_values=before, after_values=after,
     ))
-    response = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, layers), stores))
+    response = BatchResponse.model_validate(AssignedBatch(AdjustedBatch(batch, layers), stores, history))
     await db.commit()
     return response
 
@@ -370,7 +378,8 @@ async def list_batches(
     if cost_layers:
         batches = [AdjustedBatch(batch, cost_layers.get(batch.id, [])) for batch in batches]
     assignments = await load_batch_store_allocations(db, {batch.id for batch in batches})
-    batches = [AssignedBatch(batch, assignments.get(batch.id, [])) for batch in batches]
+    history = await load_rules(db, {batch.id for batch in batches})
+    batches = [AssignedBatch(batch, assignments.get(batch.id, []), history.get(batch.id, [])) for batch in batches]
     if page is None:
         return batches
     return BatchPageResponse(items=batches, total=total, page=page, page_size=page_size)
@@ -419,7 +428,7 @@ async def export_batches(
     products_result = await db.execute(select(Product).where(Product.id.in_(product_ids)))
     products = {product.id: product for product in products_result.scalars().all()}
 
-    # 与存货报表一致：展示创建人当前绑定店铺，不推断批次独占归属。
+    # 本列展示创建人当前绑定；跌价归属单列，不能推断批次独占库存。
     owner_ids = {batch.user_id for batch in batches if batch.user_id is not None}
     store_names = {}
     if owner_ids:

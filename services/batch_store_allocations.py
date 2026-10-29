@@ -3,11 +3,13 @@ from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal, localcontext
 from hashlib import sha256
+import json
 
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from models import BatchImpairmentStore, Store
+from services.batch_impairment_history import rule_at, rule_segments
 
 
 async def load_batch_store_allocations(db, batch_ids, *, lock=False):
@@ -55,18 +57,30 @@ async def replace_stores(db, batch_id, stores):
 
 
 class AssignedBatch:
-    def __init__(self, batch, stores=()):
+    def __init__(self, batch, stores=(), rules=(), default_stores=()):
         self.original = batch
         self.impairment_stores = list(stores)
         self.impairment_store_ids = [store["id"] for store in stores]
         self.impairment_store_names = [store["name"] for store in stores]
+        self.allocation_rules = list(rules)
+        self.default_stores = list(default_stores)
+
+    @property
+    def impairment_store_history(self):
+        return [{"effective_date": r.effective_date, "store_ids": [s["id"] for s in r.stores],
+                 "store_names": [s["name"] for s in r.stores], "is_explicit": r.is_explicit}
+                for r in self.allocation_rules]
 
     @property
     def edit_version(self):
         base = self.original.edit_version
-        if not self.impairment_store_ids:
-            return base
-        return sha256(f"{base}:impairment:{','.join(map(str, self.impairment_store_ids))}".encode()).hexdigest()
+        if self.impairment_store_ids:
+            base = sha256(f"{base}:impairment:{','.join(map(str, self.impairment_store_ids))}".encode()).hexdigest()
+        if self.allocation_rules:
+            value = [(r.effective_date.isoformat(), r.is_explicit, [s["id"] for s in r.stores])
+                     for r in self.allocation_rules]
+            base = sha256(f"{base}:history:{json.dumps(value)}".encode()).hexdigest()
+        return base
 
     def __getattr__(self, key):
         return getattr(self.original, key)
@@ -97,34 +111,103 @@ def allocated_amount(amount, stores, store_id, *, quantum=Decimal("0.01")):
         return share.copy_sign(amount)
 
 
-def allocated_batch_amount(amount, batch, store_id):
+def allocated_batch_amount(amount, batch, store_id, *, stores=None):
     # 当前比例按整数数量层递增1%或0.5%，成本小数位再留3位即可完整表示。
     # 库存成本和准备共用此精度，避免小额成本先截至分位而准备仍有小数。
     quantum = Decimal(1).scaleb(min(-2, batch.unit_cost.as_tuple().exponent - 3))
-    return allocated_amount(amount, batch.impairment_stores, store_id, quantum=quantum)
+    return allocated_amount(amount, batch.impairment_stores if stores is None else stores, store_id, quantum=quantum)
 
 
-def allocated_provision_period(replay, batch, store_id, start, end, *, writeoff=False):
+def _segment_start(batch, rule):
+    return rule.effective_date if batch.allocation_rules and rule != batch.allocation_rules[0] else date.min
+
+
+def _opening_units(replay, batch, rule):
+    start = _segment_start(batch, rule)
+    if start == date.min:
+        return Decimal(0)
+    balance = replay.balances.get(start - timedelta(days=1), {}).get(batch.id)
+    if balance is not None:
+        return balance.impairment_units
+    accrued = replay.accrued_units(batch.id, date.min, start)
+    written = replay.written_off_units(batch.id, date.min, start)
+    return None if accrued is None or written is None else accrued - written
+
+
+def _ambiguous_writeoff(replay, batch, store_id, start, end):
+    if all(rule.is_explicit for _a, _b, rule in rule_segments(batch, start, end)):
+        return False
+    for item in replay.writeoffs_by_batch.get(batch.id, []):
+        sale = item.sale
+        if sale.batch_id != batch.id or not start <= sale.sold_at.date() < end:
+            continue
+        rule = rule_at(batch, sale.sold_at.date())
+        if rule.is_explicit or item.units == 0:
+            continue
+        owner = rule.stores[0]["id"] if rule.stores else None
+        if owner != sale.store_id and store_id in (owner, sale.store_id):
+            return True
+    return False
+
+
+def allocated_provision_period(replay, batch, store_id, start, end, *, writeoff=False, explicit_only=False):
     """分摊累计值后取期间差，避免本月/上月/YTD各自舍入造成尾差不勾稽。"""
     totals = replay.written_off_units if writeoff else replay.accrued_units
-    units = totals(batch.id, start, end)
-    if units is None:
-        return allocated_batch_amount(None, batch, store_id)
-    before, after = totals(batch.id, date.min, start), totals(batch.id, date.min, end)
-    if before is None or after is None:
-        # 旧未知不把健康期间补成0，也不把过去的未知扩大到当前健康期间。
-        return allocated_batch_amount(batch.unit_cost * units, batch, store_id)
-    return (allocated_batch_amount(batch.unit_cost * after, batch, store_id)
-            - allocated_batch_amount(batch.unit_cost * before, batch, store_id))
+    if writeoff and not explicit_only and _ambiguous_writeoff(replay, batch, store_id, start, end):
+        return None
+    values = []
+    for left, right, rule in rule_segments(batch, start, end):
+        if explicit_only and not rule.is_explicit:
+            continue
+        share = lambda value: allocated_batch_amount(value, batch, store_id, stores=rule.stores)
+        units = totals(batch.id, left, right)
+        if units is None:
+            values.append(share(None))
+            continue
+        baseline = _segment_start(batch, rule)
+        before, after = totals(batch.id, baseline, left), totals(batch.id, baseline, right)
+        opening = Decimal(0) if writeoff else _opening_units(replay, batch, rule)
+        if before is None or after is None or opening is None:
+            values.append(share(batch.unit_cost * units))
+        else:
+            values.append(share(batch.unit_cost * (opening + after))
+                          - share(batch.unit_cost * (opening + before)))
+    return None if None in values else sum(values, Decimal(0))
 
 
 def allocated_provision_balance(replay, batch, store_id, day, units):
+    rule = rule_at(batch, day)
+    share = lambda value: allocated_batch_amount(value, batch, store_id, stores=rule.stores)
     if units is None:
-        return allocated_batch_amount(None, batch, store_id)
+        return share(None)
     end = day + timedelta(days=1)
-    accrued = replay.accrued_units(batch.id, date.min, end)
-    written = replay.written_off_units(batch.id, date.min, end)
-    if accrued is None or written is None:
-        return allocated_batch_amount(batch.unit_cost * units, batch, store_id)
-    return (allocated_batch_amount(batch.unit_cost * accrued, batch, store_id)
-            - allocated_batch_amount(batch.unit_cost * written, batch, store_id))
+    start = _segment_start(batch, rule)
+    accrued = replay.accrued_units(batch.id, start, end)
+    written = replay.written_off_units(batch.id, start, end)
+    opening = _opening_units(replay, batch, rule)
+    if accrued is None or written is None or opening is None:
+        return share(batch.unit_cost * units)
+    return share(batch.unit_cost * (opening + accrued)) - share(batch.unit_cost * written)
+
+
+def allocated_provision_transfers(replay, batch, store_id, start, end):
+    """变更日开始前转移尚未转销的准备，不进入计提费用或销售转销。"""
+    incoming, outgoing = [], []
+    for rule in batch.allocation_rules[1:]:
+        day = rule.effective_date
+        if not start <= day < end:
+            continue
+        previous = rule_at(batch, day - timedelta(days=1))
+        ids = sorted({s["id"] for s in previous.stores + rule.stores})
+        if store_id is not None and store_id not in ids:
+            continue
+        units = _opening_units(replay, batch, rule)
+        if units is None or (units != 0 and (not previous.stores or not rule.stores)):
+            return None, None
+        for owner in ids if store_id is None else [store_id]:
+            before = allocated_provision_balance(replay, batch, owner, day - timedelta(days=1), units)
+            after = allocated_batch_amount(batch.unit_cost * units, batch, owner, stores=rule.stores)
+            delta = after - before
+            incoming.append(max(delta, Decimal(0)))
+            outgoing.append(max(-delta, Decimal(0)))
+    return sum(incoming, Decimal(0)), sum(outgoing, Decimal(0))

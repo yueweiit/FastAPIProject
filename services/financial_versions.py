@@ -31,6 +31,9 @@ async def collect_payload(db, user, store, report_month, *, oa_values=None, acti
     unchecked = sum(row.get("cost_status") != "actual" for row in inventory)
     if unchecked:
         warnings.append(f"{unchecked}个历史或当前批次尚未全部完成采购/头程/尾程/其他成本核对，结果包含未核对成本。")
+    if any(row.get("monthly_transfer_in_amount") is None or row.get("monthly_transfer_out_amount") is None
+           for row in inventory):
+        warnings.append("归属变更时准备余额或店铺缺失，准备转移待核对，未以0代替。")
     expenses = (await db.execute(select(FinancialExpense).where(
         FinancialExpense.store_id == store.id, FinancialExpense.expense_date >= source_start,
         FinancialExpense.expense_date < end).order_by(FinancialExpense.id))).scalars().all()
@@ -66,7 +69,7 @@ async def collect_payload(db, user, store, report_month, *, oa_values=None, acti
                               "status": row.status, "source_ref": row.source_ref} for row in expenses],
         "profit_layers": {"after_inventory_cost": product_margin, "after_platform_cost": platform_margin,
                           "net_profit": values["net_profit"]},
-        "warnings": list(dict.fromkeys(warnings)), "calculation_version": "restated-cost-v1"})
+        "warnings": list(dict.fromkeys(warnings)), "calculation_version": "restated-cost-ownership-v2"})
 
 
 async def save_version(db, user, payload, *, oa_values=None, active_store_count=None):
@@ -139,7 +142,8 @@ def version_workbook(version):
     decimal_fields = {"unit_cost", "base_unit_cost", "cost_adjustment_per_unit", "original_inventory_amount",
         "sold_cost_amount", "previous_book_value", "impairment_rate", "impairment_amount", "monthly_impairment_amount",
         "opening_impairment_amount", "monthly_total_impairment_amount", "monthly_writeoff_amount",
-        "inventory_amount", "original_quantity", "sold_quantity", "quantity", "previous_month_quantity", "provision_quantity"}
+        "inventory_amount", "original_quantity", "sold_quantity", "quantity", "previous_month_quantity", "provision_quantity",
+        "monthly_transfer_in_amount", "monthly_transfer_out_amount"}
     for raw in payload["inventory"]:
         item = dict(raw)
         item["arrived_at"] = date.fromisoformat(item["arrived_at"])
