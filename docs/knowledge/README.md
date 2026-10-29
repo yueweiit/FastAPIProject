@@ -11,7 +11,7 @@
 | [project-overview.md](project-overview.md) | 项目定位、技术栈、入口、目录 |
 | [architecture.md](architecture.md) | 系统关系、启动生命周期、事务与外部依赖 |
 | [business-map.md](business-map.md) | 功能清单、模块依赖、尚未实现的目标 |
-| [database.md](database.md) | 29张ORM表（其中8张默认关闭）、关系图、迁移与数据边界 |
+| [database.md](database.md) | 31张ORM表（其中8张默认关闭）、关系图、迁移与数据边界 |
 | [data-dictionary.md](data-dictionary.md) | 模块字段字典导航、跨模块字段及状态编码 |
 | [api-overview.md](api-overview.md) | 路由、调用关系、分页、错误与导出 |
 | [authentication.md](authentication.md) | 登录、角色矩阵、店铺隔离和例外 |

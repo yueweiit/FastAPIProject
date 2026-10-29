@@ -27,7 +27,7 @@
 
 ## 存货明细金额契约
 
-`GET /reports/inventory-impairment` 保留已有字段及四个入库/出库追溯字段；算法依据见[流程](workflow.md)，完整24个响应字段（23个显示列及comparison_note）的血缘见[逐字段说明](inventory-impairment-fields.md#页面23列完整对照)：
+`GET /reports/inventory-impairment` 保留已有字段及四个入库/出库追溯字段；算法依据见[流程](workflow.md)，完整26个响应字段（25个显示列及comparison_note）的血缘见[逐字段说明](inventory-impairment-fields.md#页面25列完整对照)：
 
 | 字段 | 口径 |
 | --- | --- |
@@ -43,11 +43,13 @@
 | `opening_impairment_amount` | 上月末准备余额，本月新批为0 |
 | `monthly_total_impairment_amount` | 本月实际新增准备，含已售部分售出前增提 |
 | `monthly_writeoff_amount` | 本月销售转出对应全部准备，可能含期初准备 |
+| `monthly_transfer_in_amount` | 本月归属变更转入的剩余准备，不作为计提费用 |
+| `monthly_transfer_out_amount` | 本月归属变更转出的剩余准备，不作为销售转销或费用 |
 | `status` | 异常优先为历史流水待核对；其他依次为已售完、安全库存内、比例上限/接近上限、正常 |
 
 2026-10-15追加持有期间计提/转销：销售当天先计提，售完期末余额0，但本月总计提和转销可非0。旧字段保留语义并新增三项变动。历史时序/数量异常相关金额为null，不填0；上月按同一回放计算，金额/比较值未知按列传播至SKU及合计。
 
-`GET /reports/inventory-impairment/summary` 返回19字段：store_name、sku、product_name、batch_count，上述四个追溯字段，以及 quantity、provision_quantity、inventory_amount、impairment_amount、monthly_impairment_amount、book_value、book_value_difference、comparison_note及上述三项新增变动。按 product_id 汇总，不合计单价/库龄/比例。包含已售完旧批次，和明细的范围一致；任一准备或比较值未知则该SKU对应合计为null。完整范围和例子见[SKU 汇总说明](inventory-impairment-fields.md#sku汇总与成本核对)。
+`GET /reports/inventory-impairment/summary` 返回21字段：store_name、sku、product_name、batch_count，上述四个追溯字段，以及 quantity、provision_quantity、inventory_amount、impairment_amount、monthly_impairment_amount、book_value、book_value_difference、comparison_note及上述三项变动和准备转入/转出。按 product_id 汇总，不合计单价/库龄/比例。包含已售完旧批次，和明细的范围一致；任一准备或比较值未知则该SKU对应合计为null。完整范围和例子见[SKU 汇总说明](inventory-impairment-fields.md#sku汇总与成本核对)。
 
 ## 损益保存契约
 

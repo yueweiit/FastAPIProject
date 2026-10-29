@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 认证 | users、auth_login_transactions、auth_sessions：本地身份、临时流程、会话 | [认证数据库](../modules/auth/database.md) |
 | 商品 | products、product_impairment_rules：商品与规则生效历史 | [商品数据库](../modules/products/database.md) |
-| 库存 | inventory_batches、batch_change_logs、batch_impairment_stores：数量、成本、创建人、日志和跌价均分归属 | [库存数据库](../modules/inventory/database.md) |
+| 库存 | inventory_batches、batch_change_logs、batch_impairment_stores、batch_impairment_rules/rule_stores：数量、成本、创建人、日志和跌价均分归属 | [库存数据库](../modules/inventory/database.md) |
 | 销售 | sales、sale_cost_details、sales_import_batches、settlement_entries、settlement_entry_allocations：出库、来源及分摊 | [销售数据库](../modules/sales/database.md) |
 | 财务主数据 | product_lines、stores、store_products、platform_sku_mappings、platform_sku_components：两套用途不同的映射 | [主数据数据库](../modules/finance-masters/database.md) |
 | 报表 | accounting_periods、inventory_period_snapshots、store_profit_loss_reports：快照标记、冻结结果及人工项 | [报表数据库](../modules/reports/database.md) |
@@ -25,7 +25,7 @@
 | sales.order_no / order_claim：String(64) | 前者允许组合多明细；后者只由新订单第一条占位且全局唯一，历史和后续明细为 NULL | [销售幂等](../modules/sales/database.md#店铺幂等和审计) |
 | settlement_entries.source_key：String(128) | 结算事件唯一键，与订单占位不同；同订单可有多个结算事件 | [销售导入](../modules/sales/workflow.md#文件导入) |
 | currency / exchange_rate_to_cny：String(8) / DECIMAL(18,8) | 原币及固化人民币汇率；不能把 sales.profit 直接当人民币利润。缺失有效汇率统一传播至相关收入/费用和利润 | [销售人民币口径](../modules/sales/workflow.md#组合金额与人民币) |
-| users.store_id 与业务 store_id：可空 Integer 外键 | 当前账号绑定不等于历史业务归属；批次无 store_id，库存归属从创建人当前绑定推导 | [隔离机制](authentication.md#店铺与租户机制) |
+| users.store_id 与业务 store_id：可空 Integer 外键 | 当前账号绑定不等于历史业务归属；批次无 store_id；跌价按生效历史/手工选择，无历史未指定时从创建人当前绑定推导 | [隔离机制](authentication.md#店铺与租户机制) |
 | product_type / safe_stock_quantity / effective_date | String(16) 类型、Integer 安全库存及 Date 生效日；历史规则参与跌价，不能只读商品当前值 | [商品规则](../modules/products/database.md#规则历史与引用) |
 | manual_values / remarks / report_metadata：JSON | 人工损益项、备注和元数据；report_metadata 对应实际列名 metadata。current 保存范围只替换本月人工值 | [报表字典](../modules/reports/database.md#store_profit_loss_reports) |
 

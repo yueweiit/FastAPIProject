@@ -1,6 +1,6 @@
 # 入库模块数据表
 
-本模块维护 inventory_batches、batch_change_logs 和 batch_impairment_stores；历史消耗记录的字段见[销售数据库](../sales/database.md)，月末引用见[报表数据库](../reports/database.md)。
+本模块维护 inventory_batches、batch_change_logs、batch_impairment_stores及两张按日归属历史表；历史消耗记录的字段见[销售数据库](../sales/database.md)，月末引用见[报表数据库](../reports/database.md)。
 
 ## inventory_batches
 
@@ -50,7 +50,20 @@ user_id保存创建人，可为空；批次没有独占store_id、仓库ID、关
 
 `BatchImpairmentStore`保存批次跌价金额的手工均分对象。batch_id和store_id组成主键，均为非空Integer，分别外键引用inventory_batches.id、stores.id；另有(store_id,batch_id)索引，InnoDB/utf8mb4。不存固定店铺数量、比例或金额，不参与FIFO。创建/编辑校验有效店铺，已有停用店铺可保留，但不允许新增停用对象；被引用店铺拒绝删除。
 
-AssignedBatch.edit_version包含排序后店铺ID；修改/作废先锁批次、成本层和关联行，店铺校验按ID共享锁当前读。关联变更与批次日志同事务，日志记录前后ID/名称。作为整批资料更正，从入库日起重算动态报表，旧版本/快照不重写。离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)，仅生成SQL，不执行或回填。新表为默认基础结构，不依赖财务增强开关，目标库部署需先核验。
+AssignedBatch.edit_version包含排序后店铺ID及归属日规则；修改/作废先锁批次、成本层、当前关联、历史规则及其关联行，店铺校验按ID共享锁当前读。变更与日志同事务，日志记录前后ID/名称和完整生效历史。范围见[流程](workflow.md#批次跌价归属)，旧版本/快照不重写。当前关联离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)，仅生成SQL，不执行或回填。新表为默认基础结构，不依赖财务增强开关，目标库部署需先核验。
+
+## batch_impairment_rules与batch_impairment_rule_stores
+
+| 表/字段 | 类型与约束 | 含义 |
+| --- | --- | --- |
+| batch_impairment_rules.id | Integer自增主键 | 一条归属日规则 |
+| batch_id | Integer非空外键inventory_batches.id，索引 | 所属批次 |
+| effective_date | Date非空，与batch_id联合唯一 | Asia/Shanghai生效自然日 |
+| is_explicit | Boolean非空，默认True | 手工指定或创建人绑定推导；隐式归属保留旧跨店异常规则 |
+| batch_impairment_rule_stores.rule_id | Integer外键batch_impairment_rules.id，复合主键 | 所属规则 |
+| store_id | Integer外键stores.id，复合主键；(store_id,rule_id)反向索引 | 当日开始均分店铺，名称取主数据 |
+
+规则无关联行表示当时无法确定店铺，不能推为0准备。按日修改保留基线和后续段；历史更正替换时间线，旧时间线保留在batch_change_logs前值中，不另建准备金额凭证。转移金额按全局回放及归属边界确定，不落同名金额列。首次编辑才建立历史，不推造旧归属；旧批次无日规则时走当前关联/创建人绑定。离线DDL见[add_batch_impairment_history.py](../../../migrations/add_batch_impairment_history.py)，仅生成两表SQL。本轮未执行目标库建表；发布准备见[运行说明](../../../PROJECT_RUNBOOK.md#批次手工跌价归属新增结构)。
 
 sale_cost_details、inventory_period_snapshots 引用批次，不能随意改历史成本、删除批次或通过直接 UPDATE 修复库存。库存主数量与按历史销售重建的数量需勾稽，撤销会删除相关明细。依据：[batches.py](../../../routers/batches.py)、[models.py](../../../models.py)、[sales.py](../../../routers/sales.py)。
 

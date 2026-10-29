@@ -2,9 +2,9 @@
 
 ## 存储边界
 
-主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的29张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
+主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的31张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
 
-OA PostgreSQL 是外部只读数据源，不属于这29张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
+OA PostgreSQL 是外部只读数据源，不属于这31张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
 
 ## 表清单与唯一维护入口
 
@@ -19,6 +19,8 @@ OA PostgreSQL 是外部只读数据源，不属于这29张表；实际表名为 
 | product_impairment_rules | ProductImpairmentRule | 商品跌价规则生效历史 | [商品数据库](../modules/products/database.md) |
 | inventory_batches | InventoryBatch | 数量、剩余数、成本、创建人 | [库存数据库](../modules/inventory/database.md) |
 | batch_impairment_stores | BatchImpairmentStore | 手工指定批次跌价均分店铺，复合主键/外键 | [库存数据库](../modules/inventory/database.md#batch_impairment_stores) |
+| batch_impairment_rules | BatchImpairmentRule | 批次归属生效日及显式/隐式来源，批次/日期唯一 | [库存数据库](../modules/inventory/database.md#batch_impairment_rules与batch_impairment_rule_stores) |
+| batch_impairment_rule_stores | BatchImpairmentRuleStore | 每段归属的均分店铺，复合主键/外键 | [库存数据库](../modules/inventory/database.md#batch_impairment_rules与batch_impairment_rule_stores) |
 | batch_change_logs | BatchChangeLog | 批次修改前后值、操作者和UTC时间 | [库存数据库](../modules/inventory/database.md) |
 | sales | Sale | 商品出库、店铺、售价、成本、费用、利润 | [销售数据库](../modules/sales/database.md) |
 | sale_cost_details | SaleCostDetail | 销售扣减原批次的审计明细 | [销售数据库](../modules/sales/database.md) |
@@ -93,7 +95,7 @@ erDiagram
 
 - 批次/销售金额及成本为 DECIMAL(12,4)，结算金额通常 DECIMAL(16,4)，汇率 DECIMAL(18,8)，快照比率 DECIMAL(8,6)。业务计算使用 Decimal；HTTP 及 Excel 输出存在浮点转换，不能反推数据库精度。依据：[models.py](../../models.py)、[main.py](../../main.py)。
 - 当前库存从 inventory_batches.remaining_quantity 汇总；历史库存按入库 quantity 减截止日前 SaleCostDetail 数量重建，不直接使用当前剩余数。后者不是完整库存流水，撤销会删除销售明细。依据：[reports.py](../../routers/reports.py)。
-- users.store_id 可改变；新销售/导入/结算保存独立 store_id，批次没有独占store_id，跌价归属通过batch_impairment_stores手工多选；空选择才沿用创建人当前绑定。平台 SKU 映射也没有店铺外键。依据：[models.py](../../models.py)。
+- users.store_id 可改变；新销售/导入/结算保存独立 store_id，批次没有独占store_id，跌价归属通过batch_impairment_stores手工多选；归属日规则优先，无历史且空选择才沿用创建人当前绑定。平台 SKU 映射也没有店铺外键。依据：[models.py](../../models.py)。
 - 大多数时间列为无时区 DATETIME；月末自动任务使用 Asia/Shanghai，导入解析会移除时区信息；数据库/服务器统一时区仍需确认。依据：[accounting_periods.py](../../services/accounting_periods.py)、[sales.py](../../routers/sales.py)。
 - 两张认证表显式使用 UTC 无时区 DATETIME，与财务日期口径分开；auth_login_transactions 为独立临时状态表，关系图不虚构其用户外键。每小时只清理过期认证记录，详见[认证字典](../modules/auth/database.md)。
 

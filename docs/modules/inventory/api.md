@@ -49,6 +49,10 @@ view=overview输出“库存总览”“说明”；daily输出“月度汇总�
 
 新增可选`impairment_store_ids: list[int]`，最多100项，正ID、去重排序；创建默认[]，沿用创建人店铺推导。PUT遗漏保留，显式[]清空；无效/新选停用店铺422 `batch_impairment_store_invalid`，原有停用对象可保留。响应新增impairment_store_ids、impairment_store_names；ID纳入edit_version，旧表单不能覆盖新归属。仅admin/operator可写，支持已售批次的纯归属更正，无需财务增强开关，不改余量/原FIFO成本，日志保存前后归属。规则见[批次跌价归属](workflow.md#批次跌价归属)。
 
+PUT另接受`impairment_change_mode: Literal["from_arrival","from_change_date"]`，遗漏默认`from_arrival`兼容旧客户端；仅在请求含impairment_store_ids时处理。响应新增`impairment_store_history: [{effective_date,store_ids,store_names,is_explicit}]`；无日规则为[]。生效日由服务端决定，不接受任意回填日期；相同店铺的按日保存不追加规则，历史更正可重置已有历史。历史也纳入并发版本和日志，旧版本保存请求409；非法模式422。新页面默认按修改日，新前端发现旧响应缺少历史字段则禁用该模式，避免旧后端忽略字段导致意外追溯。
+
+模式遗漏且店铺选择未变化时保留已有历史，避免旧表单仅改其他资料却意外清空日规则；重置同一选择的历史必须显式传`from_arrival`。
+
 批次Excel在既有列末尾追加“跌价归属店铺（均分）”，显示手工店铺名或“未指定（沿用原归属）”；该列和作废原因均强制按文本写入，原列顺序保持兼容。
 
 必填 product_id、quantity，quantity>0。采购信息优先 total_amount（≥0）；没有该字段时兼容 purchase_price（≥0，默认0）。shipping_cost、last_mile_cost、other_cost 是整批费用，默认0；钉钉单号和三个成本单号可空，最大长度64。shipping_date、arrived_at 可省略。

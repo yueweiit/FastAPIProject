@@ -1,6 +1,6 @@
 # 入库模块代码映射
 
-批次跌价多选由PageInteractions.batchStores及两份页面提供；POST/PUT在批次事务内调用[batch_store_allocations.py](../../../services/batch_store_allocations.py)校验/写入关联，AssignedBatch包含归属与内容版本。均分计算供报表复用，FIFO不调用。测试入口[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)，真实DOM见既有inventory_workspace_browser_checks.cjs；离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)。
+批次跌价多选由PageInteractions.batchStores及两份页面提供；POST/PUT在批次事务内调用[batch_store_allocations.py](../../../services/batch_store_allocations.py)校验/写入关联，AssignedBatch包含归属、日规则与内容版本。按日生效及基线保存由[batch_impairment_history.py](../../../services/batch_impairment_history.py)负责，准备转移由同一均分服务生成，回归见[test_batch_impairment_history.py](../../../tests/test_batch_impairment_history.py)。均分计算供报表复用，FIFO不调用。测试入口[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)，真实DOM见既有inventory_workspace_browser_checks.cjs；离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)。
 
 库存Excel由[services/inventory_export.py](../../../services/inventory_export.py)格式化，只消费页面共用的overview_row/activity_rows，不连接数据库或另算库存。接口测试核对总览/整月/横向格式、全查询范围、指定商品、跨店权限、未知合计空白、文本/公式安全、上限和分组期间一致性；浏览器测试核对下载文件名/参数、忙时重复点击、失败恢复、无效文件和旧会话响应。
 

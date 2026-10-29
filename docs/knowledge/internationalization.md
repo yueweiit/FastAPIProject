@@ -49,6 +49,8 @@
 
 批次跌价归属的字段/帮助/加载/失败/停用/已选数量及错误键集中在PageInteractions的batchImpairment*字典，两份页面共用；店铺名转义，批次Excel追加列强制文本。API字段impairment_store_ids为中立ID，错误batch_impairment_store_invalid通过局部字典映射。财务均分说明沿用后端中文报表契约，无新增语言或依赖。
 
+归属生效范围、两种模式及影响说明、历史记录标签集中在同一字典`batchImpairment*`；准备转入/转出表头及勾稽式为`provision*`键，两份页面通过`data-provision-text`初始化，直接打开报表也能显示。模式码`from_arrival/from_change_date`与显示文字分离；日志的生效历史按日期/店铺名展示并转义。仍仅支持zh-CN，无新增翻译依赖；Excel新增表头复用reports.py现有集中列定义，沿用中文导出契约。
+
 库存工作台新文案、状态、视图、空态、来源类型、导出反馈及待核对提示集中在[static/inventory-workspace.js](../../static/inventory-workspace.js)的zh-CN字典，按document.documentElement.lang取词并回退中文，菜单以data-inventory-nav绑定。API以中立kind/scope/stock_status/warning码表达状态；业务SKU、名称、单号保持原文并转义。数字/金额按当前界面语言格式化；业务日期仍按原无时区值，UTC日志转上海业务日期。新增Excel表头、状态/警示及范围说明集中在[services/inventory_export.py](../../services/inventory_export.py)，复用商品类型标签与文本安全写入；文件沿用中文契约，权限/未知值留空。本次无新语言、依赖、导入契约变更或全站切换。
 
 [static/financial-control.js](../../static/financial-control.js)集中zh-CN文案，通过document.documentElement.lang选择并回退中文；未增加依赖或全站语言切换。稳定状态/科目编码与展示标签分开，服务端新错误用code/message；后端配置标签/Excel继续现有中文契约。当前没有已支持的第二种语言，不能声称完整多语言已经实现。

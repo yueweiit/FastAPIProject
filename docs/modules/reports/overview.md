@@ -18,7 +18,7 @@
 - 独立退款/调整/赔付按财务事件进入销售/损益/产品线，原销售不重复；current模式人工比较列按月事实汇总。缺失汇率传播到相关金额和利润，明细及Excel合计保持空值。边界见[完善计划](../../plans/2026-10-19-financial-accuracy.md)。
 - 商品/销售/成本/规则或当前店铺绑定变化会影响动态结果，历史完整性及生产仍待验证。
 
-批次页面/Excel23列，SKU页面18列/API与Excel19字段；完整血缘见[字段说明](inventory-impairment-fields.md)。业务、算法和本地验证见[持有期间变更](../../development/2026-10-15-holding-period-impairment.md)，财务目标保留于[FINANCIAL_REPORTING_TARGET.md](../../../FINANCIAL_REPORTING_TARGET.md)。
+批次页面/Excel25列，SKU页面20列/API与Excel21字段；完整血缘见[字段说明](inventory-impairment-fields.md)。业务、算法和本地验证见[持有期间变更](../../development/2026-10-15-holding-period-impairment.md)，财务目标保留于[FINANCIAL_REPORTING_TARGET.md](../../../FINANCIAL_REPORTING_TARGET.md)。
 
 ## 文档入口
 

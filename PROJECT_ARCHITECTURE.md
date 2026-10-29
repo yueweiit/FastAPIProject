@@ -4,7 +4,7 @@
 
 ## 2026-10-28 库存查看工作台
 
-批次另新增batch_impairment_stores关联表维护手工跌价归属，POST/PUT与日志同事务，单店全额/多店均分，归属更正从入库日起重算动态报表，旧版本不变。由services/batch_store_allocations.py统一余额/期间增提/转销分摊；不改变共享FIFO、销售额度、原成本或历史批次数量。新表/部署前提见[运行说明](PROJECT_RUNBOOK.md#批次手工跌价归属新增结构)，业务/尾差定义见[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。以下只读库存页面的“无新表”限定于该页面自身，批次归属功能需独立结构准备。
+批次另新增batch_impairment_stores关联表维护手工跌价归属，POST/PUT与日志同事务，单店全额/多店均分，归属更正可从入库日重算或从北京时间修改日生效，旧版本不变。新增batch_impairment_rules及batch_impairment_rule_stores保存日规则；后者保留历史费用、单列剩余准备转入/转出，不重复确认费用。由services/batch_store_allocations.py统一余额/期间增提/转销分摊；不改变共享FIFO、销售额度、原成本或历史批次数量。新表/部署前提见[运行说明](PROJECT_RUNBOOK.md#批次手工跌价归属新增结构)，业务/尾差定义见[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。以下只读库存页面的“无新表”限定于该页面自身，批次归属功能需独立结构准备。
 
 库存查看另增`GET /inventory/export`，按当前查询全部商品导出总览、月度汇总/每日明细或日期横向Excel。服务复用库存/日结响应构建，保留店铺权限及未知空值，文件格式化集中于`services/inventory_export.py`；读完数据后释放事务再生成文件，原FIFO/表结构不变。接口总计4个只读GET，导出范围及保护见[库存API](docs/modules/inventory/api.md#库存导出)。
 
@@ -159,7 +159,7 @@ test_main.http          手工请求示例
 
 批次修改权限与日志：运营/管理员可编辑任意历史批次，保留已售数；已售或已补差批次的数量/金额更正须启用财务增强，以cost_basis冻结原依据、追加差额追溯原销售月，不回写FIFO单价或旧月度版本。编辑与日志/凭证同事务；删除统一采用有原因、有版本校验的软作废，保留原批次和关联记录，旧DELETE接口返回410。规则见[库存模块](docs/modules/inventory/overview.md)，结构准备见[运行说明](PROJECT_RUNBOOK.md#已出库批次编辑与成本重述)。
 
-当前 ORM 定义29张表（8张财务增强表默认关闭）；以下为FIFO核心的五张，其余为店铺、平台SKU、导入、结算、财务及两张认证状态表，完整字典见[数据库总览](docs/knowledge/database.md)：
+当前 ORM 定义31张表（8张财务增强表默认关闭）；以下为FIFO核心的五张，其余为店铺、平台SKU、导入、结算、财务及两张认证状态表，完整字典见[数据库总览](docs/knowledge/database.md)：
 
 ```text
 users

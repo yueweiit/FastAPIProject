@@ -1,6 +1,6 @@
 # 存货跌价明细：逐字段来源与准备余额
 
-核实日期：2026-10-15，已同步代码审查后的异常传播边界和期间汇总优化。按用户追加确认，入库当天0天；销售当天先计提再转销。报表同时展示本月总计提、销售转销和期末准备；账面仍为现存库存成本减期末准备。旧逐日叠加完整余额及静态截止日回算均为历史版本，现行实现见[持有期间变更](../../development/2026-10-15-holding-period-impairment.md)。覆盖批次页面23列、SKU页面18列及API/Excel；生产更新与真实历史完整性待验证。
+核实日期：2026-10-29，已同步代码审查后的异常传播边界和期间汇总优化。按用户追加确认，入库当天0天；销售当天先计提再转销。报表同时展示本月总计提、销售转销和期末准备；账面仍为现存库存成本减期末准备。旧逐日叠加完整余额及静态截止日回算均为历史版本，现行实现见[持有期间变更](../../development/2026-10-15-holding-period-impairment.md)。覆盖批次页面25列、SKU页面20列及API/Excel；生产更新与真实历史完整性待验证。
 
 ## 入口与数据范围
 
@@ -10,7 +10,7 @@
 - 独立导出：`GET /reports/inventory-impairment/export`，`view=batch`默认，`view=sku`为汇总。
 - 财务附件保留原顺序，末尾追加07存货SKU汇总；管理员五张，非管理员四张。
 - 两种视图均包含截止日前全部已到货批次。售完批次保留入库/销售追溯列，期末准备、账面及现存库存本月计提为0，但本月计提总额及销售转销可能非0。
-- 独立存货查询/导出为全局；财务附件管理员为全局，非管理员按绑定店铺过滤。归属来自批次创建人当前绑定，批次没有固化店铺。
+- 独立存货查询/导出为全局；财务附件管理员为全局，非管理员按绑定店铺过滤。跌价归属按日规则、手工多选或创建人绑定推导，详见[批次规则](../inventory/workflow.md#批次跌价归属)；FIFO仍共享。
 - 截止包含当天全天，不包含次日00:00；后端拒绝未来日期。采用现有无时区数据库时间，跨环境时区一致性待验证。
 
 依据：[reports.py](../../../routers/reports.py)的`_load_inventory_impairment_report_rows`及查询/导出函数；[运行模板](../../../templates/index.html)的`loadInventoryImpairment`。
@@ -51,13 +51,13 @@ flowchart TD
 依据：[持有期间回放](../../../services/inventory_provision_movements.py)的`ProvisionReplay`、`_build_period_totals`、`_PeriodTotals.total`；异常传播规则见[异常传播与空值](#异常传播与空值)。
 
 
-## 页面23列完整对照
+## 页面25列完整对照
 
 `D`为截止日，`M`为D所在月1日，`P=M−1天`，`C`为批次保存单价，`Q0`为原始数量，`Q_D`为截止日剩余数量。
 
 | 序号 | 页面字段 / API字段 | 原始来源与计算 | Excel列 |
 | --- | --- | --- | --- |
-| 1 | 店铺 / `store_name` | 批次user_id → users.store_id → stores.name；缺失显示未关联店铺，采用当前绑定。 | A |
+| 1 | 店铺 / `store_name` | 按报告日生效规则/当前手工归属读取stores.name；无历史未指定时从创建人绑定推导；未知显示未关联店铺。 | A |
 | 2 | SKU编码 / `sku` | 批次product_id → products.sku；不是平台SKU。 | B |
 | 3 | 商品名称 / `product_name` | products.name；改名影响历史展示。 | C |
 | 4 | 批次号 / `batch_no` | inventory_batches.batch_no。 | T备注 |
@@ -80,8 +80,10 @@ flowchart TD
 | 21 | 账面价值 / `book_value` | C×Q_D−期末累计跌价准备；已售商品成本不包含在现存成本中。 | P |
 | 22 | 与上月末账面价值差额 / `book_value_difference` | 本期账面价值−按上月末数量及同一余额算法重算的上月账面价值，含销售/新入库影响。 | Q |
 | 23 | 状态 / `status` | 关键准备金额未知时为历史流水待核对；其次库存0为已售完；截止日不计跌价类型为不计跌价/停止新增计提（保留历史准备）；其他类型计提数量0为安全库存内；比例≥90%为达到上限，≥60%为接近上限，其余正常。 | S |
+| 24 | 本月准备转入 / `monthly_transfer_in_amount` | 生效边界新分配减旧余额的正净额，未知留空，不计费用。 | X |
+| 25 | 本月准备转出 / `monthly_transfer_out_amount` | 生效边界新分配减旧余额的负净额取绝对值，未知留空，不作销售转销。 | Y |
 
-API共24字段，额外`comparison_note`说明本月新增批次上月账面为0；正常历史批次为空。不因快照缺失留空，防御性比较未知时仍保留null。
+API共26字段，额外`comparison_note`说明本月新增批次上月账面为0；正常历史批次为空。不因快照缺失留空，防御性比较未知时仍保留null。
 
 依据：[reports.py](../../../routers/reports.py)、[持有期间回放](../../../services/inventory_provision_movements.py)的`replay_inventory_provisions`；[原规则模块](../../../services/inventory_impairment.py)提供日增率、类型及90%上限及[models.py](../../../models.py)。
 
@@ -89,9 +91,11 @@ API共24字段，额外`comparison_note`说明本月新增批次上月账面为0
 
 ```text
 每日新增准备 = 当天参与计提的实际整数数量层 × 批次单价 × 当天新增比例
-期初准备 + 本月计提总额 − 本月销售转销 = 期末准备
+期初准备 + 本月计提总额 − 本月销售转销 + 准备转入 − 准备转出 = 期末准备
 账面价值 = 截止日剩余数量 × 批次单价 − 期末准备
 ```
+
+`monthly_transfer_in_amount`、`monthly_transfer_out_amount`为按修改日生效时的准备净转移，批次页面追加两列、Excel在X/Y，SKU Excel在T/U；缺失旧版本字段按0兼容导出。新结果中无法确认边界准备或转入/转出店铺时为null，汇总继续传播未知。费用仍只用实际计提，不能把准备转入再算一遍费用。全局转入等于转出；店铺勾稽见[库存规则](../inventory/workflow.md#批次跌价归属)。
 
 入库当天0天；同一天先加入当日入库批次、应用生效规则并计提，再按sold_at、sale_id、明细id排序处理销售。销售日期用sales.sold_at，不用上传或结算日期；该规则按自然日计算，不按小时计提。
 
@@ -121,7 +125,7 @@ API共24字段，额外`comparison_note`说明本月新增批次上月账面为0
 
 ## Excel与显示
 
-批次页面/Excel均23列：Excel批次号在T备注，R为现存本月计提，U/V/W分别为期初准备/本月总计提/销售转销；保留旧列位置。SKU页面18列，Excel另有P比较说明，共19列，新三项在Q/R/S。
+批次页面/Excel均25列：Excel批次号在T备注，R为现存本月计提，U/V/W分别为期初准备/本月总计提/销售转销；保留旧列位置。新增X/Y为准备转入/转出。SKU页面20列，Excel另有P比较说明，共21列，期初/计提/转销在Q/R/S，准备转入/转出在T/U。
 
 ```text
 E = 固定报告DATE值 − D入库日期（不用TODAY）

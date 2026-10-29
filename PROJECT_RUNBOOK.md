@@ -8,11 +8,17 @@
 
 ### 批次手工跌价归属（新增结构）
 
-新建/编辑批次增加“跌价归属店铺”多选，用于按剩余库存跌价金额均分；A/B可多卖少卖，不设库存配额、不改变共享FIFO。归属更正从入库日起重算查询报表，旧月度版本不覆盖；未指定沿用原口径。字段、事务及金额尾差见[库存规则](docs/modules/inventory/workflow.md#批次跌价归属)和[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。
+新建/编辑批次增加“跌价归属店铺”多选，用于按剩余库存跌价金额均分；A/B可多卖少卖，不设库存配额、不改变共享FIFO。归属更正可选择从入库日重算或从北京时间修改日生效。后者保留原费用并转移剩余准备、单列转入/转出；旧月度版本不覆盖。无历史且未指定沿用原口径。字段、事务及金额尾差见[库存规则](docs/modules/inventory/workflow.md#批次跌价归属)和[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。
 
 新增基础表batch_impairment_stores（batch_id/store_id复合主键、外键、店铺索引），不依赖财务增强开关，不自动回填旧批次。离线生成：`.\.venv\Scripts\python.exe migrations/add_batch_impairment_stores.py --write-sql output/batch_impairment_stores.sql`。脚本不连接数据库；2026-10-28经用户明确授权，仅在本地127.0.0.1:3309 / inventory_fifo_test新建该表，复合主键、外键/索引核验通过，新表0行，9张既有业务表记录数及校验值一致，证据位于output/batch-store-allocation/verification.json。没有回填数据、重启8010或部署生产。其他目标环境应先备份、核验父表INT/InnoDB、外键/字符集、权限及现存表结构，取得相应环境变更授权后建表，再统一加载models/schemas、batch_store_allocations、批次/报表/店铺路由、financial_versions、page-interactions及两份页面。启动会create_all且有其他写入，不能作为结构预检。回退应保留关联表/日志与旧版本，不删除业务数据。
 
 回归：`python -m unittest tests.test_batch_store_allocations -v`验证真实隔离批次路由、旧客户端保留、冲突、回滚、停用/权限、均分/历史更正/未知/尾差和产品线；`node tests/inventory_workspace_browser_checks.cjs`验证两份真实页面的多选创建、编辑和ID提交。真实MySQL锁等待/目标库结构及生产历史数据仍待环境验证。
+
+2026-10-29按日归属新增两张基础表`batch_impairment_rules`、`batch_impairment_rule_stores`，不依赖财务增强开关。本轮仅提交源码改动及离线生成工具，**未执行任何目标库建表或部署**。获准上线前先离线生成供审核SQL：`python migrations/add_batch_impairment_history.py --write-sql output/batch_impairment_history.sql`。脚本不连接数据库；核验父表/外键/联合唯一键、InnoDB及备份，取得目标环境结构变更授权后再执行DDL，随后统一加载归属历史服务、回放/均分服务、批次/报表/店铺路由、models/schemas、financial_versions、共享JS及两份页面。不能只更新前端或通过启动代替预检。
+
+首次编辑按规则建立基线，不批量回填。新旧写入进程不能混跑：旧版不会维护日规则，可能造成当前选择与历史不一致；回退须保持读取/维护历史的兼容能力并保留两表及审计日志。转入/转出是查询时从归属边界回放出的金额，不另写准备金额表。验证入口增加`python -m unittest tests.test_batch_impairment_history tests.test_provision_reporting -v`；前端默认按修改日，API遗漏模式默认历史更正，详见[批次API](docs/modules/inventory/api.md)。真实MySQL并发及财务真实月度核对仍待验证。
+
+2026-10-29审查修复：按修改日调整归属同时替换当天及未来尚未生效的旧规则，防止未来到货时切回旧店铺；未知销售转销纳入存货“历史流水待核对”状态，优先于正常计提和已售完，已确认0元仍按正常规则展示。回归在`tests/test_batch_store_allocations.py`覆盖单店/多店未来入库、到货后金额、隐式跨店转销的Excel状态/空白合计及零转销。本次修复不新增结构、接口或翻译文案，不回填历史数据；仍以隔离测试验证，不操作目标库或重启服务。长期规则见[库存流程](docs/modules/inventory/workflow.md#批次跌价归属)及[报表流程](docs/modules/reports/workflow.md#页面与excel字段名称)。
 
 新增库存总览、每日进出、来源弹窗及Excel导出，包含按天/按商品/横向日期表。新增代码为`routers/inventory.py`、`services/inventory_activity.py`、`services/inventory_export.py`、`static/inventory-workspace.js`，`main.py`注册4个只读API和静态脚本；两份首页同步菜单、挂载、样式及退出清理。不能只更新HTML；获准发布时应同时更新这些文件并按既有流程加载后端/刷新页面。本功能无新表、迁移、业务数据回填或新增运行依赖；代码验证未启动业务应用或发布服务器。
 

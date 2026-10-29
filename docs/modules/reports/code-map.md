@@ -23,6 +23,7 @@
 | --- | --- |
 | 原准备余额规则及商品历史（快照兼容/历史算法） | [test_inventory_impairment_report.py](../../../tests/test_inventory_impairment_report.py) |
 | 120/480验收、同日销售、跨月年、售完、规则及上限、月增提与账面差 | [test_inventory_provision_movements.py](../../../tests/test_inventory_provision_movements.py)、[test_provision_reporting.py](../../../tests/test_provision_reporting.py) |
+| 未来入库单店/多店归属不回退、到货后准备归集、隐式跨店转销待核对优先于正常/售完、Excel空值及已确认零转销 | [test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)；隔离SQLite/ASGI，不启动main或连接业务库 |
 | 入库/出库成本、跨批次汇总、售完余额0、Excel公式缓存、两种导出和财务范围 | [test_inventory_cost_summary.py](../../../tests/test_inventory_cost_summary.py) |
 | 两份页面脚本语法及真实渲染函数的新增字段、未知合计、120/480和转义（DOM模拟） | [inventory_page_checks.cjs](../../../tests/inventory_page_checks.cjs)，`node tests/inventory_page_checks.cjs` |
 | 快照仅一次与无公开会计接口 | [test_accounting_period_snapshots.py](../../../tests/test_accounting_period_snapshots.py)、[test_accounting_period_removal.py](../../../tests/test_accounting_period_removal.py) |
