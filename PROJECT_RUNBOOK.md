@@ -415,3 +415,11 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 本次仅离线DDL与隔离SQLite/VM验证；真实MySQL锁等待、并发成本/FIFO、旧库结构及浏览器/OA/平台凭证待环境验收。测试命令见[约定](docs/knowledge/conventions.md)。
 
 2026-10-19后续回归：在本机3309的独立副本`fifo_browser_20261019`及8011临时服务中定位并修复财务保存500。公共audit现显式异步加载MySQL默认时间字段，包括更新时的updated_at；无需DDL，更新相关Python文件后重启获准目标服务。原8010服务及inventory_fifo_test结构未修改；生产未迁移、启用或部署。专用MySQL脚本运行限制、事务回滚和命令见[财务增强回归](docs/knowledge/conventions.md#财务增强回归)，不得用它连接业务库。
+
+## 销售单件成本、公式说明与整单解释（2026-10-30）
+
+本次无DDL/数据回填，保留原FIFO和持久化成本。加载routers/sales.py、schemas.py、cost_layers/sales_costs/sales_export/sales_fields.py、main新增的sales-ledger.js与sales-fields.json静态入口、两份首页及局部JSON资源。只更新HTML会缺少字段或接口；旧模块/资源不可用时页面提示更新并重启。当前本地8010仍由用户手动重启，然后Ctrl+F5刷新；未在本任务执行服务重启或生产发布，启动的既有副作用沿用本文说明。
+
+单件按未舍入金额/实际库存出库件数，分位和原利润计算不改。解释接口及导出订单汇总跨当前筛选取同店完整订单，未知店铺或金额保持待核对；整单明细1000/导出关联20000上限不截断。部署需包含static/sales-fields.zh-CN.json，页面与Excel共用同源字段说明。隔离回归入口为test_sales_cost_explanations/test_sales_costs/test_sales_export、sales_cost_page_checks.cjs及inventory_workspace_browser_checks.cjs；实际目标库性能和历史资料完整性仍需按环境核验，隔离通过不等于生产验收。
+
+复查修复：整单解释及订单汇总名称按分组店铺ID读取，覆盖历史绑定与商品映射缺失/冲突；两份首页独立处理待确认区域失败，保留已加载台账和统计。无新增结构或数据修复步骤，仍按上述方式手动重启后端并刷新静态页面。

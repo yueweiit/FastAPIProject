@@ -84,3 +84,9 @@
 已售批次编辑的追溯说明、数量下限/明细不一致、入库晚于销售、财务开关前提、编辑模式和差额越界提示，同样集中在该字典batch*键中；已售数量通过参数占位替换。移除整批禁用提示，不新增用户确认流程。
 
 商品三种类型的下拉、列表、编辑、导入预览及规则说明集中在两份首页的`productTypeText`局部zh-CN字典，按document.documentElement.lang取词并回退中文；旧商品类型由`productTypeValue`将旧safe_stock编码兼容为stable，安全库存不再派生第四种类型。后端`services/inventory_impairment.py`的`PRODUCT_TYPE_NAMES`集中类型标签，商品导出、导入别名/模板/校验和结果复用，`IMPAIRMENT_STATUS_NAMES`集中新增报表状态。仍仅支持zh-CN；没有新增语言依赖、全站切换或导出语言参数。
+
+## 销售字段公式资源
+
+销售台账新增局部[JSON资源](../../static/sales-fields.zh-CN.json)，字段编码与显示标签分离，包含分组、类型、公式、来源及口径；main公开资源仅提供静态文字，无业务数据。页面与Excel“字段口径说明”读取同一文件，当前zh-CN、未知语言回退中文，不引入全局翻译框架/依赖。新增计算弹窗、错误和单位文案集中在[sales-ledger.js](../../static/sales-ledger.js)的局部字典；旧服务未加载模块的提示在PageInteractions字典。用户订单号、SKU、商品/批次名及错误文本全部转义；Excel文本沿用字面量写入。
+
+待确认区域独立加载失败的文案使用PageInteractions的salesPendingLoadFailed键；服务器错误通过textContent或escapeHtml显示，保留行内错误而不收进问号说明。

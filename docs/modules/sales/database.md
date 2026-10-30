@@ -165,3 +165,5 @@ source_key 全局唯一，不含店铺维度；order_no 普通索引且非唯一
 raw_data 保存原始行，不保存原文件内容；source_file/sheet/row_number 是追溯线索。撤销删掉结算、分摊、销售和成本明细，仅保留导入批次状态/统计/撤销人，并不保留完整被撤销业务行审计副本。成本字段和原币/人民币差异见[流程](workflow.md)。
 
 依据：[models.py](../../../models.py)、[sales.py](../../../routers/sales.py) 的 _settlement_entry、rollback_sales_import。启动 [migrate.py](../../../migrate.py) 还回填历史导入批次、修复映射状态，实库与 ORM 外键可能不同。
+
+单件五项、计算批次和整单汇总均为只读查询派生字段，无新增表/列/回填。来源粒度仍为Sale及SaleCostDetail，本地出库件数与平台来源数量的区别不变；本次未改变FIFO锁序、持久化成本及原币/人民币处理。
