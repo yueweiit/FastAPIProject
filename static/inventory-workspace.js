@@ -32,7 +32,7 @@
         detailPagination: '共 {total} 条 · 第 {page} / {pages} 页',
         dataScope: '每日统计为本页商品合计', equation: '期末 = 期初 + 入库 − 出库 + 调整',
         matrixIn: '入', matrixOut: '出', matrixAdjustment: '调', matrixBalance: '余', noImage: '无图',
-        stable: '稳健商品', new: '新品', safe_stock: '安全库存商品', no_impairment: '不计跌价商品',
+        stable: '稳健商品', new: '新品', safe_stock: '稳健商品', no_impairment: '不跌价商品',
         exportOverview: '导出库存 Excel', exportDaily: '导出整月 Excel', exportProduct: '导出所选商品 Excel',
         exportScope: '导出当前查询全部结果，不限当前页；每日进出包含所选月份。',
         exportLoading: '正在生成 Excel，请稍候…', exportReady: 'Excel 已生成，请查看浏览器下载列表。',
@@ -225,7 +225,7 @@
                 + stat('pageLow', number(data.summary.low_count)) + stat('pageZero', number(data.summary.zero_count));
             node('thead').innerHTML = `<tr>${['product', 'type', 'safe', 'current', 'amount', 'lastArrival', 'status', 'detail'].map(key => `<th>${h(text(key))}</th>`).join('')}</tr>`;
             node('tbody').innerHTML = data.items.map(product => `<tr><td class="inventory-fixed">${identity(product)}</td>
-                <td>${h(text(product.product_type))}</td><td>${product.product_type === 'safe_stock' ? h(number(product.safe_stock_quantity)) : '—'}</td>
+                <td>${h(text(product.product_type))}</td><td>${['stable','safe_stock'].includes(product.product_type) ? h(number(product.safe_stock_quantity)) : '—'}</td>
                 <td class="inventory-balance">${h(number(product.stock_quantity))}</td><td>${h(money(product.stock_value))}</td>
                 <td>${h(product.last_batch_at || '—')}</td><td><span class="tag ${product.stock_status === 'low' || product.stock_status === 'pending' ? 'tag-orange' : product.stock_status === 'zero' ? 'tag-red' : 'tag-green'}">${h(text(product.stock_status))}</span></td>
                 <td><button type="button" class="btn btn-secondary" data-iw-trace="${Number(product.id)}">${h(text('trace'))}</button></td></tr>`).join('');

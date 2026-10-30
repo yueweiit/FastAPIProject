@@ -44,7 +44,7 @@ def overview_row(product):
     row = product.model_dump()
     row["product_type"] = effective_product_type(product.product_type, product.safe_stock_quantity)
     row["stock_status"] = ("pending" if product.stock_quantity < 0 else "zero" if product.stock_quantity == 0 else "low"
-        if row["product_type"] == "safe_stock" and product.stock_quantity < product.safe_stock_quantity else "normal")
+        if row["product_type"] == "stable" and product.stock_quantity < product.safe_stock_quantity else "normal")
     return row
 
 

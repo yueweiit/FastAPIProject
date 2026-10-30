@@ -378,7 +378,7 @@ class InventoryWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         sheet = book["库存总览"]
         self.assertEqual(sheet.max_row, 5)
         row = self.sheet_row(sheet, "SKU-1")
-        self.assertEqual([cell.value for cell in row[2:6]], ["安全库存商品", 90, 70, 700])
+        self.assertEqual([cell.value for cell in row[2:6]], ["稳健商品", 90, 70, 700])
         self.assertEqual(sheet.cell(5, 5).value, 80)
         self.assertEqual(sheet.cell(5, 6).value, 730)
         self.assertIn("说明", book.sheetnames)

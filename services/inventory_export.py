@@ -75,7 +75,7 @@ def build_inventory_workbook(view, products, *, scope, keyword=None, selected_sk
         sheet = workbook.create_sheet("库存总览")
         _append(sheet, ["SKU", "商品名称", "商品类型", "安全库存", "当前库存", "库存成本金额(元)", "最近入库", "库存状态"], 1)
         rows = [[p["sku"], p["name"], PRODUCT_TYPE_NAMES[p["product_type"]],
-                 p["safe_stock_quantity"] if p["product_type"] == "safe_stock" else None,
+                 p["safe_stock_quantity"] if p["product_type"] == "stable" else None,
                  p["stock_quantity"], p["stock_value"], p["last_batch_at"], STATUS_NAMES[p["stock_status"]]] for p in products]
         for number, row in enumerate(rows, 2):
             _append(sheet, row, number)

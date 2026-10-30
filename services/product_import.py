@@ -43,6 +43,7 @@ HEADER_FIELDS = {
 }
 TYPE_NAMES = PRODUCT_TYPE_NAMES
 TYPE_VALUES = {**{key: key for key in TYPE_NAMES}, **{label: key for key, label in TYPE_NAMES.items()}}
+TYPE_VALUES.update({"safe_stock": "stable", "安全库存商品": "stable", "不计跌价商品": "no_impairment"})
 TYPE_OPTIONS = "、".join(TYPE_NAMES.values())
 STATUS_NAMES = {"new": "可新增", "skipped": "已存在，跳过", "error": "错误", "created": "已新增"}
 
@@ -93,7 +94,7 @@ def build_product_import_template() -> BytesIO:
         allow_blank=True,
     )
     stock.errorTitle = "安全库存无效"
-    stock.error = "请输入非负整数；新品和不计跌价商品填写 0"
+    stock.error = "请输入非负整数；新品和不跌价商品填写 0"
     stock.showErrorMessage = True
     stock.errorStyle = "stop"
     sheet.add_data_validation(stock)
@@ -103,9 +104,9 @@ def build_product_import_template() -> BytesIO:
         "在“商品导入”工作表填写数据；一行一个商品，最多 2000 条，文件不超过 5 MB。",
         "SKU 必须按文本填写，最多 64 字符；数字 SKU 丢失的前导零无法自动恢复。",
         "商品名称必填，最多 255 字符；商品类型必填，选择" + TYPE_OPTIONS + "。",
-        "安全库存留空按 0 处理；新品和不计跌价商品必须为 0；关键列不接受公式。",
-        "稳健商品全部库存每日计提1%；新品0.5%；安全库存商品超出安全库存部分每日1%；不计跌价商品不新增准备。",
-        "兼容旧文件：稳健商品填写正安全库存时，按安全库存商品导入；已有历史准备不因改为不计跌价而清零。",
+        "安全库存留空按 0 处理；新品和不跌价商品必须为 0；关键列不接受公式。",
+        "稳健商品仅超出安全库存部分每日计提1%；新品全部库存每日0.5%；不跌价商品不新增准备。",
+        "兼容旧文件：安全库存商品归为稳健商品并保留安全库存；已有历史准备不因停止计提而清零。",
         "数据库已有 SKU 默认跳过；文件内重复 SKU 为错误，需修正后再导入。",
         "预览包含隐藏行；有错误时整批不写入。确认时会再次校验数据库状态。",
         "这里只新增商品基础资料及当天规则，不导入图片、库存数量、成本或历史日期。",
@@ -117,8 +118,8 @@ def build_product_import_template() -> BytesIO:
     instructions.append(list(IMPORT_HEADERS))
     instructions.append(["DEMO001", "示例商品 A", "新品", 0])
     instructions.append(["DEMO002", "示例商品 B", "稳健商品", 0])
-    instructions.append(["DEMO003", "示例商品 C", "安全库存商品", 100])
-    instructions.append(["DEMO004", "示例商品 D", "不计跌价商品", 0])
+    instructions.append(["DEMO003", "示例商品 C", "稳健商品", 100])
+    instructions.append(["DEMO004", "示例商品 D", "不跌价商品", 0])
     instructions.column_dimensions["A"].width = 105
     instructions.column_dimensions["B"].width = 30
     instructions.column_dimensions["C"].width = 18

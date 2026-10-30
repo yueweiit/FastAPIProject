@@ -1,4 +1,4 @@
-"""四种商品规则、旧安全库存兼容、历史切换及报表汇总；不连接业务库。"""
+"""三种商品类型、独立安全库存及旧safe_stock历史兼容；不连接业务库。"""
 
 import unittest
 from datetime import date, datetime
@@ -56,6 +56,16 @@ class ProductTypeRuleTests(unittest.TestCase):
                 self.assertEqual(replay.balances[self.arrival][1].impairment_units, 0)
                 self.assertEqual(replay.balances[self.cutoff][1].impairment_units, Decimal(units))
                 self.assertEqual(batch_impairments([layer], self.cutoff)[1].impairment_units, Decimal(units))
+
+    def test_only_stable_deducts_safety_and_legacy_alias_is_identical(self):
+        self.assertEqual(set(PRODUCT_TYPE_NAMES), {"stable", "new", "no_impairment"})
+        for kind, expected in (("stable", "6"), ("safe_stock", "6"), ("new", "5"), ("no_impairment", "0")):
+            layer = self.layer(kind, 40)
+            self.assertEqual(replay_inventory_provisions([layer], [], self.cutoff).balances[self.cutoff][1].impairment_units, Decimal(expected))
+            self.assertEqual(batch_impairments([layer], self.cutoff)[1].impairment_units, Decimal(expected))
+        legacy = parsed([["OLD1", "旧商品", "安全库存商品", 40], ["OLD2", "旧商品", "safe_stock", 25]])
+        self.assertTrue(all(not row.errors for row in legacy.rows))
+        self.assertEqual([(row.product_type, row.safe_stock_quantity) for row in legacy.rows], [("stable",40),("stable",25)])
 
     def test_safe_stock_zero_above_stock_and_newest_batch_protection(self):
         for safe, units in ((0, "10"), (100, "0"), (120, "0")):
@@ -118,8 +128,8 @@ class ProductTypeRuleTests(unittest.TestCase):
     def test_rule_validation_and_legacy_client_normalization(self):
         for kind in PRODUCT_TYPE_NAMES:
             self.assertEqual(_impairment_settings(kind, 0), (kind, 0))
-        self.assertEqual(_impairment_settings("stable", 25), ("safe_stock", 25))
-        self.assertEqual(_impairment_settings("safe_stock", 25), ("safe_stock", 25))
+        self.assertEqual(_impairment_settings("stable", 25), ("stable", 25))
+        self.assertEqual(_impairment_settings("safe_stock", 25), ("stable", 25))
         self.assertEqual(_impairment_settings("no_impairment", 25), ("no_impairment", 0))
         for kind, safe in (("invalid", 0), ("safe_stock", -1), ("no_impairment", -1)):
             with self.assertRaises(HTTPException):
@@ -129,12 +139,12 @@ class ProductTypeRuleTests(unittest.TestCase):
         rows = []
         for kind, label in PRODUCT_TYPE_NAMES.items():
             for value in (kind, label):
-                rows.append([f"SKU-{len(rows)}", "商品", value, 40 if kind == "safe_stock" else 0])
+                rows.append([f"SKU-{len(rows)}", "商品", value, 40 if kind == "stable" else 0])
         rows.append(["LEGACY", "旧文件", "稳健商品", 25])
         data = parsed(rows)
         self.assertTrue(all(not row.errors for row in data.rows))
         self.assertEqual([row.product_type for row in data.rows],
-                         [kind for kind in PRODUCT_TYPE_NAMES for _ in range(2)] + ["safe_stock"])
+                         [kind for kind in PRODUCT_TYPE_NAMES for _ in range(2)] + ["stable"])
         invalid = parsed([["INVALID", "商品", "不计跌价商品", 20]])
         self.assertEqual(invalid.rows[0].status, "error")
         template = load_workbook(build_product_import_template())
@@ -168,41 +178,41 @@ class ProductTypeApiTests(unittest.IsolatedAsyncioTestCase):
         ids = {}
         for kind in PRODUCT_TYPE_NAMES:
             response = await self.client.post("/products", data={"sku": kind, "name": kind,
-                "product_type": kind, "safe_stock_quantity": 40 if kind == "safe_stock" else 0})
+                "product_type": kind, "safe_stock_quantity": 40 if kind == "stable" else 0})
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["product_type"], kind)
             ids[kind] = response.json()["id"]
         exported = await self.client.get("/products/export")
         self.assertEqual(exported.status_code, 200)
         sheet = load_workbook(BytesIO(exported.content)).active
-        self.assertEqual({sheet.cell(row, 5).value for row in range(2, 6)}, set(PRODUCT_TYPE_NAMES.values()))
+        self.assertEqual({sheet.cell(row, 5).value for row in range(2, sheet.max_row + 1)}, set(PRODUCT_TYPE_NAMES.values()))
         imported = parse_product_import("export.xlsx", exported.content)
         self.assertTrue(all(not row.errors for row in imported.rows))
         original = self.session.scalar(select(ProductImpairmentRule).where(
-            ProductImpairmentRule.product_id == ids["safe_stock"]))
+            ProductImpairmentRule.product_id == ids["stable"]))
         original.effective_date = date(2026, 1, 1)
         self.session.commit()
-        updated = await self.client.put(f"/products/{ids['safe_stock']}", data={
+        updated = await self.client.put(f"/products/{ids['stable']}", data={
             "sku": "safe_stock", "name": "safe_stock", "product_type": "no_impairment"})
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertEqual(updated.json()["safe_stock_quantity"], 0)
         rules = self.session.scalars(select(ProductImpairmentRule).where(
-            ProductImpairmentRule.product_id == ids["safe_stock"])
+            ProductImpairmentRule.product_id == ids["stable"])
             .order_by(ProductImpairmentRule.effective_date)).all()
         self.assertEqual([(r.product_type, r.safe_stock_quantity) for r in rules],
-                         [("safe_stock", 40), ("no_impairment", 0)])
+                         [("stable", 40), ("no_impairment", 0)])
         self.assertEqual((await self.client.post("/products", data={
             "sku": "bad", "name": "bad", "product_type": "unknown"})).status_code, 422)
 
-    async def test_four_types_import_to_product_and_rule_together(self):
-        data = parsed([[kind, kind, kind, 40 if kind == "safe_stock" else 0] for kind in PRODUCT_TYPE_NAMES])
+    async def test_three_types_import_to_product_and_rule_together(self):
+        data = parsed([[kind, kind, kind, 40 if kind == "stable" else 0] for kind in PRODUCT_TYPE_NAMES])
         # 使用真实SQLite提交；仅查重排序规则由既有模拟器提供。
         duplicate_check = FakeSession(data.rows)
         with patch.object(self.db, "execute", side_effect=duplicate_check.execute):
             preview = await preview_product_import(self.db, data)
             token = issue_product_import_token(data, preview, 1, "unit-test-key")
             result = await confirm_product_import(self.db, data, token, 1, "unit-test-key")
-            self.assertEqual(result.created_count, 4)
+            self.assertEqual(result.created_count, 3)
         products = self.session.scalars(select(Product)).all()
         rules = self.session.scalars(select(ProductImpairmentRule)).all()
         self.assertEqual({p.product_type for p in products}, set(PRODUCT_TYPE_NAMES))
@@ -214,7 +224,7 @@ class ProductTypeReportingTests(unittest.IsolatedAsyncioTestCase):
         def result(rows):
             return SimpleNamespace(all=lambda: rows, scalars=lambda: SimpleNamespace(all=lambda: rows))
         batches, rules = [], []
-        for number, kind in enumerate(PRODUCT_TYPE_NAMES, 1):
+        for number, kind in enumerate(("stable", "new", "safe_stock", "no_impairment"), 1):
             safe = 40 if kind == "safe_stock" else 0
             batch = SimpleNamespace(id=number, product_id=number, quantity=100, unit_cost=Decimal(10),
                                     arrived_at=datetime(2026, 8, 31), batch_no=f"B{number}")

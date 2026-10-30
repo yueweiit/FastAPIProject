@@ -13,10 +13,10 @@ PRODUCT_TYPE_NO_IMPAIRMENT = "no_impairment"
 PRODUCT_TYPE_NAMES = {
     PRODUCT_TYPE_STABLE: "稳健商品",
     PRODUCT_TYPE_NEW: "新品",
-    PRODUCT_TYPE_SAFE_STOCK: "安全库存商品",
-    PRODUCT_TYPE_NO_IMPAIRMENT: "不计跌价商品",
+    PRODUCT_TYPE_NO_IMPAIRMENT: "不跌价商品",
 }
-VALID_PRODUCT_TYPES = set(PRODUCT_TYPE_NAMES)
+# safe_stock仅作为历史数据/旧客户端别名保留，新写入统一使用stable。
+VALID_PRODUCT_TYPES = set(PRODUCT_TYPE_NAMES) | {PRODUCT_TYPE_SAFE_STOCK}
 IMPAIRMENT_STATUS_NAMES = {
     "no_impairment": "不计跌价",
     "retained_provision": "停止新增计提（保留历史准备）",
@@ -52,21 +52,18 @@ class BatchImpairment:
 
 
 def normalized_product_type(value: str | None) -> str:
-    return value if value in VALID_PRODUCT_TYPES else PRODUCT_TYPE_STABLE
+    return value if value in PRODUCT_TYPE_NAMES else PRODUCT_TYPE_STABLE
 
 
 def effective_product_type(product_type: str, safe_stock_quantity: int) -> str:
-    """兼容旧 stable + 正安全库存；不重写商品或历史规则。"""
-    kind = normalized_product_type(product_type)
-    if kind == PRODUCT_TYPE_STABLE and safe_stock_quantity > 0:
-        return PRODUCT_TYPE_SAFE_STOCK
-    return kind
+    """类型与安全库存独立；旧safe_stock显示为stable，不改写历史存储。"""
+    return normalized_product_type(product_type)
 
 
 def protected_stock_quantity(product_type: str, safe_stock_quantity: int) -> int:
     return (
         max(0, int(safe_stock_quantity))
-        if effective_product_type(product_type, safe_stock_quantity) == PRODUCT_TYPE_SAFE_STOCK
+        if effective_product_type(product_type, safe_stock_quantity) == PRODUCT_TYPE_STABLE
         else 0
     )
 

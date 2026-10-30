@@ -23,7 +23,6 @@ from models import (
 )
 from services.inventory_impairment import (
     PRODUCT_TYPE_NAMES,
-    PRODUCT_TYPE_SAFE_STOCK,
     PRODUCT_TYPE_STABLE,
     VALID_PRODUCT_TYPES,
     effective_product_type,
@@ -56,7 +55,7 @@ def _impairment_settings(product_type: str, safe_stock_quantity: int) -> tuple[s
     if safe_stock_quantity < 0:
         raise HTTPException(status_code=422, detail="安全库存不能小于 0")
     product_type = effective_product_type(product_type, safe_stock_quantity)
-    return product_type, safe_stock_quantity if product_type == PRODUCT_TYPE_SAFE_STOCK else 0
+    return product_type, safe_stock_quantity if product_type == PRODUCT_TYPE_STABLE else 0
 
 
 async def _save_product_image(normalized: tuple[str, bytes] | None) -> Path | None:

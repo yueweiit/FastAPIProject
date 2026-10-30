@@ -1,4 +1,4 @@
-// 两份实际页面：四种类型、旧资料回显、表单提交及导入预览。DOM模拟，不作视觉验收。
+// 两份实际页面：三种类型、旧资料回显、表单提交及导入预览。DOM模拟，不作视觉验收。
 const fs = require('fs');
 const vm = require('vm');
 const assert = require('assert/strict');
@@ -26,10 +26,11 @@ async function verify(path) {
     };
     const textNodes = [...html.matchAll(/data-product-type-text="([^"]+)"/g)]
         .map(match => ({dataset: {productTypeText: match[1]}, textContent: ''}));
-    const labels = {stable: '稳健商品', new: '新品', safe_stock: '安全库存商品', no_impairment: '不计跌价商品'};
+    const labels = {stable: '稳健商品', new: '新品', no_impairment: '不跌价商品'};
     const products = Object.keys(labels).map((kind, i) => ({id: i + 1, sku: kind, name: `<${kind}>`,
-        product_type: kind, safe_stock_quantity: kind === 'safe_stock' ? 40 : 0, stock_quantity: 100, stock_value: 1000}));
-    products.push({...products[2], id: 5, sku: 'legacy', product_type: 'stable', safe_stock_quantity: 25});
+        product_type: kind, safe_stock_quantity: kind === 'stable' ? 40 : 0, stock_quantity: 100, stock_value: 1000}));
+    products.push({...products[0], id:4, sku:'old-safe', product_type:'safe_stock', safe_stock_quantity:40});
+    products.push({...products[0], id:5, sku:'legacy', product_type:'stable', safe_stock_quantity:25});
     const requests = [], messages = [];
     const document = {documentElement: {lang: 'es'}, getElementById: element, querySelectorAll: () => textNodes};
     const context = vm.createContext({document, console, FormData,
@@ -49,8 +50,8 @@ async function verify(path) {
             element(`${prefix}-product-type`).value = type;
             element(`${prefix}-safe-stock-quantity`).value = 40;
             vm.runInContext(`toggleSafeStockField('${prefix}')`, context);
-            assert.equal(element(`${prefix}-safe-stock-quantity`).disabled, type !== 'safe_stock');
-            assert.equal(element(`${prefix}-safe-stock-quantity`).value, type === 'safe_stock' ? 40 : 0);
+            assert.equal(element(`${prefix}-safe-stock-quantity`).disabled, type !== 'stable');
+            assert.equal(element(`${prefix}-safe-stock-quantity`).value, type === 'stable' ? 40 : 0);
             checks += 2;
         }
         checks++;
@@ -61,9 +62,9 @@ async function verify(path) {
     Object.values(labels).forEach(label => assert(body.includes(label)));
     assert(body.includes('40件') && body.includes('25件') && body.includes('&lt;no_impairment&gt;'));
     await vm.runInContext('openEditProduct(5)', context);
-    assert.equal(element('ep-product-type').value, 'safe_stock');
+    assert.equal(element('ep-product-type').value, 'stable');
     assert.equal(element('ep-safe-stock-quantity').value, 25);
-    for (const product of products.slice(0, 4)) {
+    for (const product of products.slice(0, 3)) {
         await vm.runInContext(`openEditProduct(${product.id})`, context);
         assert.equal(element('ep-product-type').value, product.product_type);
         await vm.runInContext('saveEditProduct()', context);
@@ -75,7 +76,7 @@ async function verify(path) {
         await vm.runInContext('createProduct()', context);
         assert.equal(requests.at(-1).options.body.get('product_type'), product.product_type);
         assert.equal(element('p-product-type').value, 'stable');
-        assert.equal(element('p-safe-stock-quantity').disabled, true);
+        assert.equal(element('p-safe-stock-quantity').disabled, false);
         checks += 6;
     }
     context.report = {total_rows: 5, new_count: 5, skipped_count: 0, error_count: 0, created_count: 0,
