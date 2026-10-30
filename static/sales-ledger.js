@@ -28,6 +28,8 @@
         required:'请填写店铺、结算日期、订单号和交易类型。',invalid:'请输入有效整数数量及金额。',
         saving:'正在保存补录…',saved:'结算补录已保存：',failed:'结算补录保存失败，请重试。',refreshFailed:'补录已保存，部分列表刷新失败，请点击刷新。',
         unavailable:'当前服务尚未加载手工结算补录接口，请重启后端并刷新页面。',
+        productSearchPlaceholder:'输入商品名称或 SKU',
+        productSearchHint:'输入后显示匹配商品，点击或用方向键、回车选择。选择仅填写产品名，也可自由输入。',
     }};
     const mt = key => (manualMessages[document.documentElement.lang] || manualMessages['zh-CN'])[key] || key;
     const t = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key] || key;
@@ -36,7 +38,7 @@
     const categories = ['purchase', 'head_shipping', 'last_mile', 'other'];
     const userId = () => typeof CURRENT_USER_ID === 'undefined' ? 0 : CURRENT_USER_ID;
     let resource, pendingResource, epoch = 0, loadSerial = 0, detailSerial = 0, controller;
-    let manualBusy=false,manualController,manualAttempt;
+    let manualBusy=false,manualController,manualAttempt,manualProductSearch;
     const current = token => token.epoch === epoch && token.user === userId();
     const money = (value, places = 2) => value == null || !Number.isFinite(Number(value)) ? t('pending') : `¥${Number(value).toFixed(places)}`;
     const preciseMoney = value => money(value,8).replace(/(\.\d{2}\d*?)0+$/, '$1');
@@ -171,6 +173,18 @@
         if(typeof crypto.randomUUID==='function')return crypto.randomUUID();
         return Array.from(crypto.getRandomValues(new Uint8Array(16)),value=>value.toString(16).padStart(2,'0')).join('');
     }
+    function initializeManualProductSearch() {
+        const input=el('s-product-name');
+        if(!window.ProductSearch || !input)return;
+        input.placeholder=mt('productSearchPlaceholder');input.title=mt('productSearchHint');
+        el('s-product-name-options').setAttribute('aria-label',mt('product'));
+        manualProductSearch=window.ProductSearch.bind({
+            input,popup:el('s-product-name-popup'),list:el('s-product-name-options'),status:el('s-product-name-search-status'),
+            enabled:()=>!manualBusy,
+            captureContext:()=>{const token={epoch,user:userId()};return ()=>current(token) && !!token.user;},
+            onSelect:product=>{input.value=product.name;},
+        });
+    }
     async function createManualSettlement() {
         if(manualBusy)return;
         const token={epoch,user:userId()};
@@ -182,6 +196,7 @@
         if(!payload.store_id||!payload.occurred_on||!payload.order_no||!payload.transaction_type){manualStatus(mt('required'),true);return;}
         if(!Number.isInteger(payload.quantity)||!payload.net_product_sales||!payload.settlement_total||
            ![payload.net_product_sales,payload.settlement_total].every(v=>Number.isFinite(Number(v)))){manualStatus(mt('invalid'),true);return;}
+        manualProductSearch?.close();
         const fingerprint=JSON.stringify(payload);
         if(manualAttempt?.fingerprint!==fingerprint)manualAttempt={fingerprint,key:manualRequestKey()};
         payload.request_key=manualAttempt.key;
@@ -206,6 +221,7 @@
     }
     function reset() {
         epoch++;loadSerial++;detailSerial++;controller?.abort();controller=null;
+        manualProductSearch?.close();
         manualController?.abort();manualController=null;manualBusy=false;manualAttempt=null;
         if(el('s-manual-fields'))el('s-manual-fields').disabled=false;
         for(const id of ['s-sku','s-product-name','s-order-no','s-net-sales','s-settlement-total'])if(el(id))el(id).value='';
@@ -220,6 +236,7 @@
         const button=event.target.closest('[data-sale-calculation]'); if (button) open(Number(button.dataset.saleCalculation));
     });
     document.querySelectorAll?.('[data-sales-manual-text]').forEach(node=>{node.textContent=mt(node.dataset.salesManualText);});
+    initializeManualProductSearch();
     updateManualSummary();
     window.SalesLedger = {ready,render,reset,createManualSettlement,updateManualSummary,
         requestOptions:()=>{const token={epoch,user:userId()};return {isCurrent:()=>current(token)};},

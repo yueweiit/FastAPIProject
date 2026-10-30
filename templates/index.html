@@ -651,7 +651,14 @@
             </div>
             <fieldset id="s-manual-fields" class="sales-entry-grid" style="border:0;padding:0;margin:0">
                 <div class="form-group"><label for="s-sku" data-sales-manual-text="sku"></label><input id="s-sku" maxlength="128" oninput="refreshManualSaleOrderNo()"></div>
-                <div class="form-group"><label for="s-product-name" data-sales-manual-text="product"></label><input id="s-product-name" maxlength="500"></div>
+                <div class="form-group"><label for="s-product-name" data-sales-manual-text="product"></label>
+                    <div class="inventory-product-control"><input id="s-product-name" maxlength="500" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="s-product-name-options" aria-describedby="s-product-name-hint" autocomplete="off">
+                        <div id="s-product-name-popup" class="inventory-product-popup" hidden>
+                            <div id="s-product-name-options" class="inventory-product-options" role="listbox"></div>
+                            <p id="s-product-name-search-status" class="inventory-product-search-status" role="status" aria-live="polite"></p>
+                        </div>
+                    </div><small id="s-product-name-hint" data-sales-manual-text="productSearchHint" hidden></small>
+                </div>
                 <div class="form-group"><label for="s-store" data-sales-manual-text="store"></label><select id="s-store"></select></div>
                 <div class="form-group"><label for="s-date" data-sales-manual-text="date"></label><input id="s-date" type="date" onchange="refreshManualSaleOrderNo()"></div>
                 <div class="form-group"><label for="s-transaction-type" data-sales-manual-text="transaction"></label><input id="s-transaction-type" value="订单" maxlength="32" list="s-transaction-types" oninput="updateManualSaleSummary()"><datalist id="s-transaction-types"><option value="订单"><option value="物流赔付"><option value="平台赔付"><option value="物料赔付"><option value="退款"><option value="结算调整"></datalist></div>
@@ -3164,6 +3171,7 @@ document.getElementById('inventory-impairment-date').value = new Date().toLocale
 initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
+<script src="/product-search.js" defer></script>
 <script src="/sales-ledger.js" defer></script>
 <script src="/inventory-workspace.js" defer></script>
 <script src="/inventory-assessment.js" defer></script>

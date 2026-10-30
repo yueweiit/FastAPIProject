@@ -17,7 +17,9 @@ const products = ['stable', 'new', 'safe_stock', 'no_impairment'].map((type, i) 
 }));
 const offPageProduct = {...products[1], id: 99, sku: 'CW0099', name: '猫咪测试商品（其他页）'};
 const prefixProduct = {...products[0], id: 100, sku: 'CW00010', name: '相近SKU商品'};
-const catalog = [...products, offPageProduct, prefixProduct];
+const exactSuggestion = {...products[0],id:200,sku:'SEARCH-EXACT',name:'精确候选'};
+const similarSuggestions = Array.from({length:25},(_,i)=>({...products[0],id:325-i,sku:`SEARCH-EXACT-${i}`,name:`近似候选${i}`}));
+const catalog = [...products, offPageProduct, prefixProduct, ...similarSuggestions, exactSuggestion];
 function overview(url) {
     const keyword = url.searchParams.get('keyword') || '', filter = Number(url.searchParams.get('product_id'));
     const items = filter ? catalog.filter(p => p.id === filter) : keyword && !['slow', 'error'].includes(keyword)
@@ -188,6 +190,7 @@ async function main() {
     const files = {'/': 'templates/index.html', '/copy': 'index.html',
         '/page-interactions.js': 'static/page-interactions.js', '/financial-control.js': 'static/financial-control.js',
         '/sales-ledger.js':'static/sales-ledger.js', '/sales-fields.json':'static/sales-fields.zh-CN.json',
+        '/product-search.js':'static/product-search.js',
         '/inventory-workspace.js': 'static/inventory-workspace.js', '/inventory-assessment.js': 'static/inventory-assessment.js', '/inventory-allocations.js': 'static/inventory-allocations.js'};
     const server = http.createServer((req, res) => {
         const file = files[new URL(req.url, 'http://unit.invalid').pathname];
@@ -236,8 +239,11 @@ async function main() {
                 const status = productStatus;
                 if (productGate) {const held = productGate; productGate = null; await held.promise;}
                 if (status !== 200) return route.fulfill({status, contentType: 'application/json', body: JSON.stringify({detail: '商品查询失败测试'})});
-                const items = catalog.filter(product => `${product.sku} ${product.name}`.toLowerCase().includes(keyword.toLowerCase()));
-                return fulfill({items, total: items.length, page: 1, page_size: 20});
+                const matches = catalog.filter(product => `${product.sku} ${product.name}`.toLowerCase().includes(keyword.toLowerCase()));
+                if(url.searchParams.get('prioritize_exact_sku')==='true')matches.sort((a,b)=>Number(b.sku.toLowerCase()===keyword.toLowerCase())-Number(a.sku.toLowerCase()===keyword.toLowerCase()));
+                const pageNumber=Number(url.searchParams.get('page')||1),pageSize=Number(url.searchParams.get('page_size')||20);
+                const items=matches.slice((pageNumber-1)*pageSize,pageNumber*pageSize);
+                return fulfill({items,total:matches.length,page:pageNumber,page_size:pageSize});
             }
             if (url.pathname === '/products/options') return fulfill(products);
             if (url.pathname === '/finance-masters/platform-sku-mappings') return fulfill([]);
@@ -511,11 +517,19 @@ async function main() {
             check(await page.locator('#iw-tbody tr').count(), 30);
             await downloadExport();
             check(exportCalls.at(-1).product_id, '1');
+            // 超过20个近似SKU时，较早的精确SKU须先置顶再分页；库存选择与导出一致。
+            await page.locator('#iw-product').fill('SEARCH-EXACT');
+            await page.waitForFunction(()=>document.querySelectorAll('#iw-product-options [role="option"]').length===20);
+            check(await page.locator('#iw-product-options [role="option"]').first().locator('strong').innerText(),'SEARCH-EXACT');
+            check(productCalls.at(-1).prioritize_exact_sku,'true');
+            await page.locator('#iw-product').press('ArrowDown');await page.locator('#iw-product').press('Enter');
+            await page.waitForFunction(()=>document.getElementById('iw-stat-scope').textContent.includes('SEARCH-EXACT'));
+            await downloadExport();check(exportCalls.at(-1).product_id,'200');
             // 输入检索全部商品，可选择不在当前库存页的商品，导出必须跟随选择。
             await page.locator('#iw-product').fill('猫咪');
             check(await page.locator('#iw-export').isDisabled(), true);
             await page.locator('#iw-product-options [role="option"]').nth(1).waitFor();
-            check(productCalls.at(-1), {keyword: '猫咪', page: '1', page_size: '20'});
+            check(productCalls.at(-1), {keyword: '猫咪', page: '1', page_size: '20',prioritize_exact_sku:'true'});
             check(await page.locator('#iw-product-options').innerText().then(value => value.includes('CW0099')), true);
             if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'inventory-product-search-desktop.png'), fullPage: true});
             await page.locator('#iw-product-options [role="option"]').nth(1).click();
@@ -929,7 +943,81 @@ async function main() {
             if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-cost-calculation-mobile.png'),fullPage:true});
             await page.locator('[data-sales-calc-close]').click();
             await page.setViewportSize({width:1440,height:1000});
-            // 手工结算补录使用来源字段，不选择本地商品，失败后重试复用请求标识。
+            // 产品名与库存共用联想；选择只填名称，平台SKU及独立补录口径保持不变。
+            const productInput=page.locator('#s-product-name'),productOptions=page.locator('#s-product-name-options [role="option"]');
+            await page.locator('#s-sku').fill('00123456789012345678');
+            await productInput.fill('猫咪');await productOptions.nth(1).waitFor();
+            check(await productOptions.count(),2);
+            check(await productOptions.first().innerText().then(value=>value.includes('CW0002')&&value.includes('猫咪自嗨转盘')),true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.locator('#sales-manual-entry-card').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-product-suggestions-desktop.png')});
+            await productOptions.nth(1).click();
+            check(await productInput.inputValue(),offPageProduct.name);
+            check(await page.locator('#s-sku').inputValue(),'00123456789012345678');
+            check(await page.locator('#s-product-name-popup').isVisible(),false);
+            await productInput.fill('CW0001');await productOptions.nth(1).waitFor();
+            check(await productOptions.first().locator('strong').innerText(),'CW0001');
+            await productInput.press('ArrowDown');await productInput.press('Enter');
+            check(await productInput.inputValue(),products[0].name);
+            await productInput.fill('SEARCH-EXACT');
+            await page.waitForFunction(()=>document.querySelectorAll('#s-product-name-options [role="option"]').length===20);
+            check(await productOptions.first().locator('strong').innerText(),'SEARCH-EXACT');
+            check(productCalls.at(-1).prioritize_exact_sku,'true');
+            await productOptions.first().click();check(await productInput.inputValue(),exactSuggestion.name);
+            check(await page.locator('#s-sku').inputValue(),'00123456789012345678');
+            await productInput.fill('<库存');await productOptions.first().waitFor();
+            check(await productOptions.first().locator('span').innerText(),'<库存安全测试>');
+            check(await page.locator('#s-product-name-options 库存安全测试').count(),0);
+            await productOptions.first().click();check(await productInput.inputValue(),'<库存安全测试>');
+            const beforeEmpty=productCalls.length;await productInput.fill('');
+            await page.waitForTimeout(300);check(productCalls.length,beforeEmpty);
+            check(await page.locator('#s-product-name-popup').isVisible(),false);
+            // 输入法组合期间不发请求，组合完成后再检索。
+            const beforeComposition=productCalls.length;
+            await productInput.evaluate(input=>{
+                input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.value='猫咪';
+                input.dispatchEvent(new InputEvent('input',{bubbles:true,isComposing:true}));
+            });
+            await page.waitForTimeout(300);check(productCalls.length,beforeComposition);
+            await productInput.evaluate(input=>input.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true})));
+            await productOptions.nth(1).waitFor();await productInput.press('Escape');
+            check(await productInput.inputValue(),'猫咪');
+            await productInput.fill('自由填写商品*4+组合');
+            await page.waitForFunction(()=>document.getElementById('s-product-name-search-status').textContent.includes('没有匹配'));
+            await page.locator('#s-sku').focus();check(await productInput.inputValue(),'自由填写商品*4+组合');
+            productStatus=503;await productInput.fill('error');
+            await page.waitForFunction(()=>document.getElementById('s-product-name-search-status').textContent.includes('商品查询失败测试'));
+            productStatus=200;await productInput.press('Escape');
+            await page.setViewportSize({width:390,height:844});await productInput.fill('猫咪');await productOptions.nth(1).waitFor();
+            check(await page.locator('#s-product-name-popup').evaluate(node=>{const box=node.getBoundingClientRect();return box.left>=0&&box.right<=innerWidth;}),true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-product-suggestions-mobile.png'),fullPage:true});
+            await productOptions.first().click();await page.setViewportSize({width:1440,height:1000});
+            // 新输入替代旧请求，旧候选不能覆盖新结果。
+            productGate=wait();const oldSuggestion=productGate;
+            const oldSuggestionStarted=page.waitForRequest(r=>new URL(r.url()).pathname==='/products'&&new URL(r.url()).searchParams.get('keyword')==='狗狗');
+            await productInput.fill('狗狗');await oldSuggestionStarted;
+            await productInput.fill('猫咪');await productOptions.nth(1).waitFor();oldSuggestion.resolve();
+            check(await productOptions.first().innerText().then(value=>value.includes('猫咪')),true);
+            await productInput.press('Escape');
+            productStatus=401;productGate=wait();const oldSuggestion401=productGate;
+            const old401Started=page.waitForRequest(r=>new URL(r.url()).pathname==='/products'&&new URL(r.url()).searchParams.get('keyword')==='狗狗');
+            await productInput.fill('狗狗');await old401Started;
+            const old401Cancelled=page.waitForEvent('requestfailed',{predicate:r=>new URL(r.url()).pathname==='/products'});
+            await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});await old401Cancelled;
+            productStatus=200;oldSuggestion401.resolve();
+            await page.getByRole('button',{name:'销售记录',exact:true}).click();
+            await page.waitForFunction(()=>document.querySelectorAll('#sales-tbody tr').length===3);
+            check(await page.evaluate(()=>CURRENT_USER_ID),10);
+            check(await page.locator('#login-overlay').isVisible(),false);
+            check(await productInput.inputValue(),'');check(await page.locator('#s-product-name-popup').isVisible(),false);
+            // 输入法组合中退出也必须清理组合状态，重登后可继续检索。
+            await productInput.focus();
+            await productInput.evaluate(input=>input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true})));
+            await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
+            await page.getByRole('button',{name:'销售记录',exact:true}).click();
+            await page.waitForFunction(()=>document.querySelectorAll('#sales-tbody tr').length===3);
+            await productInput.fill('猫咪');await productOptions.nth(1).waitFor();
+            check(await productOptions.count(),2);await productInput.press('Escape');
+            // 手工结算补录允许自由填写来源字段，失败后重试复用请求标识。
             await page.locator('#s-store').selectOption('7');
             await page.locator('#s-date').fill('2026-09-03');
             await page.locator('#s-sku').fill('00123456789012345678');

@@ -59,7 +59,7 @@
     const initial = () => ({mode: 'overview', layout: 'day', month: today().slice(0, 7), day: today(),
         keyword: '', page: 1, pageSize: 20, selected: 0, productId: 0, data: null, detail: null});
     let state = initial(), serial = 0, detailSerial = 0, initialized = false, exportRequest = null;
-    const makePicker = id => ({id, serial: 0, timer: null, controller: null, items: [], active: -1, editing: false, product: null});
+    const makePicker = id => ({id, editing: false, product: null, search: null});
     const pickers = {product: makePicker('product'), keyword: makePicker('keyword')};
     const picker = pickers.product, keywordPicker = pickers.keyword;
     const root = () => document.getElementById('inventory-workspace-root');
@@ -112,8 +112,6 @@
         </dialog>`;
         root().onclick = event => {
             if (exportRequest) return;
-            const option = event.target.closest('[data-iw-product-option]');
-            if (option) {chooseProduct(Number(option.dataset.iwProductOption), pickers[option.dataset.iwPicker]); return;}
             const move = event.target.closest('[data-iw-move]');
             if (move) { openDetail(Number(move.dataset.product), move.dataset.day, move.dataset.iwMove); return; }
             const trace = event.target.closest('[data-iw-trace]');
@@ -291,102 +289,35 @@
         return refresh();
     }
     function bindProductSearch(control) {
-        const input = node(control.id);
-        input.addEventListener('focus', event => {
-            if (control === keywordPicker) {
-                if (input.value.trim()) searchProducts(event, control);
-            } else {
-                input.select(); control.items = state.data?.items || []; control.active = -1;
-                renderProductOptions('', control);
-            }
+        control.search=window.ProductSearch.bind({
+            input:node(control.id),popup:node(`${control.id}-popup`),list:node(`${control.id}-options`),status:node(`${control.id}-search-status`),
+            messages:{loading:text('productSearching'),empty:text('productSearchEmpty'),more:text('productSearchMore'),failed:text('failed')},
+            initialItems:control===picker?()=>state.data?.items || []:undefined,
+            enabled:()=>!exportRequest,selectFirstOnEnter:control===picker,
+            optionAttributes:index=>`data-iw-product-option="${index}" data-iw-picker="${control.id}"`,
+            captureContext:()=>{const workspace=serial,user=CURRENT_USER_ID;return ()=>workspace===serial && user===CURRENT_USER_ID && !!user;},
+            onEdit:event=>{
+                control.editing=true;
+                if(control===keywordPicker && event.type==='input')control.product=null;
+                node('export-status').textContent='';syncControls();
+            },
+            onClose:restore=>{
+                control.editing=false;
+                if(restore && control===picker)node(control.id).value=productLabel(state.data?.items.find(product=>product.product_id===state.selected));
+                syncControls();
+            },
+            onSelect:product=>{
+                closeSearches();
+                if(control===keywordPicker){keywordPicker.product=product;node('keyword').value=product.sku;applyKeywordQuery();}
+                else traceProduct(Number(product.product_id ?? product.id));
+            },
         });
-        for (const event of ['input', 'compositionend']) input.addEventListener(event, event => searchProducts(event, control));
-        input.addEventListener('keydown', event => {
-            if (event.isComposing) return;
-            if (event.key === 'Escape') {event.preventDefault(); closeProductSearch(true, control);}
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                if (node(`${control.id}-popup`).hidden) {
-                    if (control === keywordPicker) {searchProducts(event, control); return;}
-                    control.items = state.data?.items || [];
-                }
-                if (!control.items.length) return;
-                control.active = control.active < 0 ? (event.key === 'ArrowDown' ? 0 : control.items.length - 1)
-                    : (control.active + (event.key === 'ArrowDown' ? 1 : -1) + control.items.length) % control.items.length;
-                renderProductOptions('', control);
-                node(`${control.id}-option-${control.active}`).scrollIntoView({block: 'nearest'});
-            }
-            if (event.key === 'Enter' && (control === picker || control.active >= 0)) {
-                event.preventDefault(); chooseProduct(Math.max(0, control.active), control);
-            }
-        });
-        input.addEventListener('blur', () => closeProductSearch(true, control));
-        node(`${control.id}-options`).addEventListener('mousedown', event => event.preventDefault());
     }
     function closeSearches(restore = false) {
-        Object.values(pickers).forEach(control => closeProductSearch(restore, control));
+        Object.values(pickers).forEach(control=>closeProductSearch(restore,control));
     }
-    function closeProductSearch(restore = false, control = picker) {
-        clearTimeout(control.timer); control.controller?.abort(); control.serial++;
-        control.items = []; control.active = -1; control.editing = false;
-        const input = node(control.id);
-        if (!input) return;
-        node(`${control.id}-popup`).hidden = true;
-        input.setAttribute('aria-expanded', 'false'); input.removeAttribute('aria-activedescendant');
-        if (restore && control === picker) input.value = productLabel(state.data?.items.find(product => product.product_id === state.selected));
-        syncControls();
-    }
-    function renderProductOptions(message = '', control = picker) {
-        node(`${control.id}-options`).innerHTML = control.items.map((product, index) =>
-            `<button type="button" role="option" tabindex="-1" id="iw-${control.id}-option-${index}" data-iw-product-option="${index}" data-iw-picker="${control.id}"
-                aria-selected="${index === control.active}"><strong>${h(product.sku)}</strong><span>${h(product.name)}</span></button>`).join('');
-        node(`${control.id}-search-status`).textContent = message;
-        node(`${control.id}-popup`).hidden = false;
-        node(control.id).setAttribute('aria-expanded', 'true');
-        if (control.active >= 0) node(control.id).setAttribute('aria-activedescendant', `iw-${control.id}-option-${control.active}`);
-        else node(control.id).removeAttribute('aria-activedescendant');
-    }
-    function chooseProduct(index, control = picker) {
-        const product = control.items[index];
-        if (!product || exportRequest) return;
-        closeSearches();
-        if (control === keywordPicker) {
-            keywordPicker.product = product; node('keyword').value = product.sku;
-            applyKeywordQuery();
-        } else traceProduct(Number(product.product_id ?? product.id));
-    }
-    function searchProducts(event, control = picker) {
-        if (exportRequest) return;
-        clearTimeout(control.timer); control.controller?.abort();
-        const request = ++control.serial, workspace = serial, query = node(control.id).value.trim();
-        control.items = []; control.active = -1; control.editing = true;
-        if (control === keywordPicker && event.type === 'input') control.product = null;
-        node('export-status').textContent = '';
-        syncControls();
-        if (!query) {
-            if (control === keywordPicker) closeProductSearch(false, control);
-            else {control.items = state.data?.items || []; renderProductOptions('', control);}
-            return;
-        }
-        renderProductOptions(text('productSearching'), control);
-        if (event.isComposing) return;
-        control.timer = setTimeout(async () => {
-            const controller = new AbortController(); control.controller = controller;
-            const current = () => request === control.serial && workspace === serial && CURRENT_USER_ID;
-            try {
-                const params = new URLSearchParams({keyword: query, page: 1, page_size: 20});
-                const response = await fetch(`/products?${params}`, {credentials: 'same-origin', headers: authHeaders(), signal: controller.signal});
-                if (!current()) return;
-                if (response.status === 401) {handleSessionExpired(); return;}
-                const data = await response.json();
-                if (!current()) return;
-                if (!response.ok) throw new Error(formatApiError(data?.detail, `${response.status}`));
-                control.items = data.items.sort((a, b) => Number(b.sku.toLowerCase() === query.toLowerCase()) - Number(a.sku.toLowerCase() === query.toLowerCase()));
-                renderProductOptions(!data.items.length ? text('productSearchEmpty') : data.total > data.items.length ? text('productSearchMore') : '', control);
-            } catch (error) {
-                if (current()) renderProductOptions(`${text('failed')}${error.message}`, control);
-            }
-        }, 250);
+    function closeProductSearch(restore = false,control = picker) {
+        control.search?.close(restore);
     }
     function traceProduct(productId) {
         keywordPicker.product = null;
@@ -483,6 +414,7 @@
         window.InventoryAllocations?.reset();
         window.InventoryAssessment?.reset();
         closeSearches(); keywordPicker.product = null;
+        Object.values(pickers).forEach(control=>control.search=null);
         const previousExport = exportRequest;
         exportRequest = null;
         previousExport?.controller.abort();

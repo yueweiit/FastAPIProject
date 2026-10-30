@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
@@ -215,15 +215,23 @@ async def list_products(
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    prioritize_exact_sku: bool = False,
 ):
     """列出商品；支持按商品名称或 SKU 搜索。"""
     stmt = _product_summary_stmt()
     count_stmt = select(func.count()).select_from(Product)
     if keyword and keyword.strip():
-        pattern = f"%{keyword.strip()}%"
+        normalized_keyword = keyword.strip()
+        pattern = f"%{normalized_keyword}%"
         product_filter = or_(Product.name.ilike(pattern), Product.sku.ilike(pattern))
         stmt = stmt.where(product_filter)
         count_stmt = count_stmt.where(product_filter)
+        if prioritize_exact_sku:
+            # 联想须在分页前保留精确SKU；默认列表与内部库存查询仍按原顺序。
+            stmt = stmt.order_by(None).order_by(
+                case((func.lower(Product.sku) == normalized_keyword.lower(), 0), else_=1),
+                Product.id.desc(),
+            )
     if page is None:
         result = await db.execute(stmt)
         return [_product_summary_from_row(row) for row in result.all()]

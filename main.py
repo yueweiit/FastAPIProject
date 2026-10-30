@@ -134,6 +134,12 @@ async def sales_ledger_script():
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/product-search.js", include_in_schema=False)
+async def product_search_script():
+    return FileResponse(BASE_DIR / "static" / "product-search.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/sales-fields.json", include_in_schema=False)
 async def sales_field_help_resource():
     return FileResponse(BASE_DIR / "static" / "sales-fields.zh-CN.json", media_type="application/json",
