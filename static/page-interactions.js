@@ -2,6 +2,7 @@
 (() => {
     'use strict';
     const messages = {'zh-CN': {
+        helpTip: '查看说明',
         confirm: '确认', cancel: '取消', reason: '更正原因', requiredReason: '请填写更正原因。',
         longReason: '更正原因不能超过1000字。', rollbackTitle: '撤销导入',
         rollbackMessage: '确认撤销这次导入？销售记录将删除，已扣库存会恢复。',
@@ -269,7 +270,7 @@
         });
         root.innerHTML = `<fieldset style="border:1px solid var(--line);border-radius:8px;padding:12px">
             <legend>${escapeHtml(text('batchImpairmentStores'))}</legend>
-            <p class="cost-detail">${escapeHtml(text('batchImpairmentHelp'))}</p>
+            <p class="cost-detail" data-help-tip data-help-anchor="legend">${escapeHtml(text('batchImpairmentHelp'))}</p>
             <div style="display:flex;flex-wrap:wrap;gap:12px;max-height:140px;overflow:auto">${options.map(store =>
                 `<label style="display:flex;gap:6px;align-items:center;max-width:100%;overflow-wrap:anywhere"><input type="checkbox" value="${Number(store.id)}" ${ids.has(store.id) ? 'checked' : ''}
                     ${allocationStores === null || !store.is_active && !ids.has(store.id) ? 'disabled' : ''}>${escapeHtml(store.name)}${store.is_active ? '' : escapeHtml(text('batchImpairmentInactive'))}</label>`).join('')}</div>
@@ -280,7 +281,7 @@
                 <legend>${escapeHtml(text('batchImpairmentMode'))}</legend>
                 <div style="display:flex;flex-wrap:wrap;gap:16px">${[['from_change_date', 'batchImpairmentFromChange'], ['from_arrival', 'batchImpairmentFromArrival']].map(([mode, label]) =>
                     `<label><input type="radio" name="impairment-change-mode" value="${mode}" ${allocationMode === mode ? 'checked' : ''} ${mode === 'from_change_date' && !allocationHistorySupported ? 'disabled' : ''}> ${escapeHtml(text(label))}</label>`).join('')}</div>
-                <p data-allocation-mode-help class="cost-detail">${escapeHtml(allocationModeHelp())}</p>
+                <p data-allocation-mode-help class="cost-detail" data-help-tip data-help-anchor="legend">${escapeHtml(allocationModeHelp())}</p>
                 ${allocationHistory.length ? `<small>${escapeHtml(text('batchImpairmentHistory') + historyLabel(allocationHistory))}</small>` : ''}
             </fieldset>` : ''}</fieldset>`;
         root.onchange = () => {
@@ -347,6 +348,151 @@
         reason: options => request({...options, reason: true}),
         confirmSalesRollback: () => request({title: text('rollbackTitle'), message: text('rollbackMessage')}),
         batchLogs,
-        cancel: () => { finish(null); closeBatchLogs(); batchStores.reset(); },
+        cancel: () => { window.HelpTips?.close(); finish(null); closeBatchLogs(); batchStores.reset(); },
     };
+})();
+
+/* 明确标记的说明渐进增强为问号浮层；状态、校验及业务警示继续原位显示。 */
+(() => {
+    'use strict';
+    if (typeof MutationObserver === 'undefined' || !document.body ||
+        typeof document.createElement('span').showPopover !== 'function') return;
+    const entries = new Map();
+    let active = null, sequence = 0, frame = 0, hideTimer;
+    const label = () => window.PageInteractions.text('helpTip');
+    const visible = node => node.isConnected && node.getClientRects().length > 0 &&
+        !node.closest('[hidden], [inert]') && getComputedStyle(node).visibility !== 'hidden';
+    function close() {
+        clearTimeout(hideTimer);
+        if (!active) return;
+        const entry = active; active = null; entry.pinned = false;
+        entry.overButton = entry.overSource = false;
+        if (entry.source.matches(':popover-open')) entry.source.hidePopover();
+        entry.button.setAttribute('aria-expanded', 'false');
+        if (entry.placeholder) {
+            if (entry.placeholder.isConnected) entry.placeholder.replaceWith(entry.source);
+            else entry.source.remove();
+            entry.placeholder = null;
+        }
+    }
+    function position() {
+        if (!active) return;
+        const {source, button} = active;
+        if (!visible(button) || button.disabled) {close(); return;}
+        const anchor = button.getBoundingClientRect();
+        const width = document.documentElement.clientWidth, height = window.innerHeight;
+        if (anchor.bottom < 0 || anchor.top > height) {close(); return;}
+        const box = source.getBoundingClientRect(), gap = 8, edge = 12;
+        const below = height - anchor.bottom - gap - edge, above = anchor.top - gap - edge;
+        const top = box.height <= below || below >= above ? anchor.bottom + gap : anchor.top - gap - box.height;
+        const left = `${Math.max(edge, Math.min(anchor.left, width - box.width - edge))}px`;
+        const y = `${Math.max(edge, Math.min(top, height - box.height - edge))}px`;
+        if (source.style.left !== left) source.style.left = left;
+        if (source.style.top !== y) source.style.top = y;
+    }
+    function show(entry) {
+        clearTimeout(hideTimer);
+        if (!visible(entry.button) || entry.button.disabled) return;
+        if (active !== entry) close();
+        active = entry;
+        // 关闭的details不会渲染其后代，即使进入顶层；展示时临时放到该折叠区旁。
+        const closed = entry.source.closest('details:not([open])');
+        if (closed && !entry.placeholder) {
+            entry.placeholder = document.createComment('help-tip-position');
+            entry.source.before(entry.placeholder); closed.after(entry.source);
+        }
+        if (!entry.source.matches(':popover-open')) entry.source.showPopover();
+        entry.button.setAttribute('aria-expanded', 'true');
+        position();
+    }
+    function later(entry) {
+        clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+            if (active === entry && !entry.pinned && !entry.overButton && !entry.overSource &&
+                document.activeElement !== entry.button) close();
+        }, 180);
+    }
+    function enhance() {
+        frame = 0;
+        for (const [source, entry] of entries) {
+            if (!source.isConnected) {
+                if (active === entry) close();
+                entry.button.remove(); entries.delete(source);
+            }
+        }
+        document.querySelectorAll('[data-help-tip]').forEach(source => {
+            // 动态错误/权限缺失可明确切回行内；不根据文字、字号或颜色猜测。
+            const eligible = !!source.textContent.trim() && !source.hidden &&
+                !source.hasAttribute('data-help-inline') && !source.matches('[role="alert"], [role="status"]');
+            let entry = entries.get(source);
+            if (!eligible) {
+                if (entry) {
+                    if (active === entry) close();
+                    if (!entry.button.hidden) entry.button.hidden = true;
+                    if (source.classList.contains('help-tip-source')) source.classList.remove('help-tip-source');
+                    if (source.hasAttribute('popover')) source.removeAttribute('popover');
+                    if (source.getAttribute('role') === 'tooltip') {
+                        if (entry.originalRole === null) source.removeAttribute('role');
+                        else source.setAttribute('role', entry.originalRole);
+                    }
+                }
+                return;
+            }
+            if (!entry) {
+                const button = document.createElement('button');
+                button.type = 'button'; button.className = 'help-tip-trigger'; button.textContent = '?';
+                if (!source.id) source.id = `help-tip-${++sequence}`;
+                button.setAttribute('aria-describedby', source.id);
+                button.setAttribute('aria-expanded', 'false');
+                entry = {source, button, originalRole: source.getAttribute('role'), pinned: false, overButton: false, overSource: false};
+                entries.set(source, entry);
+                button.addEventListener('mouseenter', () => {entry.overButton = true; show(entry);});
+                button.addEventListener('mouseleave', () => {entry.overButton = false; later(entry);});
+                button.addEventListener('focus', () => show(entry));
+                button.addEventListener('blur', () => later(entry));
+                button.addEventListener('click', event => {
+                    event.preventDefault(); event.stopPropagation();
+                    if (active === entry && entry.pinned) close();
+                    else {show(entry); entry.pinned = true;}
+                });
+                source.addEventListener('mouseenter', () => {entry.overSource = true; clearTimeout(hideTimer);});
+                source.addEventListener('mouseleave', () => {entry.overSource = false; later(entry);});
+            }
+            const selector = source.dataset.helpAnchor;
+            const anchor = entry.placeholder ? entry.button.parentElement : selector &&
+                (source.parentElement.querySelector(selector) || document.querySelector(selector));
+            if (anchor) {
+                if (entry.button.parentElement !== anchor) anchor.appendChild(entry.button);
+            } else if (entry.button.nextElementSibling !== source) source.before(entry.button);
+            const context = anchor ? [...anchor.childNodes].filter(node => node !== entry.button).map(node => node.textContent).join('').trim() : '';
+            const accessibleLabel = context ? `${context} · ${label()}` : label();
+            if (entry.button.getAttribute('aria-label') !== accessibleLabel) entry.button.setAttribute('aria-label', accessibleLabel);
+            if (entry.button.hidden) entry.button.hidden = false;
+            if (source.getAttribute('popover') !== 'manual') source.setAttribute('popover', 'manual');
+            if (source.getAttribute('role') !== 'tooltip') source.setAttribute('role', 'tooltip');
+            if (!source.classList.contains('help-tip-source')) source.classList.add('help-tip-source');
+        });
+        position();
+    }
+    const schedule = () => {if (!frame) frame = requestAnimationFrame(enhance);};
+    new MutationObserver(schedule).observe(document.body, {subtree: true, childList: true, characterData: true,
+        attributes: true, attributeFilter: ['data-help-inline', 'hidden', 'open', 'class', 'style', 'disabled', 'role']});
+    document.addEventListener('pointerdown', event => {
+        if (active && !active.source.contains(event.target) && !active.button.contains(event.target)) close();
+    }, true);
+    document.addEventListener('focusin', event => {
+        if (active && !active.source.contains(event.target) && active.button !== event.target) close();
+    });
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && active) {event.preventDefault(); event.stopPropagation(); close();}
+    }, true);
+    document.addEventListener('close', event => {
+        if (active && event.target.contains(active.button)) close();
+    }, true);
+    window.addEventListener('resize', position);
+    document.addEventListener('scroll', position, true);
+    window.HelpTips = {close, refresh: schedule, setInline: (source, inline) => {
+        source.toggleAttribute('data-help-inline', inline); schedule();
+    }};
+    enhance();
 })();

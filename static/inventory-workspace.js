@@ -78,7 +78,7 @@
         if (initialized || !root()) return;
         initialized = true;
         root().innerHTML = `<div class="card inventory-workspace">
-            <div class="inventory-heading"><div><h3>${h(text('title'))}</h3><p>${h(text('lead'))}</p></div>${button('export', 'exportOverview', `id="iw-export" title="${h(text('exportScope'))}" disabled`)}</div>
+            <div class="inventory-heading"><div><h3 id="iw-title">${h(text('title'))}</h3></div>${button('export', 'exportOverview', `id="iw-export" title="${h(text('exportScope'))}" disabled`)}</div>
             <div class="inventory-tabs" role="group" aria-label="${h(text('title'))}">
                 ${button('overview', 'overview')}${button('daily', 'daily')}${button('assessment', 'assessment')}
             </div>
@@ -87,17 +87,17 @@
                 <label class="form-group" id="iw-month-field" hidden><span>${h(text('month'))}</span><input id="iw-month" type="month" max="${today().slice(0, 7)}" value="${state.month}" required></label>
                 <button type="submit" class="btn btn-primary">${h(text('search'))}</button>${button('refresh', 'refresh')}
             </form>
-            <p id="iw-scope" class="inventory-note"></p>
+            <div id="iw-help" data-help-tip data-help-anchor="#iw-title"><p>${h(text('lead'))}</p><p id="iw-scope" class="inventory-note"></p></div>
             <p id="iw-status" class="inventory-status" role="status" aria-live="polite"></p>
             <p id="iw-export-status" class="inventory-status" role="status" aria-live="polite"></p>
             <p id="iw-stat-scope" class="inventory-note"></p>
             <div id="iw-stats" class="inventory-stats"></div>
             <div id="iw-views" class="inventory-filters" hidden>
-                <label class="form-group"><span>${h(text('layout'))}</span><select id="iw-layout">
-                    <option value="day">${h(text('dayView'))}</option><option value="product">${h(text('productView'))}</option><option value="matrix">${h(text('matrixView'))}</option></select></label>
+                <div class="form-group"><div id="iw-layout-heading"><label id="iw-layout-label" for="iw-layout">${h(text('layout'))}</label></div><select id="iw-layout">
+                    <option value="day">${h(text('dayView'))}</option><option value="product">${h(text('productView'))}</option><option value="matrix">${h(text('matrixView'))}</option></select></div>
                 <label class="form-group" id="iw-day-field"><span>${h(text('day'))}</span><select id="iw-day"></select></label>
                 ${searchField('product', 'selectProduct', 'productSearchHint', 'hidden')}
-                <span id="iw-equation" class="inventory-note">${h(text('equation'))}</span>
+                <span id="iw-equation" class="inventory-note" data-help-tip data-help-anchor="#iw-layout-heading">${h(text('equation'))}</span>
             </div>
             <div id="iw-table-scroll" class="inventory-table-scroll" role="region" aria-label="${h(text('title'))}" tabindex="0"><table class="inventory-table"><thead id="iw-thead"></thead><tbody id="iw-tbody"></tbody></table></div>
             <div class="inventory-footer"><span id="iw-page-label"></span><div>${button('previous', 'previous')}${button('next', 'next')}</div>
@@ -231,6 +231,7 @@
         root().querySelector('[data-iw-action="previous"]').disabled = data.page <= 1;
         root().querySelector('[data-iw-action="next"]').disabled = data.page >= pages;
         if (state.mode === 'overview') {
+            window.HelpTips?.setInline(node('help'), false);
             node('scope').textContent = text('shared');
             node('stat-scope').textContent = text('allVisible');
             node('stats').innerHTML = stat('pageQuantity', number(data.summary.quantity)) + stat('pageAmount', money(data.summary.inventory_amount))
@@ -243,6 +244,7 @@
                 <td><button type="button" class="btn btn-secondary" data-iw-trace="${Number(product.id)}">${h(text('trace'))}</button> <button type="button" class="btn btn-secondary" data-iw-allocation="${Number(product.id)}">${h(text('allocations'))}</button></td></tr>`).join('');
         } else {
             const warningKeys = [...new Set([...(data.warnings || []), ...data.items.flatMap(product => product.warnings || [])])];
+            window.HelpTips?.setInline(node('help'), warningKeys.some(key => !['inventory_current_documents', 'inventory_scope_restricted'].includes(key)));
             node('scope').textContent = warningKeys.map(key => text(key)).join(' ');
             const days = data.items[0]?.days || [];
             if (!days.some(day => day.date === state.day)) state.day = data.end;

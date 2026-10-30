@@ -235,6 +235,15 @@
         .batch-change-log-entry td { white-space:pre-wrap; overflow-wrap:anywhere; max-width:380px; }
         .product-import-heading, .product-import-toolbar, .product-import-actions, .product-import-summary { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
         .product-import-heading { justify-content:space-between; margin-bottom:10px; }
+        /* 问号说明：原文保留在原节点，使用浏览器顶层浮层避免表格/弹窗裁切。 */
+        button.help-tip-trigger { display:inline-flex; align-items:center; justify-content:center; width:19px; height:19px; padding:0; margin:0 0 0 7px; vertical-align:middle; border:1px solid #cad5e3; border-radius:50%; background:#f4f7fb; color:#526881; font:700 12px/1 Arial,sans-serif; cursor:help; flex:none; }
+        button.help-tip-trigger:hover, button.help-tip-trigger[aria-expanded="true"] { border-color:#425e7f; background:#eaf0f8; color:#162e4f; }
+        button.help-tip-trigger:focus-visible { outline:2px solid #e94560; outline-offset:3px; }
+        button.help-tip-trigger[hidden] { display:none; }
+        .help-tip-source[popover] { display:none !important; }
+        .help-tip-source[popover]:popover-open { display:block !important; position:fixed; inset:auto; width:max-content; min-width:0; max-width:min(420px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:0 !important; padding:12px 16px !important; border:1px solid #d8e1ed; border-radius:8px; background:#fff; color:#30435c !important; box-shadow:0 8px 28px rgba(15,27,51,.16); font-size:13px !important; font-weight:400; line-height:1.7 !important; text-align:left; white-space:normal; overflow-wrap:anywhere; box-sizing:border-box; }
+        .help-tip-source > p { margin:0 0 8px; color:inherit; }
+        .help-tip-source > p:last-child { margin-bottom:0; }
         .product-import-hint { color:var(--muted); font-size:13px; margin:0 0 18px; }
         .product-import-toolbar input { min-width:210px; flex:1; }
         .product-import-status { margin:16px 0; font-size:13px; overflow-wrap:anywhere; }
@@ -367,12 +376,12 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="p-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="p-name" placeholder="蓝牙耳机"></div>
-                    <div class="form-group"><label>商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
+                    <div class="form-group"><label id="p-type-label">商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
                     <div class="form-group"><label>安全库存</label><input id="p-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片</label><input id="p-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createProduct()">添加</button></div>
                 </div>
-                <p class="product-import-hint" data-product-type-text="ruleHelp"></p>
+                <p class="product-import-hint" data-help-tip data-help-anchor="#p-type-label" data-product-type-text="ruleHelp"></p>
                 <div id="p-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
@@ -381,7 +390,7 @@
                 <h3 id="product-import-title">批量导入商品</h3>
                 <button type="button" class="btn btn-secondary" data-product-import-control onclick="closeProductImport()">关闭</button>
             </div>
-            <p class="product-import-hint" data-product-type-text="importHelp"></p>
+            <p class="product-import-hint" data-help-tip data-help-anchor="#product-import-title" data-product-type-text="importHelp"></p>
             <div class="product-import-toolbar">
                 <button type="button" class="btn btn-secondary" data-product-import-control onclick="downloadProductImportTemplate()">下载模板</button>
                 <input type="file" id="product-import-file" accept=".xlsx" aria-label="选择商品 Excel 文件" data-product-import-control onchange="resetProductImportPreview()">
@@ -407,12 +416,12 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="ep-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="ep-name" placeholder="蓝牙耳机"></div>
-                    <div class="form-group"><label>商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
+                    <div class="form-group"><label id="ep-type-label">商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
                     <div class="form-group"><label>安全库存</label><input id="ep-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片(留空不换)</label><input id="ep-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditProduct()">保存</button></div>
                 </div>
-                <p class="product-import-hint" data-product-type-text="ruleHelp"></p>
+                <p class="product-import-hint" data-help-tip data-help-anchor="#ep-type-label" data-product-type-text="ruleHelp"></p>
                 <div id="ep-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
@@ -502,9 +511,9 @@
         </div>
         <!-- 编辑弹窗 -->
         <div id="edit-batch-modal" class="card edit-modal" style="display:none;border:2px solid #e94560">
-            <div class="flex-between"><h3>✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditBatch()">× 取消</button></div>
+            <div class="flex-between"><h3 id="batch-edit-title">✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditBatch()">× 取消</button></div>
             <form id="edit-batch-form" novalidate onsubmit="event.preventDefault(); saveEditBatch()">
-            <p id="batch-edit-notice" class="cost-detail"></p>
+            <p id="batch-edit-notice" class="cost-detail" data-help-tip data-help-anchor="#batch-edit-title"></p>
             <div class="form-row">
                 <div class="form-group"><label>数量</label><input id="eb-qty" type="number" min="1" step="1" required></div>
                 <div class="form-group"><label>总金额</label><input id="eb-total-amount" type="number" min="0" step="0.0001" required></div>
@@ -527,7 +536,7 @@
         </div>
         <div class="card">
             <div class="flex-between">
-                <h3>批次列表</h3>
+                <h3 id="batch-list-title">批次列表</h3>
                 <div class="batch-list-actions">
                     <div class="field-picker" id="batch-field-picker">
                         <button type="button" class="btn btn-secondary" onclick="toggleBatchFieldPicker()" aria-expanded="false" id="batch-field-picker-button">显示字段</button>
@@ -575,7 +584,7 @@
                 </div>
                 <label id="batch-voided-filter-label" style="display:none;align-self:end"><input id="batch-voided-only" type="checkbox" onchange="switchBatchVoidFilter()"> <span id="batch-voided-filter-text"></span></label>
             </div>
-            <p id="batch-edit-help"></p>
+            <p id="batch-edit-help" data-help-tip data-help-anchor="#batch-list-title"></p>
             <div class="table-scroll" id="batches-table-scroll">
             <table class="batch-table">
                 <thead><tr><th><input type="checkbox" id="batch-select-all" onchange="toggleAllBatchSelection(this.checked)" aria-label="全选批次"></th><th data-batch-column="image">图片</th><th data-batch-column="product_name">产品名称</th><th data-batch-column="sku">SKU</th><th data-batch-column="batch_no">批次号</th><th data-batch-column="dingtalk_order_no">钉钉单号</th><th data-batch-column="quantity">入库数</th><th data-batch-column="remaining_quantity">剩余</th><th data-batch-column="purchase_price">采购价</th><th data-batch-column="total_amount">总金额</th><th data-batch-column="shipping_cost">头程运费</th><th data-batch-column="shipping_cost_no">头程运费钉钉单号</th><th data-batch-column="last_mile_cost">尾程派送</th><th data-batch-column="last_mile_cost_no">尾程派送费钉钉单号</th><th data-batch-column="other_cost">其他成本</th><th data-batch-column="other_cost_no">其他成本钉钉单号</th><th data-batch-column="unit_cost">单件成本</th><th data-batch-column="shipping_date">头程发货</th><th data-batch-column="arrived_at">入库时间</th><th data-batch-column="actions">操作</th></tr></thead>
@@ -606,7 +615,7 @@
                 <div id="sales-import-controls" class="sales-import-controls">
                     <div class="form-group"><label for="sales-import-store" data-sales-import-text="importStore"></label>
                         <select id="sales-import-store" disabled onchange="updateSalesImportControls()"></select>
-                        <span id="sales-import-store-help" class="sales-import-help"></span>
+                        <span id="sales-import-store-help" class="sales-import-help" data-help-tip data-help-inline data-help-anchor="label"></span>
                     </div>
                     <label class="btn btn-primary"><span data-sales-import-text="importOrders"></span><input type="file" id="import-csv" accept=".csv,.xlsx,.xlsm" style="display:none" disabled onchange="importSalesFile(this)"></label>
                 </div>
@@ -634,7 +643,7 @@
         </div>
         <div class="card">
             <div class="flex-between">
-                <h3>人民币销售台账</h3>
+                <h3 id="sales-ledger-title">人民币销售台账</h3>
                 <div class="sales-filter-toolbar">
                     <div class="form-group"><label for="sales-month">月份</label><input id="sales-month" type="month"></div>
                     <div class="form-group"><label for="sales-product-keyword">商品名称或 SKU</label><input id="sales-product-keyword" type="search" placeholder="输入名称或 SKU"></div>
@@ -653,7 +662,7 @@
                     </table>
                 </div>
             </div>
-            <p class="sales-cost-help" data-sales-cost-text="salesCostHelp"></p>
+            <p class="sales-cost-help" data-help-tip data-help-anchor="#sales-ledger-title" data-sales-cost-text="salesCostHelp"></p>
             <div class="sales-total-summary">
                 <table>
                     <colgroup><col style="width:120px"><col style="width:110px"><col style="width:140px"><col style="width:260px"><col style="width:100px"><col style="width:150px"><col style="width:160px"><col style="width:170px"><col style="width:170px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:200px"></colgroup>
@@ -705,8 +714,8 @@
         <div class="card">
             <div class="flex-between">
                 <div>
-                    <h3>财务附件报表</h3>
-                    <p style="font-size:13px;color:#687386;margin:6px 0 0">导出存货批次明细、SKU汇总、店铺损益和产品线毛利附件；各店铺损益汇总仅管理员可见</p>
+                    <h3 id="financial-attachments-title">财务附件报表</h3>
+                    <p data-help-tip data-help-anchor="#financial-attachments-title" style="font-size:13px;color:#687386;margin:6px 0 0">导出存货批次明细、SKU汇总、店铺损益和产品线毛利附件；各店铺损益汇总仅管理员可见</p>
                 </div>
                 <div class="form-row" style="margin:0;align-items:flex-end">
                     <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
@@ -724,8 +733,8 @@
             <div>
                 <div id="report-pane-inventory" class="report-pane active card">
                     <div class="flex-between"><h3 id="inventory-report-title">存货跌价准备明细表</h3><div class="inventory-report-actions"><select id="inventory-report-view" aria-label="存货报表视图" onchange="setInventoryImpairmentView(this.value)"><option value="batch">批次明细</option><option value="sku">按SKU汇总</option></select><button class="btn btn-secondary" onclick="exportInventoryImpairmentReport()">导出当前视图</button><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div></div>
-                    <p data-provision-text="provisionEquation" style="font-size:12px;color:#64748b;margin:8px 0"></p>
-                    <p id="inventory-report-scope" style="font-size:12px;color:#64748b;margin:8px 0">批次明细展示现存或上月仍有库存的批次；按SKU汇总包含截止日前全部批次，包括已售完旧批次。</p>
+                    <div data-help-tip data-help-anchor="#inventory-report-title"><p data-provision-text="provisionEquation" style="font-size:12px;color:#64748b;margin:8px 0"></p>
+                    <p id="inventory-report-scope" style="font-size:12px;color:#64748b;margin:8px 0">批次明细展示现存或上月仍有库存的批次；按SKU汇总包含截止日前全部批次，包括已售完旧批次。</p></div>
                     <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>累计跌价比例</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-impairment-tbody"></tbody><tfoot id="inventory-impairment-tfoot"></tfoot></table></div>
                     <div id="inventory-summary-scroll" class="table-scroll" hidden><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>入库批次数</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-summary-tbody"></tbody><tfoot id="inventory-summary-tfoot"></tfoot></table></div>
                 </div>
@@ -2386,6 +2395,7 @@ async function loadManualSaleStores() {
     updateSalesImportControls();
     document.querySelectorAll('[data-sales-import-text]').forEach(node => node.textContent = salesImportText(node.dataset.salesImportText));
     const help = document.getElementById('sales-import-store-help');
+    window.HelpTips?.setInline(help, true);
     help.textContent = salesImportText('importStoresLoading');
     try {
         const [stores, me] = await Promise.all([api('GET', '/finance-masters/stores?active_only=true'), api('GET', '/auth/me')]);
@@ -2401,9 +2411,11 @@ async function loadManualSaleStores() {
         }
         salesImportStoresReady = true;
         help.textContent = salesImportText(isAdmin() ? 'importSelectHelp' : allowed.length ? 'importBoundHelp' : 'importNoBoundStore');
+        window.HelpTips?.setInline(help, !allowed.length);
         updateSalesImportControls();
     } catch (error) {
         if (requestId !== salesStoreRequestId || userId !== CURRENT_USER_ID || role !== CURRENT_ROLE) return;
+        window.HelpTips?.setInline(help, true);
         help.textContent = error.message;
     }
 }

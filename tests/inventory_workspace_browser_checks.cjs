@@ -40,6 +40,141 @@ function daily(url, role) {
     warnings: ['inventory_current_documents', ...(role === 'admin' ? [] : ['inventory_scope_restricted'])]};
 }
 
+async function checkHelpTips(page, suffix) {
+    const button = page.locator('#p-type-label .help-tip-trigger');
+    const source = page.locator('#product-form [data-product-type-text="ruleHelp"]');
+    await button.waitFor();
+    check(await source.isVisible(), false);
+    check(await button.getAttribute('type'), 'button');
+    check(await button.getAttribute('aria-label'), '商品类型 · 查看说明');
+    check(await button.getAttribute('aria-describedby'), await source.getAttribute('id'));
+    if (process.env.INVENTORY_QA_DIR && suffix === '/') {
+        fs.mkdirSync(process.env.INVENTORY_QA_DIR, {recursive: true});
+        await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'product-help-collapsed.png'), fullPage: true});
+    }
+    await button.hover();
+    await source.waitFor({state: 'visible'});
+    check(await source.getAttribute('role'), 'tooltip');
+    check(await source.innerText().then(s => s.includes('设置安全库存时仅对超出部分计提')), true);
+    const box = await source.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForTimeout(240);
+    check(await source.isVisible(), true); // 可以移入浮层阅读，不随离开问号立即消失。
+    if (process.env.INVENTORY_QA_DIR && suffix === '/') {
+        fs.mkdirSync(process.env.INVENTORY_QA_DIR, {recursive: true});
+        await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'product-help-desktop.png'), fullPage: true});
+    }
+    await page.keyboard.press('Escape');
+    check(await source.isVisible(), false);
+    await button.focus();
+    check(await source.isVisible(), true);
+    await page.keyboard.press('Escape');
+    check(await source.isVisible(), false);
+    await button.press('Enter');
+    check(await source.isVisible(), true);
+    await page.locator('#p-name').click();
+    check(await source.isVisible(), false);
+    await button.click();
+    await button.click();
+    check(await source.isVisible(), false);
+    await page.locator('#p-name').focus();
+
+    // 模态弹窗里的问号使用顶层浮层；Esc 先收起说明，不误关表单。
+    await page.evaluate(() => document.getElementById('product-import-dialog').showModal());
+    const dialogButton = page.locator('#product-import-title .help-tip-trigger');
+    const dialogSource = page.locator('#product-import-dialog [data-help-tip]');
+    await dialogButton.focus();
+    check(await dialogSource.isVisible(), true);
+    await page.keyboard.press('Escape');
+    check(await dialogSource.isVisible(), false);
+    check(await page.locator('#product-import-dialog').evaluate(n => n.open), true);
+    await dialogButton.click();
+    await page.evaluate(() => document.getElementById('product-import-dialog').close());
+    await page.waitForFunction(() => !document.querySelector('[role="tooltip"]:popover-open'));
+
+    await page.setViewportSize({width: 390, height: 760});
+    await button.click();
+    const mobileBox = await source.boundingBox();
+    check(mobileBox.x >= 11 && mobileBox.x + mobileBox.width <= 379, true);
+    check(mobileBox.y >= 11 && mobileBox.y + mobileBox.height <= 749, true);
+    if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'product-help-mobile.png'), fullPage: true});
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({width: 1440, height: 1000});
+
+    // 动态内容、空说明、真实错误与已移除节点：不重复挂问号，不隐藏警示。
+    await page.evaluate(() => {
+        const node = document.createElement('p'); node.id = 'qa-help'; node.dataset.helpTip = '';
+        node.textContent = '说明 <img src=x onerror="window.unexpectedHelpScript=1">';
+        document.getElementById('product-form').appendChild(node);
+    });
+    const dynamicSource = page.locator('#qa-help');
+    const dynamicButton = page.locator('.help-tip-trigger[aria-describedby="qa-help"]');
+    await dynamicButton.waitFor();
+    await dynamicButton.focus();
+    check(await dynamicSource.locator('img').count(), 0);
+    check(await page.evaluate(() => !!window.unexpectedHelpScript), false);
+    await page.evaluate(() => {document.getElementById('qa-help').textContent = '更新后的说明';});
+    await page.waitForFunction(() => document.getElementById('qa-help').textContent === '更新后的说明');
+    check(await dynamicButton.count(), 1);
+    check(await dynamicSource.isVisible(), true);
+    // MutationObserver 和定位不会在空闲时不断触发自身。
+    await page.waitForTimeout(50);
+    check(await page.evaluate(async () => {
+        let changes = 0; const observer = new MutationObserver(records => changes += records.length);
+        observer.observe(document.body, {subtree:true, childList:true, attributes:true});
+        await new Promise(resolve => setTimeout(resolve, 100)); observer.disconnect(); return changes;
+    }), 0);
+    await page.evaluate(() => window.HelpTips.setInline(document.getElementById('qa-help'), true));
+    await dynamicButton.waitFor({state: 'hidden'});
+    check(await dynamicSource.isVisible(), true);
+    check(await dynamicSource.getAttribute('role'), null);
+    await page.evaluate(() => {
+        const node = document.getElementById('qa-help'); node.textContent = '';
+        window.HelpTips.setInline(node, false);
+    });
+    check(await dynamicButton.isVisible(), false);
+    await page.evaluate(() => {document.getElementById('qa-help').textContent = '再次显示说明';});
+    await dynamicButton.waitFor();
+    check(await dynamicButton.count(), 1);
+    await page.evaluate(() => document.getElementById('qa-help').setAttribute('role', 'alert'));
+    await dynamicButton.waitFor({state:'hidden'});
+    check(await dynamicSource.isVisible(), true);
+    check(await dynamicSource.getAttribute('role'), 'alert');
+    await page.evaluate(() => document.getElementById('qa-help').remove());
+    await dynamicButton.waitFor({state: 'detached'});
+    check(await page.locator('#l-err').getAttribute('data-help-tip'), null);
+    check(await page.locator('#product-import-status').getAttribute('data-help-tip'), null);
+    check(await page.locator('#pending-confirmations-summary').getAttribute('data-help-tip'), null);
+
+    // 财务工作台的折叠区说明，点问号不打开折叠区；浮层也不受祖先 overflow 裁切。
+    await page.evaluate(() => {
+        const details = document.createElement('details'); details.id = 'qa-details';
+        details.style.cssText = 'overflow:hidden;height:36px';
+        details.innerHTML = '<summary>折叠区说明</summary><p id="qa-detail-help" data-help-tip data-help-anchor="summary">折叠时也能查看完整说明，说明不受容器裁切。</p>';
+        document.getElementById('product-form').appendChild(details);
+    });
+    const foldedButton = page.locator('#qa-details .help-tip-trigger');
+    await foldedButton.waitFor();
+    await foldedButton.click();
+    check(await page.locator('#qa-detail-help').isVisible(), true);
+    check(await page.locator('#qa-details').evaluate(node => node.open), false);
+    await page.keyboard.press('Escape');
+    check(await page.locator('#qa-detail-help').evaluate(node => node.parentElement.id), 'qa-details');
+    await foldedButton.click();
+    await page.evaluate(() => document.getElementById('qa-details').remove());
+    await page.locator('#qa-detail-help').waitFor({state:'detached'});
+
+    // 未提供 Popover 能力时保留可见原文，不留下失效问号。
+    const fallback = await page.context().browser().newPage();
+    try {
+        await fallback.setContent('<html lang="zh-CN"><body><p data-help-tip id="fallback-help">原有说明</p></body></html>');
+        await fallback.evaluate(() => {HTMLElement.prototype.showPopover = undefined;});
+        await fallback.addScriptTag({content: fs.readFileSync(path.resolve('static/page-interactions.js'), 'utf8')});
+        check(await fallback.locator('#fallback-help').isVisible(), true);
+        check(await fallback.locator('.help-tip-trigger').count(), 0);
+    } finally {await fallback.close();}
+}
+
 async function main() {
     const files = {'/': 'templates/index.html', '/copy': 'index.html',
         '/page-interactions.js': 'static/page-interactions.js', '/financial-control.js': 'static/financial-control.js',
@@ -55,7 +190,7 @@ async function main() {
     try {
         browser = await chromium.launch({headless: true, ...(process.env.INVENTORY_BROWSER_CHANNEL ? {channel: process.env.INVENTORY_BROWSER_CHANNEL} : {})});
         const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
-        let role = 'admin', gate = null, detailGate = null, requestCount = 0;
+        let role = 'admin', gate = null, detailGate = null, requestCount = 0, dailyWarning = null;
         let exportGate = null, exportStatus = 200, exportHtml = false;
         let productGate = null, productStatus = 200;
         const productCalls = [];
@@ -164,7 +299,11 @@ async function main() {
                 if (url.searchParams.get('keyword') === 'error') return route.fulfill({status: 503, contentType: 'application/json', body: JSON.stringify({detail: '读取失败测试'})});
                 return fulfill(overview(url));
             }
-            if (url.pathname === '/inventory/daily') {requestCount++; return fulfill(daily(url, role));}
+            if (url.pathname === '/inventory/daily') {
+                requestCount++; const data = daily(url, role);
+                if (dailyWarning) data.warnings.push(dailyWarning);
+                return fulfill(data);
+            }
             if (url.pathname === '/inventory/movements') {
                 if (detailGate) {const held = detailGate; detailGate = null; await held.promise;}
                 return fulfill({items: [{occurred_at: `${url.searchParams.get('day')}T12:00:00`, kind: url.searchParams.get('kind'),
@@ -185,12 +324,33 @@ async function main() {
         for (const suffix of ['/', '/copy']) {
             await page.goto(address + suffix);
             await page.waitForFunction(() => CURRENT_USER_ID === 10 && !!window.InventoryWorkspace);
+            await checkHelpTips(page, suffix);
             await page.locator('[data-inventory-nav]').click();
             await page.locator('#iw-tbody tr').first().waitFor();
             check(await page.locator('#iw-tbody tr').count(), 4);
             // 清空每日月份后返回总览，隐藏月份不能阻止查询；每日仍保留必填校验。
             const validMonth = await page.locator('#iw-month').inputValue();
             await page.locator('[data-iw-action="daily"]').click();
+            // 问号不能成为隐式label的首个控件，丢失下拉框的名称或劫持标签点击。
+            const layoutField = page.getByRole('combobox', {name:'查看方式', exact:true});
+            const layoutHelp = page.locator('.help-tip-trigger[aria-describedby="iw-equation"]');
+            await layoutHelp.waitFor();
+            check(await layoutField.count(), 1);
+            check(await page.getByLabel('查看方式', {exact:true}).count(), 1);
+            check(await layoutField.evaluate(field => field.labels.length), 1);
+            const layoutLabel = page.locator('#iw-layout-label');
+            check(await layoutLabel.evaluate(label => label.control?.id), 'iw-layout');
+            check(await layoutHelp.evaluate(button => button.closest('label') === null), true);
+            await layoutLabel.click();
+            check(await layoutField.evaluate(field => document.activeElement === field), true);
+            check(await page.locator('#iw-equation').isVisible(), false);
+            await page.keyboard.press('Escape');
+            await layoutHelp.click();
+            check(await page.locator('#iw-equation').isVisible(), true);
+            check(await layoutLabel.evaluate(label => label.control?.id), 'iw-layout');
+            check(await layoutField.count(), 1);
+            await page.keyboard.press('Escape');
+            check(await page.locator('#iw-equation').isVisible(), false);
             await page.locator('#iw-month').fill('');
             await page.locator('[data-iw-action="overview"]').click();
             await page.locator('#iw-tbody tr').first().waitFor();
@@ -298,6 +458,17 @@ async function main() {
             await page.locator('#iw-month').dispatchEvent('change');
             await page.waitForFunction(() => document.getElementById('iw-day').value.startsWith('2026-09'));
             check(await page.locator('#iw-scope').innerText().then(value => value.includes('撤销')), true);
+            check(await page.locator('#iw-help').isVisible(), false);
+            dailyWarning = 'inventory_history_inconsistent';
+            await page.locator('[data-iw-action="refresh"]').click();
+            await page.waitForFunction(() => document.getElementById('iw-help').hasAttribute('data-help-inline'));
+            check(await page.locator('#iw-help').isVisible(), true);
+            check(await page.locator('#iw-scope').innerText().then(value => value.includes('不一致')), true);
+            dailyWarning = null;
+            await page.locator('[data-iw-action="refresh"]').click();
+            await page.waitForFunction(() => !document.getElementById('iw-help').hasAttribute('data-help-inline'));
+            await page.waitForFunction(() => document.getElementById('iw-help').classList.contains('help-tip-source'));
+            check(await page.locator('#iw-help').isVisible(), false);
             const dailyFile = await downloadExport();
             check(dailyFile.suggestedFilename(), 'inventory_daily_test.xlsx');
             check(exportCalls.at(-1).month, '2026-09-01');
