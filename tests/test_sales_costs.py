@@ -96,7 +96,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(exported[18:22]),exported[8])
         total=list(book['销售记录'].values)[-1]
         self.assertEqual(total[18:23],exported[18:23])
-        self.assertEqual(book['销售记录'].auto_filter.ref,'A1:W4')
+        self.assertEqual(book['销售记录'].auto_filter.ref,'A1:AA4')
         for event in (r for r in await self.listed() if r['id']<0):
             self.assert_parts(event,(0,0,0,0))
             self.assertEqual(D(event['impairment_cny']),0)

@@ -4,7 +4,7 @@ from decimal import Decimal
 from services.inventory_provision_data import load_inventory_provision_data
 
 
-async def attach_sale_impairment(db, rows):
+async def attach_sale_impairment(db, rows, *, include_details=False):
     sales = {row.id: row for row in rows if row.record_type == "sale"}
     if not sales:
         return
@@ -16,11 +16,18 @@ async def attach_sale_impairment(db, rows):
     amounts = {key: Decimal(0) for key in sales}
     quantities = {key: 0 for key in sales}
     notes = {key: set() for key in sales}
+    details = {key: [] for key in sales}
     for writeoff in replay.writeoffs:
         sale_id = writeoff.sale.sale_id
         if sale_id not in sales:
             continue
         quantities[sale_id] += writeoff.sale.quantity
+        if include_details:
+            batch = by_batch[writeoff.sale.batch_id]
+            details[sale_id].append({"batch_id": batch.id, "batch_no": batch.batch_no,
+                "quantity": writeoff.sale.quantity, "unit_cost": batch.unit_cost,
+                "impairment_units": writeoff.units,
+                "impairment_cny": None if writeoff.units is None else writeoff.units * batch.unit_cost})
         if replay.notes.get(writeoff.sale.batch_id):
             notes[sale_id].add(replay.notes[writeoff.sale.batch_id])
         if writeoff.units is None:
@@ -37,3 +44,4 @@ async def attach_sale_impairment(db, rows):
         row.impairment_cny = None if invalid else amounts[sale_id]
         row.impairment_review_reason = ("出库明细缺失、作废或历史流水异常，出库商品跌价待核对" if invalid
                                         else "；".join(sorted(notes[sale_id])) or None)
+    return details if include_details else None

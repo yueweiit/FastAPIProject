@@ -140,8 +140,17 @@ async function checkHelpTips(page, suffix) {
     await dynamicButton.waitFor({state:'hidden'});
     check(await dynamicSource.isVisible(), true);
     check(await dynamicSource.getAttribute('role'), 'alert');
-    await page.evaluate(() => document.getElementById('qa-help').remove());
+    await page.evaluate(() => document.getElementById('qa-help').removeAttribute('role'));
+    await dynamicButton.waitFor({state:'visible'});
+    // 重建正文到下一帧清理之间，旧问号仍可能收到焦点或悬停，不能打开已脱离DOM的内容。
+    await page.evaluate(() => {
+        const trigger=document.querySelector('.help-tip-trigger[aria-describedby="qa-help"]');
+        document.getElementById('qa-help').remove();
+        trigger.dispatchEvent(new MouseEvent('mouseenter'));
+        trigger.dispatchEvent(new FocusEvent('focus'));
+    });
     await dynamicButton.waitFor({state: 'detached'});
+    check(await page.locator('#qa-help').count(),0);
     check(await page.locator('#l-err').getAttribute('data-help-tip'), null);
     check(await page.locator('#product-import-status').getAttribute('data-help-tip'), null);
     check(await page.locator('#pending-confirmations-summary').getAttribute('data-help-tip'), null);
@@ -178,11 +187,12 @@ async function checkHelpTips(page, suffix) {
 async function main() {
     const files = {'/': 'templates/index.html', '/copy': 'index.html',
         '/page-interactions.js': 'static/page-interactions.js', '/financial-control.js': 'static/financial-control.js',
+        '/sales-ledger.js':'static/sales-ledger.js', '/sales-fields.json':'static/sales-fields.zh-CN.json',
         '/inventory-workspace.js': 'static/inventory-workspace.js', '/inventory-assessment.js': 'static/inventory-assessment.js', '/inventory-allocations.js': 'static/inventory-allocations.js'};
     const server = http.createServer((req, res) => {
         const file = files[new URL(req.url, 'http://unit.invalid').pathname];
         if (!file) {res.writeHead(404); res.end(); return;}
-        res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/html; charset=utf-8');
+        res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json' : 'text/html; charset=utf-8');
         res.end(fs.readFileSync(path.resolve(file)));
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -200,6 +210,9 @@ async function main() {
         const salesExportCalls = [];
         let salesExportStatus = 200;
         let salesRows = [];
+        let calculationGate=null,calculationStatus=200;
+        let fieldHelpStatus=200;
+        let pendingStatus=200;
         let countGate=null,countStatus=200,countNetworkError=false,countRecords=[],countCalls=[];
         const assignmentStores = [{id: 7, name: '店铺A', is_active: true}, {id: 8, name: '<店铺B>', is_active: true}];
         const batchFixture = {id: 1, product_id: 1, batch_no: 'IN-TEST-1', user_id: 10, quantity: 100, remaining_quantity: 70,
@@ -212,6 +225,7 @@ async function main() {
             const url = new URL(route.request().url());
             if (url.hostname !== '127.0.0.1') {await route.abort(); return;}
             const fulfill = data => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(data)});
+            if (url.pathname === '/sales-fields.json' && fieldHelpStatus !== 200) return route.fulfill({status:fieldHelpStatus,body:'unavailable'});
             if (url.pathname === '/auth/config') return fulfill({local_enabled: true, sso_available: false});
             if (url.pathname === '/auth/me') return fulfill({id: 10, username: '库存测试', role, store_id: role === 'admin' ? null : 7, csrf_token: 'test-only'});
             if (url.pathname === '/products') {
@@ -260,8 +274,22 @@ async function main() {
                     body: Buffer.from('PK\x03\x04sales-download-transport-fixture')});
             }
             if (url.pathname === '/sales/monthly-summary' || url.pathname === '/sales/imports') return fulfill([]);
+            if (/^\/sales\/\d+\/cost-breakdown$/.test(url.pathname)) {
+                const status=calculationStatus;
+                if(calculationGate){const held=calculationGate;calculationGate=null;await held.promise;}
+                if(status!==200)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({detail:{code:'sale_cost_not_found',message:'读取失败测试'}})});
+                const sale={...salesRows[0],display_sku:'CW0001',display_name:'狗狗咀嚼玩具'};
+                return fulfill({sale,sku:'CW0001',product_name:'狗狗咀嚼玩具',quantity_basis:'inventory_units',
+                    cost_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,total_cost_cny:20,purchase_cost_cny:8,head_shipping_cost_cny:4,last_mile_cost_cny:2,other_cost_cny:6}],
+                    impairment_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,impairment_units:'.09',impairment_cny:'.9'}],
+                    order_summary:{order_no:sale.order_no,store_id:7,store_name:'店铺A',line_count:2,complete:true,total_cost_cny:25,impairment_cny:'1.1'},
+                    order_lines:[sale,{...sale,id:101,display_sku:'COMPONENT-OFF-PAGE',display_name:'筛选外组合组件',quantity:1,order_total_cost_cny:5,impairment_cny:'.2'}]});
+            }
             if (url.pathname === '/sales') return fulfill({items: salesRows, total: salesRows.length, page: 1, page_size: 20});
-            if (url.pathname === '/sales/pending-confirmations') return fulfill({items: [], total: 0, page: 1, page_size: 20});
+            if (url.pathname === '/sales/pending-confirmations') {
+                if(pendingStatus!==200)return route.fulfill({status:pendingStatus,contentType:'application/json',body:JSON.stringify({detail:'<待确认失败测试>'})});
+                return fulfill({items: [], total: 0, page: 1, page_size: 20});
+            }
             if (/^\/batches\/\d+\/impairment-stores$/.test(url.pathname)) {
                 const payload=route.request().postDataJSON();allocationCalls.push(payload);
                 const status=allocationStatus;
@@ -462,6 +490,7 @@ async function main() {
             dailyWarning = 'inventory_history_inconsistent';
             await page.locator('[data-iw-action="refresh"]').click();
             await page.waitForFunction(() => document.getElementById('iw-help').hasAttribute('data-help-inline'));
+            await page.locator('#iw-help').waitFor({state:'visible'});
             check(await page.locator('#iw-help').isVisible(), true);
             check(await page.locator('#iw-scope').innerText().then(value => value.includes('不一致')), true);
             dailyWarning = null;
@@ -822,6 +851,7 @@ async function main() {
         salesRows = [{id: 1, product_id: 1, order_no: 'ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
             selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '60', platform_fee_cny: '5',
             profit_cny: '35', total_cost: '20', order_total_cost_cny: '20', cost_status: 'unverified',
+            unit_purchase_cost_cny:'4',unit_head_shipping_cost_cny:'2',unit_last_mile_cost_cny:'1',unit_other_cost_cny:'3',unit_total_cost_cny:'10',
             purchase_cost_cny: '8', head_shipping_cost_cny: '4', last_mile_cost_cny: '2', other_cost_cny: '6', impairment_cny: '0.9'},
             {id: 2, product_id: 1, order_no: 'UNKNOWN-COST', quantity: 1, sold_at: '2026-09-11T00:00:00',
              selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '30', platform_fee_cny: '0', profit_cny: '20', total_cost: '10',
@@ -833,20 +863,85 @@ async function main() {
         for (const suffix of ['/', '/copy']) {
             await page.goto(address + suffix);
             await page.waitForFunction(() => CURRENT_USER_ID === 10);
+            fieldHelpStatus=503;
             await page.getByRole('button', {name: '销售记录', exact: true}).click();
+            await page.waitForFunction(()=>document.getElementById('sales-tbody').textContent.includes('字段资源尚未加载'));
+            check(await page.evaluate(()=>CURRENT_USER_ID),10);
+            fieldHelpStatus=200;
+            pendingStatus=503;
+            await page.locator('#sales-search-button').click();
             await page.waitForFunction(() => document.querySelectorAll('#sales-tbody tr').length === 3);
-            check(await page.locator('.sales-ledger-table thead th').count(), 16);
-            check(await page.locator('#sales-tbody tr').first().locator('td').count(), 16);
-            check(await page.locator('#sales-tbody tr').first().locator('td').allTextContents().then(v => v.slice(11)),
-                ['¥8.00', '¥4.00', '¥2.00', '¥6.00', '¥0.90']);
-            check(await page.locator('#sales-tbody tr').first().locator('td').nth(8).innerText(), '¥20.00');
-            check(await page.locator('#sales-tbody tr').first().locator('td').nth(10).innerText(), '¥35.00');
-            check(await page.locator('#sales-tbody tr').nth(1).locator('td').allTextContents().then(v => v.slice(11)),
-                Array(5).fill('待核对'));
-            check(await page.locator('#sales-total-summary-body td').allTextContents().then(v => v.slice(-5)), Array(5).fill('待核对'));
-            check(await page.locator('#sales-tbody script, #sales-tbody img').count(), 0);
-            check(await page.locator('.sales-cost-help').innerText().then(v => v.includes('不代表销售店铺承担额')), true);
-            check(await page.locator('[data-sales-cost-text="salesCostTotal"]').innerText(), '订单总成本（元，本行）');
+            await page.locator('#pending-confirmations-tbody [role="alert"]').waitFor();
+            check(await page.locator('#pending-confirmations-summary').innerText(),'待确认记录加载失败，请重试。');
+            check(await page.locator('#pending-confirmations-tbody').innerText(),'<待确认失败测试>');
+            check(await page.locator('#pending-confirmations-tbody 待确认失败测试').count(),0);
+            check(await page.locator('[data-sales-total="order_total_cost_cny"]').innerText(),'¥30.00');
+            check(await page.locator('#sales-pagination').innerText().then(v=>v.includes('共 3 条')),true);
+            pendingStatus=200;
+            await page.evaluate(()=>loadSales());
+            check(await page.locator('#pending-confirmations-tbody').innerText(),'暂无待确认记录');
+            check(await page.locator('#sales-tbody tr').count(),3);
+            check(await page.locator('[data-sales-field]').count(),22);
+            check(await page.locator('.sales-column-groups th').count(),6);
+            const firstSale=page.locator('#sales-tbody tr').first();
+            const saleValue=key=>firstSale.locator(`[data-sales-value="${key}"]`);
+            check(await saleValue('unit_purchase_cost_cny').innerText(),'¥4.0000');
+            check(await saleValue('unit_total_cost_cny').innerText(),'¥10.0000');
+            check(await saleValue('order_total_cost_cny').innerText(),'¥20.00');
+            check(await saleValue('profit_cny').innerText(),'¥35.00');
+            check(await saleValue('impairment_cny').innerText(),'¥0.90');
+            check(await page.locator('#sales-tbody tr').nth(1).locator('[data-sales-value="impairment_cny"]').innerText(),'待核对');
+            check(await page.locator('[data-sales-total="impairment_cny"]').innerText(),'待核对');
+            check(await page.locator('[data-sales-total="unit_total_cost_cny"]').innerText(),'');
+            check(await page.locator('#sales-tbody script, #sales-tbody img').count(),0);
+            const unitHelp=page.locator('[data-sales-field="unit_purchase_cost_cny"] .help-tip-trigger');
+            await unitHelp.hover();
+            const unitTip=page.locator('[data-sales-field="unit_purchase_cost_cny"] [data-help-tip]');
+            check(await unitTip.isVisible(),true);
+            check(await unitTip.innerText().then(v=>v.includes('未舍入')&&v.includes('来源')),true);
+            await page.keyboard.press('Escape');
+            await firstSale.locator('[data-sale-calculation]').click();
+            await page.locator('#sales-calc-body .sales-order-totals').waitFor();
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('COST-BATCH')&&v.includes('COMPONENT-OFF-PAGE')&&v.includes('25.00')),true);
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('¥4.0000')),true);
+            check(await page.locator('#sales-calc-body script, #sales-calc-body img').count(),0);
+            // 浏览器旧close事件晚到时，不得取消同一事件循环内新打开的计算明细。
+            await page.evaluate(()=>{document.getElementById('sales-calc-dialog').close();document.querySelector('[data-sale-calculation]').click();});
+            await page.locator('#sales-calc-body .sales-order-totals').waitFor();
+            check(await page.locator('#sales-calc-dialog').evaluate(d=>d.open),true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-cost-calculation-desktop.png'),fullPage:true});
+            await page.setViewportSize({width:390,height:760});
+            check(await page.locator('#sales-calc-dialog').evaluate(d=>d.getBoundingClientRect().width<=390),true);
+            check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-cost-calculation-mobile.png'),fullPage:true});
+            await page.locator('[data-sales-calc-close]').click();
+            await page.setViewportSize({width:1440,height:1000});
+            calculationStatus=503;
+            await firstSale.locator('[data-sale-calculation]').click();
+            await page.waitForFunction(()=>document.getElementById('sales-calc-status').textContent.includes('读取失败测试'));
+            await page.locator('[data-sales-calc-close]').click();calculationStatus=200;
+            // 已关闭的旧请求不得覆盖后来打开的计算明细。
+            calculationGate=wait();const oldCalculation=calculationGate;
+            const waitingCalculation=page.waitForRequest(r=>r.url().includes('/cost-breakdown'));
+            await firstSale.locator('[data-sale-calculation]').click();await waitingCalculation;
+            await page.keyboard.press('Escape');
+            await firstSale.locator('[data-sale-calculation]').click();
+            await page.locator('#sales-calc-body .sales-order-totals').waitFor();oldCalculation.resolve();
+            await page.waitForTimeout(80);
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('COMPONENT-OFF-PAGE')),true);
+            await page.locator('[data-sales-calc-close]').click();
+            // 同账号重登后，旧计算请求的401不能退出新会话，也不能恢复旧财务内容。
+            calculationGate=wait();calculationStatus=401;const oldCostSession=calculationGate;
+            const oldCostStarted=page.waitForRequest(r=>r.url().includes('/cost-breakdown'));
+            await firstSale.locator('[data-sale-calculation]').click();await oldCostStarted;
+            await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
+            check(await page.locator('#sales-calc-dialog').isVisible(),false);
+            check(await page.locator('#sales-calc-body').innerText(),'');
+            calculationStatus=200;oldCostSession.resolve();await page.waitForTimeout(80);
+            check(await page.evaluate(()=>CURRENT_USER_ID),10);
+            check(await page.locator('#login-overlay').isVisible(),false);
+            await page.getByRole('button',{name:'销售记录',exact:true}).click();
+            await page.waitForFunction(()=>document.querySelectorAll('#sales-tbody tr').length===3);
             check(await page.locator('.sales-ledger-scroll').evaluate(e => e.scrollWidth > e.clientWidth), true);
             await page.evaluate(() => {document.querySelector('.sales-ledger-scroll').scrollLeft = 9999;});
             await page.evaluate(() => {document.querySelector('.sales-ledger-scroll').scrollLeft = 0;});

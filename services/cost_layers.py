@@ -180,7 +180,7 @@ async def ensure_batch_cost_editable(db, batch_id):
                                        "message": "批次已有成本调整，请追加调整或反向单，不能改写原批次。"})
 
 
-async def sale_cost_context(db, sales):
+async def sale_cost_context(db, sales, *, include_details=False):
     if not sales:
         return {}
     from models import SaleCostDetail
@@ -191,7 +191,7 @@ async def sale_cost_context(db, sales):
     layers = await load_cost_layers(db, {detail.batch_id for detail, _batch in details})
     result = {sale.id: {"adjustment": ZERO, "batch_deltas": {}, "states": [], "voided_batches": set(),
                        "components": {key: ZERO for key in COST_CATEGORIES}, "detail_quantity": 0,
-                       "saved_cost": ZERO, "breakdown_review_reason": None} for sale in sales}
+                       "saved_cost": ZERO, "breakdown_review_reason": None, "batch_lines": []} for sale in sales}
     for detail, batch in details:
         context = result[detail.sale_id]
         delta = unit_adjustment(layers.get(detail.batch_id, []))
@@ -201,6 +201,12 @@ async def sale_cost_context(db, sales):
         context["detail_quantity"] += detail.quantity
         context["saved_cost"] += detail.unit_cost * Decimal(detail.quantity)
         parts = fifo_cost_components(detail, batch, layers.get(detail.batch_id, []))
+        if include_details:
+            known = batch.voided_at is None and not (detail.unit_cost > 0 and sum(base_cost_components(batch).values(), ZERO) <= 0)
+            context["batch_lines"].append({"batch_id": batch.id, "batch_no": batch.batch_no,
+                "quantity": detail.quantity, "unit_cost": detail.unit_cost + delta,
+                "total_cost_cny": (detail.unit_cost + delta) * Decimal(detail.quantity),
+                **{key + "_cost_cny": value if known else None for key, value in parts.items()}})
         if detail.unit_cost > 0 and sum(base_cost_components(batch).values(), ZERO) <= 0:
             context["breakdown_review_reason"] = "批次原始成本构成缺失，成本拆分待核对"
         for key in COST_CATEGORIES:

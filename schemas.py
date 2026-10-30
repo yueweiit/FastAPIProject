@@ -359,6 +359,11 @@ class SaleResponse(BaseModel):
     other_cost_cny: Decimal | None = None
     order_total_cost_cny: Decimal | None = None
     cost_breakdown_review_reason: str | None = None
+    unit_purchase_cost_cny: Decimal | None = None
+    unit_head_shipping_cost_cny: Decimal | None = None
+    unit_last_mile_cost_cny: Decimal | None = None
+    unit_other_cost_cny: Decimal | None = None
+    unit_total_cost_cny: Decimal | None = None
     impairment_cny: Decimal | None = None
     impairment_review_reason: str | None = None
     platform_fee: Decimal
@@ -378,6 +383,49 @@ class SaleResponse(BaseModel):
     record_type: str = "sale"
     display_sku: str | None = None
     display_name: str | None = None
+
+
+class SalesOrderCostSummary(BaseModel):
+    order_no: str
+    store_id: int | None = None
+    store_name: str | None = None
+    line_count: int
+    complete: bool
+    total_cost_cny: Decimal | None = None
+    impairment_cny: Decimal | None = None
+    review_reason: str | None = None
+
+
+class SaleBatchCostResponse(BaseModel):
+    batch_id: int
+    batch_no: str
+    quantity: int
+    unit_cost: Decimal
+    total_cost_cny: Decimal
+    purchase_cost_cny: Decimal | None = None
+    head_shipping_cost_cny: Decimal | None = None
+    last_mile_cost_cny: Decimal | None = None
+    other_cost_cny: Decimal | None = None
+
+
+class SaleBatchImpairmentResponse(BaseModel):
+    batch_id: int
+    batch_no: str
+    quantity: int
+    unit_cost: Decimal
+    impairment_units: Decimal | None = None
+    impairment_cny: Decimal | None = None
+
+
+class SaleCostExplanationResponse(BaseModel):
+    sale: SaleResponse
+    sku: str
+    product_name: str
+    quantity_basis: Literal["inventory_units"] = "inventory_units"
+    cost_batches: list[SaleBatchCostResponse]
+    impairment_batches: list[SaleBatchImpairmentResponse]
+    order_summary: SalesOrderCostSummary
+    order_lines: list[SaleResponse]
 
 
 class InventoryCountCreate(BaseModel):

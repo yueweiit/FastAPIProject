@@ -4,7 +4,7 @@ import io
 import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, time
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Annotated
 
@@ -16,7 +16,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from database import get_db
 from models import (
@@ -39,6 +39,8 @@ from schemas import (
     SaleCreate,
     SalePageResponse,
     SaleResponse,
+    SaleCostExplanationResponse,
+    SalesOrderCostSummary,
     SalesImportError,
     SalesImportBatchResponse,
     SalesImportRollbackResponse,
@@ -1237,6 +1239,10 @@ def _build_sale_response(
     cost_context = cost_context or {}
     adjusted_cost = sale.total_cost + cost_context.get("adjustment", Decimal(0))
     parts = cost_context.get("components")
+    units = {key: (value / Decimal(sale.quantity)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+             for key, value in parts.items()} if parts is not None and sale.quantity > 0 else {}
+    unit_total = ((adjusted_cost / Decimal(sale.quantity)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                  if sale.quantity > 0 and cost_context.get("cost_status") != "needs_review" else None)
     parts = rounded_cost_components(parts, adjusted_cost) if parts is not None else {}
     currency = currency.upper()
     if currency == "CNY":
@@ -1282,6 +1288,11 @@ def _build_sale_response(
         other_cost_cny=parts.get("other"),
         order_total_cost_cny=sum(parts.values(), Decimal(0)) if parts else None,
         cost_breakdown_review_reason=cost_context.get("breakdown_review_reason"),
+        unit_purchase_cost_cny=units.get("purchase"),
+        unit_head_shipping_cost_cny=units.get("head_shipping"),
+        unit_last_mile_cost_cny=units.get("last_mile"),
+        unit_other_cost_cny=units.get("other"),
+        unit_total_cost_cny=unit_total,
         platform_fee=sale.platform_fee,
         profit=sale.profit,
         currency=currency,
@@ -1822,6 +1833,45 @@ async def monthly_sales_summary(
     return _monthly_sales_summary(sales, import_context_by_sale, events, await sale_cost_context(db, sales))
 
 
+async def _sale_response_rows(db, sales, *, cost_contexts=None):
+    import_context_by_sale, store_by_sale = await _sale_import_context(db, sales)
+
+    batch_ids = {detail.batch_id for sale in sales for detail in sale.cost_details}
+    batch_map = {}
+    if batch_ids:
+        batches_result = await db.execute(
+            select(InventoryBatch.id, InventoryBatch.batch_no).where(InventoryBatch.id.in_(batch_ids))
+        )
+        batch_map = dict(batches_result.all())
+
+    cost_contexts = cost_contexts if cost_contexts is not None else await sale_cost_context(db, sales)
+
+    response = []
+    for sale in sales:
+        details = []
+        for cd in sale.cost_details:
+            details.append({
+                "batch_id": cd.batch_id,
+                "batch_no": batch_map.get(cd.batch_id, "未知"),
+                "quantity": cd.quantity,
+                "unit_cost": cd.unit_cost,
+            })
+        import_context = import_context_by_sale.get(sale.id, {})
+        response.append(_build_sale_response(
+            sale,
+            details,
+            currency=import_context.get("currency", "CNY"),
+            store_name=store_by_sale.get(sale.id),
+            exchange_rate_to_cny=import_context.get("exchange_rate_to_cny", Decimal("1")),
+            exchange_rate_date=import_context.get("exchange_rate_date"),
+            exchange_rate_source=import_context.get("exchange_rate_source", "CNY"),
+            source_net_product_sales=import_context.get("source_net_product_sales"),
+            source_other_expense=import_context.get("source_other_expense"),
+            cost_context=cost_contexts.get(sale.id),
+        ))
+    return response
+
+
 @router.get("", response_model=list[SaleResponse] | SalePageResponse)
 async def list_sales(
     product_id: int | None = None,
@@ -1848,41 +1898,7 @@ async def list_sales(
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     sales = result.scalars().all()
-    import_context_by_sale, store_by_sale = await _sale_import_context(db, sales)
-
-    batch_ids = {detail.batch_id for sale in sales for detail in sale.cost_details}
-    batch_map = {}
-    if batch_ids:
-        batches_result = await db.execute(
-            select(InventoryBatch.id, InventoryBatch.batch_no).where(InventoryBatch.id.in_(batch_ids))
-        )
-        batch_map = dict(batches_result.all())
-
-    cost_contexts = await sale_cost_context(db, sales)
-
-    response = []
-    for sale in sales:
-        details = []
-        for cd in sale.cost_details:
-            details.append({
-                "batch_id": cd.batch_id,
-                "batch_no": batch_map.get(cd.batch_id, "未知"),
-                "quantity": cd.quantity,
-                "unit_cost": cd.unit_cost,
-            })
-        import_context = import_context_by_sale.get(sale.id, {})
-        response.append(_build_sale_response(
-            sale,
-            details,
-            currency=import_context.get("currency", "CNY"),
-            store_name=store_by_sale.get(sale.id),
-            exchange_rate_to_cny=import_context.get("exchange_rate_to_cny", Decimal("1")),
-            exchange_rate_date=import_context.get("exchange_rate_date"),
-            exchange_rate_source=import_context.get("exchange_rate_source", "CNY"),
-            source_net_product_sales=import_context.get("source_net_product_sales"),
-            source_other_expense=import_context.get("source_other_expense"),
-            cost_context=cost_contexts.get(sale.id),
-        ))
+    response = await _sale_response_rows(db, sales)
     start_date = datetime.strptime(month, "%Y-%m").date() if month else None
     end_date = (start_date.replace(year=start_date.year + 1, month=1) if start_date.month == 12
                 else start_date.replace(month=start_date.month + 1)) if start_date else None
@@ -1914,25 +1930,7 @@ async def list_sales(
         if page is not None:
             # 先合并全部记录再分页，费用/退款不能造成丢行、重复页或缺失成本明细。
             all_sales = await _filtered_sales(db, product_id, keyword, month, user, include_cost_details=True)
-            all_batch_ids = {cd.batch_id for sale in all_sales for cd in sale.cost_details}
-            if all_batch_ids:
-                batch_map = dict((await db.execute(select(InventoryBatch.id, InventoryBatch.batch_no).where(
-                    InventoryBatch.id.in_(all_batch_ids)
-                ))).all())
-            all_context, all_stores = await _sale_import_context(db, all_sales)
-            all_costs = await sale_cost_context(db, all_sales)
-            response = [_build_sale_response(
-                sale, [{"batch_id": cd.batch_id, "batch_no": batch_map.get(cd.batch_id, ""),
-                        "quantity": cd.quantity, "unit_cost": cd.unit_cost} for cd in sale.cost_details],
-                currency=all_context.get(sale.id, {}).get("currency", "CNY"),
-                store_name=all_stores.get(sale.id),
-                exchange_rate_to_cny=all_context.get(sale.id, {}).get("exchange_rate_to_cny", Decimal(1)),
-                exchange_rate_date=all_context.get(sale.id, {}).get("exchange_rate_date"),
-                exchange_rate_source=all_context.get(sale.id, {}).get("exchange_rate_source"),
-                source_net_product_sales=all_context.get(sale.id, {}).get("source_net_product_sales"),
-                source_other_expense=all_context.get(sale.id, {}).get("source_other_expense"),
-                cost_context=all_costs.get(sale.id),
-            ) for sale in all_sales]
+            response = await _sale_response_rows(db, all_sales)
         combined = sorted([*response, *event_responses], key=lambda item: (item.sold_at, item.id), reverse=True)
         if page is None:
             response = combined
@@ -1944,6 +1942,96 @@ async def list_sales(
     if page is None:
         return response
     return SalePageResponse(items=response, total=total, page=page, page_size=page_size)
+
+
+async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include_details=False):
+    """按授权店铺+订单读取完整出库明细；不沿用商品、月份或页面筛选。"""
+    if not seeds:
+        return {}, {}, {}, {}
+    scope = _sale_store_scope(user)
+    owner = aliased(User)
+    store = func.coalesce(Sale.store_id, owner.store_id)
+    filters = [Sale.id.in_({sale.id for sale in seeds})]
+    if scope is not None:
+        filters.append(scope)
+    scoped = (await db.execute(select(Sale, store).outerjoin(owner, owner.id == Sale.user_id)
+        .where(*filters))).all()
+    keys = {sale.id: (sid, sale.order_no) if sid is not None else (None, sale.order_no, sale.id)
+            for sale, sid in scoped}
+    grouped_keys = list(dict.fromkeys(key for key in keys.values() if key[0] is not None))
+    all_sales = {sale.id: sale for sale, sid in scoped if sid is None}
+    for offset in range(0, len(grouped_keys), 500):
+        shops = defaultdict(list)
+        for sid, number in grouped_keys[offset:offset + 500]:
+            shops[sid].append(number)
+        conditions = [or_(*(and_(store == sid, Sale.order_no.in_(numbers)) for sid, numbers in shops.items()))]
+        if scope is not None:
+            conditions.append(scope)
+        rows = (await db.execute(select(Sale, store).outerjoin(owner, owner.id == Sale.user_id)
+            .options(selectinload(Sale.cost_details)).where(*conditions)
+            .order_by(Sale.id).limit(max_rows + 1))).all()
+        all_sales.update({sale.id: sale for sale, _sid in rows})
+        keys.update({sale.id: (sid, sale.order_no) for sale, sid in rows})
+        if len(all_sales) > max_rows:
+            raise HTTPException(422, detail={"code": "sales_order_too_large", "max_rows": max_rows,
+                "message": "订单关联明细过多，请缩小导出范围或联系管理员核对。"})
+    # 未知店铺只保留被选中的那一行，不将同号的未知历史来源强行并为整单。
+    unknown = [sale for sale, sid in scoped if sid is None]
+    if unknown:
+        loaded = (await db.execute(select(Sale).options(selectinload(Sale.cost_details))
+            .where(Sale.id.in_([sale.id for sale in unknown])))).scalars().all()
+        all_sales.update({sale.id: sale for sale in loaded})
+    values = list(all_sales.values())
+    contexts = await sale_cost_context(db, values, include_details=include_details)
+    responses = await _sale_response_rows(db, values, cost_contexts=contexts)
+    impairment_details = await attach_sale_impairment(db, responses, include_details=include_details)
+    products = {p.id: p for p in (await db.execute(select(Product).where(
+        Product.id.in_({sale.product_id for sale in values})))).scalars().all()}
+    store_ids = {key[0] for key in keys.values() if key[0] is not None}
+    store_names = dict((await db.execute(select(Store.id, Store.name).where(
+        Store.id.in_(store_ids)))).all()) if store_ids else {}
+    by_id = {row.id: row for row in responses}
+    groups = defaultdict(list)
+    for sale in values:
+        key = keys[sale.id]
+        row = by_id[sale.id]
+        # 整单名称与权限/分组采用同一店铺ID，不沿用商品映射推断的展示名称。
+        row.store_name = store_names.get(key[0])
+        product = products.get(sale.product_id)
+        row.display_sku = product.sku if product else "-"
+        row.display_name = product.name if product else "-"
+        groups[key].append(row)
+    summaries = {}
+    for key, lines in groups.items():
+        complete = key[0] is not None
+        known_cost = complete and all(row.cost_status != "needs_review" for row in lines)
+        known_impairment = complete and all(row.impairment_cny is not None for row in lines)
+        summaries[key] = SalesOrderCostSummary(order_no=key[1], store_id=key[0], store_name=store_names.get(key[0]),
+            line_count=len(lines), complete=complete,
+            total_cost_cny=sum((row.order_total_cost_cny if row.order_total_cost_cny is not None else
+                row.total_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) for row in lines), Decimal(0)) if known_cost else None,
+            impairment_cny=sum((row.impairment_cny for row in lines), Decimal(0)) if known_impairment else None,
+            review_reason=("店铺归属缺失，不能确认整单范围。" if not complete else
+                "订单含待核对成本或跌价明细。" if not known_cost or not known_impairment else None))
+    return {sale_id: summaries[key] for sale_id, key in keys.items()}, groups, contexts, impairment_details or {}
+
+
+@router.get("/{sale_id}/cost-breakdown", response_model=SaleCostExplanationResponse)
+async def sale_cost_breakdown(sale_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole)):
+    conditions = [Sale.id == sale_id]
+    scope = _sale_store_scope(user)
+    if scope is not None:
+        conditions.append(scope)
+    sale = (await db.execute(select(Sale).where(*conditions))).scalar_one_or_none()
+    if sale is None:
+        raise HTTPException(404, detail={"code": "sale_cost_not_found", "message": "没有可查看的销售出库明细。"})
+    summaries, groups, contexts, impairment = await _order_cost_data(db, [sale], user, max_rows=1000, include_details=True)
+    summary = summaries[sale.id]
+    lines = next(lines for lines in groups.values() if any(row.id == sale.id for row in lines))
+    row = next(row for row in lines if row.id == sale.id)
+    return SaleCostExplanationResponse(sale=row, sku=row.display_sku or "-", product_name=row.display_name or "-",
+        order_summary=summary, order_lines=lines, cost_batches=contexts[sale.id]["batch_lines"],
+        impairment_batches=impairment.get(sale.id, []))
 
 
 @router.get("/export")
@@ -1986,10 +2074,14 @@ async def export_sales_records(
         product = products.get(item.product_id)
         rows.append({**item.model_dump(exclude={"cost_details"}), "sku": item.display_sku or (product.sku if product else "-"),
                      "product_name": item.display_name or (product.name if product else "-")})
+    seeds = (await db.execute(select(Sale).where(Sale.id.in_([row.id for row in items if row.id > 0])))).scalars().all()
+    order_summaries, _groups, _costs, _impairments = await _order_cost_data(db, seeds, user)
+    unique_orders = {(value.store_id, value.order_no, None if value.complete else key): value.model_dump()
+                     for key, value in order_summaries.items()}
     scope = "全部店铺" if user.role == "admin" else "账号绑定店铺"
     await db.rollback()
     output = await run_in_threadpool(build_sales_workbook, rows, month=month, keyword=normalized_keyword,
-                                    scope=scope, product_id=product_id)
+                                    scope=scope, product_id=product_id, order_summaries=list(unique_orders.values()))
     suffix = month.replace("-", "") if month else "all"
     return StreamingResponse(output, media_type=SALES_EXPORT_MIME,
         headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"'})

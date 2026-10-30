@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "locale": "zh-CN",
+  "fields": [
+    {
+      "key": "store_name",
+      "label": "店铺",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "直接取值",
+      "source": "销售固化店铺；旧数据沿用现有兼容绑定",
+      "note": "沿用服务端店铺权限。",
+      "width": 120
+    },
+    {
+      "key": "sold_at",
+      "label": "销售日期",
+      "group": "基本信息",
+      "kind": "date",
+      "formula": "直接取值",
+      "source": "销售记录的出库日期",
+      "note": "与入库日期、订单创建日期区分。",
+      "width": 110
+    },
+    {
+      "key": "order_no",
+      "label": "订单号",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "直接取值",
+      "source": "销售记录订单号",
+      "note": "同店铺同订单的完整明细在计算明细中汇总。",
+      "width": 200
+    },
+    {
+      "key": "sku",
+      "label": "SKU",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "直接取值",
+      "source": "平台映射对应的本地库存商品SKU",
+      "note": "组合商品按组件出库行展示。",
+      "width": 140
+    },
+    {
+      "key": "product_name",
+      "label": "商品名称",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "直接取值",
+      "source": "对应本地商品名称",
+      "note": "商品名称不参与成本或SKU匹配判断。",
+      "width": 220
+    },
+    {
+      "key": "quantity",
+      "label": "实际出库数量",
+      "group": "基本信息",
+      "kind": "quantity",
+      "formula": "平台销售数量 × 组件配置倍数（导入组合商品）",
+      "source": "实际保存的销售出库数量",
+      "note": "单位为本地库存件；不等同于平台销售套数，不同SKU的单件成本不能相加。",
+      "width": 125
+    },
+    {
+      "key": "selling_price_cny",
+      "label": "销售单价（元/件）",
+      "group": "交易金额",
+      "kind": "unit",
+      "formula": "本行净商品收入 ÷ 实际出库数量",
+      "source": "来源净销售额、保存汇率及原组件分配",
+      "note": "无出库的财务事件没有单件价格。",
+      "width": 140
+    },
+    {
+      "key": "sales_revenue_cny",
+      "label": "净商品收入（元）",
+      "group": "交易金额",
+      "kind": "money",
+      "formula": "来源净商品销售额 × 保存的人民币汇率",
+      "source": "结算原始行、已保存的组件分配及汇率",
+      "note": "缺失汇率时待核对；人民币汇率为1。",
+      "width": 140
+    },
+    {
+      "key": "platform_fee_cny",
+      "label": "其他费用（元）",
+      "group": "交易金额",
+      "kind": "money",
+      "formula": "本行来源费用 × 保存汇率",
+      "source": "净商品销售额与结算总额的差额及原分摊",
+      "note": "与其他入库成本分开；赔付沿用既有费用方向。",
+      "width": 140
+    },
+    {
+      "key": "profit_cny",
+      "label": "毛利（元）",
+      "group": "交易金额",
+      "kind": "money",
+      "formula": "净商品收入 − 未舍入销售成本 − 其他费用",
+      "source": "本行收入、有效FIFO成本及来源费用",
+      "note": "本列不重复扣减出库跌价；缺失汇率或作废成本时待核对。",
+      "width": 140
+    },
+    {
+      "key": "unit_purchase_cost_cny",
+      "label": "采购（元/件）",
+      "group": "单件成本",
+      "kind": "unit",
+      "formula": "本行未舍入采购成本 ÷ 实际出库数量",
+      "source": "实际FIFO成本分项及已启用的对应补差",
+      "note": "本次出库的加权平均，显示4位小数；不能用显示单价反算订单金额。",
+      "width": 140
+    },
+    {
+      "key": "unit_head_shipping_cost_cny",
+      "label": "头程（元/件）",
+      "group": "单件成本",
+      "kind": "unit",
+      "formula": "本行未舍入头程成本 ÷ 实际出库数量",
+      "source": "实际FIFO成本分项及已启用的对应补差",
+      "note": "本次出库的加权平均，显示4位小数；不能用显示单价反算订单金额。",
+      "width": 140
+    },
+    {
+      "key": "unit_last_mile_cost_cny",
+      "label": "尾程（元/件）",
+      "group": "单件成本",
+      "kind": "unit",
+      "formula": "本行未舍入尾程成本 ÷ 实际出库数量",
+      "source": "实际FIFO成本分项及已启用的对应补差",
+      "note": "本次出库的加权平均，显示4位小数；不能用显示单价反算订单金额。",
+      "width": 140
+    },
+    {
+      "key": "unit_other_cost_cny",
+      "label": "其他入库（元/件）",
+      "group": "单件成本",
+      "kind": "unit",
+      "formula": "本行未舍入其他入库成本 ÷ 实际出库数量",
+      "source": "实际FIFO成本分项及已启用的对应补差",
+      "note": "本次出库的加权平均，显示4位小数；不能用显示单价反算订单金额。",
+      "width": 140
+    },
+    {
+      "key": "unit_total_cost_cny",
+      "label": "单件合计（元/件）",
+      "group": "单件成本",
+      "kind": "unit",
+      "formula": "本行未舍入总成本 ÷ 实际出库数量",
+      "source": "保存的FIFO成本及已启用补差",
+      "note": "显示4位小数；无出库的事件不适用。",
+      "width": 140
+    },
+    {
+      "key": "purchase_cost_cny",
+      "label": "采购（元）",
+      "group": "本行销售成本",
+      "kind": "money",
+      "formula": "Σ各实际出库批次的采购分配金额（含启用补差）",
+      "source": "保存的FIFO单价、出库数量及批次原始/冻结成本构成",
+      "note": "按原始构成分配保存的FIFO成本；显示按分舍入并分配尾差。",
+      "width": 140
+    },
+    {
+      "key": "head_shipping_cost_cny",
+      "label": "头程（元）",
+      "group": "本行销售成本",
+      "kind": "money",
+      "formula": "Σ各实际出库批次的头程分配金额（含启用补差）",
+      "source": "保存的FIFO单价、出库数量及批次原始/冻结成本构成",
+      "note": "按原始构成分配保存的FIFO成本；显示按分舍入并分配尾差。",
+      "width": 140
+    },
+    {
+      "key": "last_mile_cost_cny",
+      "label": "尾程（元）",
+      "group": "本行销售成本",
+      "kind": "money",
+      "formula": "Σ各实际出库批次的尾程分配金额（含启用补差）",
+      "source": "保存的FIFO单价、出库数量及批次原始/冻结成本构成",
+      "note": "按原始构成分配保存的FIFO成本；显示按分舍入并分配尾差。",
+      "width": 140
+    },
+    {
+      "key": "other_cost_cny",
+      "label": "其他入库（元）",
+      "group": "本行销售成本",
+      "kind": "money",
+      "formula": "Σ各实际出库批次的其他入库分配金额（含启用补差）",
+      "source": "保存的FIFO单价、出库数量及批次原始/冻结成本构成",
+      "note": "按原始构成分配保存的FIFO成本；显示按分舍入并分配尾差。",
+      "width": 140
+    },
+    {
+      "key": "order_total_cost_cny",
+      "label": "本行总成本（元）",
+      "group": "本行销售成本",
+      "kind": "money",
+      "formula": "本行采购 + 头程 + 尾程 + 其他入库成本",
+      "source": "本行有效FIFO成本与已启用补差",
+      "note": "四项展示金额之和；构成未知时保留已知总成本，不猜测分项。",
+      "width": 170
+    },
+    {
+      "key": "impairment_cny",
+      "label": "本行出库跌价（元）",
+      "group": "跌价金额",
+      "kind": "money",
+      "formula": "Σ本次实际出库库存层所携带的已累计跌价准备",
+      "source": "持有期间准备回放及销售转销",
+      "note": "入库当天0天，销售当天先计提后转销；安全库存、类型历史及90%上限沿用原规则。单列，不加进订单成本、不重复扣毛利，也不代表销售店铺承担额。",
+      "width": 190
+    },
+    {
+      "key": "calculation_action",
+      "label": "计算明细",
+      "group": "明细",
+      "kind": "action",
+      "formula": "查看当前销售行、实际FIFO批次及整单汇总",
+      "source": "授权销售出库记录",
+      "note": "独立退款、调整、赔付没有库存出库明细。",
+      "width": 110
+    }
+  ],
+  "extra_fields": [
+    {
+      "key": "whole_order_cost_cny",
+      "label": "整单销售成本（元）",
+      "group": "整单汇总",
+      "kind": "money",
+      "formula": "Σ同店铺同订单全部出库明细的本行成本",
+      "source": "完整授权订单明细，不限当前页、商品或月份",
+      "note": "各行分位展示金额相加；未知店铺不猜测整单范围。"
+    },
+    {
+      "key": "whole_order_impairment_cny",
+      "label": "整单出库跌价（元）",
+      "group": "整单汇总",
+      "kind": "money",
+      "formula": "Σ同店铺同订单全部出库明细的出库跌价",
+      "source": "完整订单各销售行的准备转销",
+      "note": "任一行未知则整单待核对，不以0代替。"
+    }
+  ]
+}

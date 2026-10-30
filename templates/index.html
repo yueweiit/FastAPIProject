@@ -120,12 +120,33 @@
         .sales-monthly-table .empty, .sales-ledger-table .empty { padding:34px 20px !important; background:#fbfcfd; color:#8b97a8; }
         .sales-cost-help { color:#687386; font-size:13px; line-height:1.7; margin:12px 0; }
         .sales-total-summary { margin-bottom:12px; overflow-x:auto; border:1px solid #aac9dd; border-radius:8px; box-shadow:0 2px 6px rgba(15,59,93,.06); }
-        .sales-total-summary table { width:100%; min-width:2580px; table-layout:fixed; background:#d9eaf5; }
+        .sales-total-summary table { width:100%; min-width:0; table-layout:fixed; background:#d9eaf5; }
         .sales-total-summary td { font-weight:800; color:#152238; border-bottom:0; }
         .sales-total-summary td:first-child { text-align:left; }
-        .table-scroll .sales-ledger-table { width:100%; min-width:2580px !important; table-layout:fixed; }
+        .table-scroll .sales-ledger-table { width:100%; min-width:0 !important; table-layout:fixed; }
         .sales-ledger-scroll { box-shadow:0 2px 8px rgba(21,34,56,.04); }
         .sales-ledger-table .fx-missing { color:#a06108; font-weight:700; }
+        .sales-ledger-table .sales-column-groups th { padding:9px 14px; font-size:12px; text-align:center; }
+        .sales-ledger-table .sales-column-groups .sales-group-2 { background:#e9f2fb; color:#244a72; }
+        .sales-ledger-table .sales-column-groups .sales-group-3 { background:#e8f5ef; color:#17634e; }
+        .sales-ledger-table .sales-column-groups .sales-group-4 { background:#fff4dd; color:#875b12; }
+        .sales-ledger-table td:nth-child(5) { text-align:left; }
+        .sales-ledger-table td:nth-child(n+6) { text-align:right; font-variant-numeric:tabular-nums; }
+        .sales-ledger-table td[data-sales-value="order_total_cost_cny"] { font-weight:700; }
+        .sales-ledger-table .sales-stick-0, .sales-ledger-table .sales-stick-1, .sales-ledger-table .sales-stick-2, .sales-ledger-table .sales-stick-3 { position:sticky; z-index:2; }
+        .sales-ledger-table td.sales-stick-0, .sales-ledger-table td.sales-stick-1, .sales-ledger-table td.sales-stick-2, .sales-ledger-table td.sales-stick-3 { background:#fff; }
+        .sales-ledger-table .sales-stick-0 { left:0; }.sales-ledger-table .sales-stick-1 { left:120px; }.sales-ledger-table .sales-stick-2 { left:230px; }.sales-ledger-table .sales-stick-3 { left:430px; border-right:1px solid #cbd8e5; }
+        .sales-calculation-dialog { width:1100px; max-width:calc(100vw - 32px); max-height:90vh; overflow:auto; }
+        .sales-calculation-dialog h3 { margin:0; }.sales-calculation-section { margin-top:22px; }.sales-calculation-section h4 { margin-bottom:10px; color:var(--ink); }
+        .sales-calculation-identity { margin:14px 0; overflow-wrap:anywhere; }.sales-calculation-section td, .sales-calculation-section th { padding:10px 12px; }
+        .sales-order-totals { display:flex; flex-wrap:wrap; gap:18px; padding:14px; margin-bottom:12px; background:#edf5f9; border-radius:8px; }.sales-order-totals dt { color:var(--muted); font-size:12px; }.sales-order-totals dd { margin:6px 0 0; font-size:18px; font-weight:700; }
+        @media(max-width:760px) {
+            #sec-sales .sales-entry-grid { grid-template-columns:minmax(0,1fr); }
+            #sec-sales .sales-page-header, #sec-sales > .card > .flex-between { flex-wrap:wrap; align-items:flex-start; }
+            #sales-ledger-title { flex-basis:100%; }
+            #sec-sales .sales-filter-toolbar { width:100%; }
+        }
+        @media(max-width:760px) { .sales-ledger-table .sales-stick-1, .sales-ledger-table .sales-stick-2, .sales-ledger-table .sales-stick-3 { position:static; }.sales-calculation-dialog { max-width:calc(100vw - 16px);padding:16px; } }
         .import-history-table { min-width:1120px !important; }
         .file-primary { max-width:320px; overflow:hidden; text-overflow:ellipsis; font-weight:700; }
         .file-secondary { margin-top:3px; color:var(--muted); font-size:11px; }
@@ -664,15 +685,15 @@
             </div>
             <p class="sales-cost-help" data-help-tip data-help-anchor="#sales-ledger-title" data-sales-cost-text="salesCostHelp"></p>
             <div class="sales-total-summary">
-                <table>
-                    <colgroup><col style="width:120px"><col style="width:110px"><col style="width:140px"><col style="width:260px"><col style="width:100px"><col style="width:150px"><col style="width:160px"><col style="width:170px"><col style="width:170px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:200px"></colgroup>
+                <table id="sales-total-table">
+                    <colgroup id="sales-total-cols"></colgroup>
                     <tbody id="sales-total-summary-body"></tbody>
                 </table>
             </div>
             <div class="table-scroll sales-ledger-scroll">
-            <table class="sales-ledger-table">
-                <colgroup><col style="width:120px"><col style="width:110px"><col style="width:140px"><col style="width:260px"><col style="width:100px"><col style="width:150px"><col style="width:160px"><col style="width:170px"><col style="width:170px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:200px"></colgroup>
-                <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>净商品收入（元）</th><th data-sales-cost-text="salesCostTotal"></th><th>其他费用（元）</th><th>毛利（元）</th><th data-sales-cost-text="salesCostPurchase"></th><th data-sales-cost-text="salesCostHead"></th><th data-sales-cost-text="salesCostLast"></th><th data-sales-cost-text="salesCostOther"></th><th data-sales-cost-text="salesCostImpairment"></th></tr></thead>
+            <table class="sales-ledger-table" id="sales-ledger-table">
+                <colgroup id="sales-ledger-cols"></colgroup>
+                <thead id="sales-ledger-head"></thead>
                 <tbody id="sales-tbody"></tbody>
             </table>
             </div>
@@ -981,6 +1002,7 @@ function handleSessionExpired() {
         window.FinanceControl?.reset();
         window.InventoryWorkspace?.reset();
         window.SalesExport?.reset();
+        window.SalesLedger?.reset();
     }
     document.querySelectorAll('#sec-sales tbody, #sec-reports tbody, #sec-reports tfoot, #users-tbody').forEach(node => node.innerHTML = '');
     document.getElementById('login-overlay').style.display = 'flex';
@@ -2518,102 +2540,41 @@ async function importSalesFile(input) {
 }
 
 async function loadSales() {
-    // 运营和管理员才显示销售表单和导入按钮
+    if (!window.SalesLedger) {
+        document.getElementById('sales-tbody').innerHTML = `<tr><td colspan="22" class="msg msg-err" role="alert">${escapeHtml(window.PageInteractions.text('salesCostUnavailable'))}</td></tr>`;
+        return;
+    }
+    const token = window.SalesLedger.beginLoad();
     document.getElementById('sales-manual-entry-card').style.display = isOperator() ? '' : 'none';
     document.getElementById('sales-import-controls').style.display = isOperator() ? '' : 'none';
-    await loadProductOptions();
-    const productMap = {};
-    allProducts.forEach(p => productMap[p.id] = p);
-    const params = new URLSearchParams({page: salesPage, page_size: salesPageSize});
-    if (salesMonth) params.set('month', salesMonth);
-    if (salesProductKeyword) params.set('keyword', salesProductKeyword);
-    const summaryParams = new URLSearchParams();
-    if (salesMonth) summaryParams.set('month', salesMonth);
-    if (salesProductKeyword) summaryParams.set('keyword', salesProductKeyword);
-    const [result, monthlySummary] = await Promise.all([
-        api('GET', `/sales?${params.toString()}`),
-        api('GET', `/sales/monthly-summary?${summaryParams.toString()}`),
-    ]);
-    renderMonthlySalesSummary(monthlySummary);
-    const list = result.items;
-    salesPage = result.page;
-    salesPageSize = result.page_size;
-    salesTotal = result.total;
-    const tbody = document.getElementById('sales-tbody');
-    const totalSummary = document.getElementById('sales-total-summary-body');
-    const costFields = ['purchase_cost_cny', 'head_shipping_cost_cny', 'last_mile_cost_cny', 'other_cost_cny', 'impairment_cny'];
-    const pendingCost = window.PageInteractions.text('salesCostPending');
-    if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="16" class="empty">暂无销售记录</td></tr>';
-        totalSummary.innerHTML = '<tr><td colspan="4">本页合计</td><td>0</td><td></td><td></td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td>' + '<td>¥0.00</td>'.repeat(costFields.length) + '</tr>';
-        renderPagination('sales-pagination', 1, 1, 0, salesPageSize);
-    } else {
-        const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true, costReviewCount: 0, parts: costFields.map(() => 0)};
-        tbody.innerHTML = list.map(s => {
-            const p = productMap[s.product_id] || {};
-            const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${Number(d.unit_cost).toFixed(2)}`).join('；') || '无批次明细';
-            const dateStr = s.sold_at?.slice(0,10) || s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '-';
-            const quantity = Number(s.quantity) || 0;
-            const originalPrice = Number(s.selling_price) || 0;
-            const totalCost = Number(s.order_total_cost_cny ?? s.total_cost) || 0;
-            const fifoUnitCost = quantity ? Number(s.total_cost) / quantity : 0;
-            const currency = String(s.currency || 'CNY').toUpperCase();
-            const rate = s.exchange_rate_to_cny == null ? null : Number(s.exchange_rate_to_cny);
-            const sellingPriceCny = s.selling_price_cny == null ? null : Number(s.selling_price_cny);
-            const revenueCny = s.sales_revenue_cny == null ? null : Number(s.sales_revenue_cny);
-            const platformFeeCny = s.platform_fee_cny == null ? null : Number(s.platform_fee_cny);
-            const grossProfitCny = s.profit_cny == null ? null : Number(s.profit_cny);
-            const costNeedsReview = s.cost_status === 'needs_review';
-            const fxReady = [sellingPriceCny, revenueCny, platformFeeCny, grossProfitCny].every(value => value !== null);
-            const fxTitle = currency === 'CNY'
-                ? '人民币原始金额'
-                : `原币 ${currency} ${originalPrice.toFixed(2)}；汇率 ${rate ?? '-'}；汇率日期 ${s.exchange_rate_date || '-'}；来源 ${s.exchange_rate_source || '-'}`;
-            totals.quantity += quantity;
-            totals.cost += totalCost;
-            if (costNeedsReview) totals.costReviewCount++;
-            if (!fxReady) totals.fxReady = false;
-            else {
-                totals.revenue += revenueCny;
-                totals.platformFee += platformFeeCny;
-                totals.grossProfit += grossProfitCny;
-            }
-            const costCells = costFields.map((field, index) => {
-                const value = s[field] == null ? null : Number(s[field]);
-                const known = value !== null && Number.isFinite(value);
-                totals.parts[index] = !known || totals.parts[index] === null ? null : totals.parts[index] + value;
-                const reason = index === 4 ? s.impairment_review_reason : s.cost_breakdown_review_reason;
-                return `<td class="${known ? '' : 'fx-missing'}" title="${escapeHtml(reason || '')}">${known ? `¥${value.toFixed(2)}` : pendingCost}</td>`;
-            }).join('');
-            const money = (value, pending = '汇率缺失') => value === null ? pending : `¥${value.toFixed(2)}`;
-            return `<tr>
-                <td class="${s.store_name ? '' : 'unlinked-store'}">${escapeHtml(s.store_name || '未关联店铺')}</td>
-                <td>${dateStr}</td>
-                <td><strong>${escapeHtml(s.display_sku || p.sku || '-')}</strong></td>
-                <td>${escapeHtml(s.display_name || p.name || '-')}</td>
-                <td>${quantity.toLocaleString('zh-CN')}</td>
-                <td class="${fxReady ? '' : 'fx-missing'}" title="${escapeHtml(fxTitle)}">${money(sellingPriceCny)}</td>
-                <td title="${escapeHtml(details)}">¥${fifoUnitCost.toFixed(2)}</td>
-                <td class="${fxReady ? '' : 'fx-missing'}">${money(revenueCny)}</td>
-                <td>¥${totalCost.toFixed(2)}</td>
-                <td class="${fxReady ? '' : 'fx-missing'}">${money(platformFeeCny)}</td>
-                <td class="${fxReady ? '' : 'fx-missing'}" title="${escapeHtml(s.cost_review_reason || '')}">${money(grossProfitCny, costNeedsReview ? window.PageInteractions.text('batchVoidProfitPending') : '汇率缺失')}</td>
-                ${costCells}
-            </tr>`;
-        }).join('');
-        const totalMoney = value => totals.fxReady ? `¥${value.toFixed(2)}` : totals.costReviewCount ? window.PageInteractions.text('batchVoidProfitPending') : '存在汇率缺失';
-        totalSummary.innerHTML = `<tr>
-            <td colspan="4">本页合计</td>
-            <td>${totals.quantity.toLocaleString('zh-CN')}</td>
-            <td></td><td></td>
-            <td>${totalMoney(totals.revenue)}</td>
-            <td>¥${totals.cost.toFixed(2)}</td>
-            <td>${totalMoney(totals.platformFee)}</td>
-            <td class="${totals.fxReady ? '' : 'fx-missing'}">${totalMoney(totals.grossProfit)}</td>
-            ${totals.parts.map(value => `<td>${value === null ? pendingCost : `¥${value.toFixed(2)}`}</td>`).join('')}
-        </tr>`;
-        renderPagination('sales-pagination', salesPage, Math.max(1, Math.ceil(salesTotal / salesPageSize)), salesTotal, salesPageSize);
+    try {
+        await window.SalesLedger.ready();
+        await loadProductOptions();
+        if (!window.SalesLedger.currentLoad(token)) return;
+        const productMap = {};
+        allProducts.forEach(p => productMap[p.id] = p);
+        const params = new URLSearchParams({page:salesPage, page_size:salesPageSize});
+        const summaryParams = new URLSearchParams();
+        if (salesMonth) {params.set('month',salesMonth); summaryParams.set('month',salesMonth);}
+        if (salesProductKeyword) {params.set('keyword',salesProductKeyword); summaryParams.set('keyword',salesProductKeyword);}
+        const [result, monthlySummary] = await Promise.all([
+            api('GET', `/sales?${params}`), api('GET', `/sales/monthly-summary?${summaryParams}`),
+        ]);
+        if (!window.SalesLedger.currentLoad(token)) return;
+        renderMonthlySalesSummary(monthlySummary);
+        salesPage=result.page; salesPageSize=result.page_size; salesTotal=result.total;
+        window.SalesLedger.render(result.items,productMap);
+        renderPagination('sales-pagination',salesPage,Math.max(1,Math.ceil(salesTotal/salesPageSize)),salesTotal,salesPageSize);
+    } catch (error) {window.SalesLedger.fail(error,token); return;}
+    try {
+        await loadPendingConfirmations();
+    } catch (error) {
+        if (!window.SalesLedger.currentLoad(token)) return;
+        const message = window.PageInteractions.text('salesPendingLoadFailed');
+        document.getElementById('pending-confirmations-summary').textContent = message;
+        document.getElementById('pending-confirmations-tbody').innerHTML = `<tr><td colspan="11" class="msg msg-err" role="alert">${escapeHtml(error.message || message)}</td></tr>`;
+        document.getElementById('pending-confirmations-pagination').replaceChildren();
     }
-    await loadPendingConfirmations();
 }
 
 function renderMonthlySalesSummary(summary) {
@@ -3207,6 +3168,7 @@ document.getElementById('inventory-impairment-date').value = new Date().toLocale
 initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
+<script src="/sales-ledger.js" defer></script>
 <script src="/inventory-workspace.js" defer></script>
 <script src="/inventory-assessment.js" defer></script>
 <script src="/inventory-allocations.js" defer></script>
