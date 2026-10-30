@@ -45,6 +45,10 @@
 
 返回[知识库索引](README.md)；开发与验证要求见[conventions.md](conventions.md)。
 
+## 问号说明浮层
+
+公共问号按钮的可访问名称复用[page-interactions.js](../../static/page-interactions.js)局部zh-CN字典的`helpTip`键，并结合既有字段/标题文本；缺语言仍回退中文。浮层直接显示原说明节点，保留商品类型、销售成本、库存和财务模块既有的翻译键及动态文案，不复制或改变业务解释。按钮有`aria-describedby`与展开状态，说明节点使用tooltip角色，支持键盘聚焦、Esc和触屏点击；校验/状态/待核对警示不收进浮层。没有新增语言、依赖、数据库或导出契约变更。接入和回退约定见[页面说明规范](conventions.md#页面说明与状态提示)。
+
 ## 财务工作台增量
 
 盘点逐批数量不一致的警示使用稳定码`inventory_assessment_quantity_mismatch`，在inventory-assessment.js与inventory_export.py集中映射中文，页面/导出空值均显示或说明待核对；没有新增语言或依赖。保存锁定复用现有加载和错误文案。

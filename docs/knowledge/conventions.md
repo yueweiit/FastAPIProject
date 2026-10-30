@@ -14,6 +14,18 @@
 
 未发现 pyproject.toml、格式化/静态检查配置、前端打包配置或 CI 文件；不要宣称已有 Ruff、Black、pytest 或 CI 门禁。依赖以 requirements.txt 为准，不擅自增加框架。
 
+## 页面说明与状态提示
+
+商品、入库批次、库存查看/盘点/归属、销售成本、报表及财务工作台的常驻说明采用问号浮层；公共实现在[page-interactions.js](../../static/page-interactions.js)的`HelpTips`，样式在两份首页。原说明节点标记`data-help-tip`，可通过`data-help-anchor`指定问号挂载的字段标签或标题；保留原ID、翻译绑定和文本更新方式，避免复制多份文案。未指定挂载位置时，问号紧邻原说明位置。
+
+库存“查看方式”的标签和问号在`#iw-layout-heading`中作为兄弟节点，`label[for="iw-layout"]`显式绑定下拉框；说明挂在该中性容器，不能把问号插入隐式label并抢走控件关联。回归检查两份页面的控件可访问名称、label.control、标签点击聚焦及独立问号交互。实现见[inventory-workspace.js](../../static/inventory-workspace.js)。
+
+鼠标悬停或键盘聚焦显示，点击可固定/再次收起，Esc及外部点击关闭；指针可移入浮层阅读。浮层使用原生Popover顶层能力，避免被滚动表格或模态窗口裁切，宽度和位置限制在视口内。不支持该能力时保留行内原文。动态重绘自动挂载并清理问号；说明为空时不显示问号，页面切换、弹窗关闭和退出关闭已打开浮层。
+
+错误、必填校验、保存/导出状态、数量差异及待核对等业务警示继续行内显示，不能因为字号小就隐藏。混合说明/状态节点用`HelpTips.setInline(node, true)`保留行内，恢复普通说明时传false；库存日结遇到真实异常也保留行内。当前月份、SKU、统计范围和计算结果属于业务数据，保持直接展示。来源节点不放交互控件，浮层仅承载说明文字。
+
+相关验证复用[inventory_workspace_browser_checks.cjs](../../tests/inventory_workspace_browser_checks.cjs)：两份页面检查悬停/聚焦/触屏尺寸、Esc不误关弹窗、内容更新/空文案/警示回退、顶层及折叠容器、退出清理和旧浏览器回退；其他页面脚本检查仍按原命令执行。不新增后端路由或接口，刷新即可加载现有静态脚本入口的更新。
+
 ## 修改前必须核实
 
 1. 检查 Git 状态，识别用户已有修改；从[索引](README.md)读相关模块的 overview、workflow、code-map，再按需读数据库/API。
