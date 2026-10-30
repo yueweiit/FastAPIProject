@@ -36,8 +36,16 @@ async def load_batch_store_allocations(db, batch_ids, *, lock=False):
     return dict(result)
 
 
-async def validate_stores(db, ids, *, existing=()):
+def require_store_selection(stores):
+    if not stores:
+        raise HTTPException(422, detail={"code": "batch_impairment_store_required",
+            "message": "请至少选择一家跌价归属店铺后再保存。"})
+
+
+async def validate_stores(db, ids, *, existing=(), required=True):
     ids = sorted(set(ids))
+    if required:
+        require_store_selection(ids)
     stores = (await db.execute(select(Store).where(Store.id.in_(ids)).order_by(Store.id).with_for_update(read=True)
         .execution_options(populate_existing=True))).scalars().all() if ids else []
     if len(stores) != len(ids) or any(not store.is_active and store.id not in existing for store in stores):
@@ -173,6 +181,15 @@ def allocated_provision_period(replay, batch, store_id, start, end, *, writeoff=
             values.append(share(batch.unit_cost * (opening + after))
                           - share(batch.unit_cost * (opening + before)))
     return None if None in values else sum(values, Decimal(0))
+
+
+def has_unassigned_provision(replay, batch, start, end):
+    """按实际金额判断待分配影响；已知零成本不污染损益，未知数量仍待核对。"""
+    return any(rule.is_explicit and not rule.stores and any(
+        units is None or batch.unit_cost * units != 0
+        for units in (replay.accrued_units(batch.id, left, right),
+                      replay.written_off_units(batch.id, left, right)))
+        for left, right, rule in rule_segments(batch, start, end))
 
 
 def allocated_provision_balance(replay, batch, store_id, day, units):

@@ -77,6 +77,7 @@ class BatchRestatementTests(unittest.IsolatedAsyncioTestCase):
         payload.update({key: costs[key] for key in ('shipping_cost', 'last_mile_cost', 'other_cost')})
         payload['total_amount'] = total
         payload['cost_edit_mode'] = 'restate'
+        payload['impairment_store_ids'] = [7]
         payload.update(changes)
         return await self.request('PUT', '/batches/1', payload)
 

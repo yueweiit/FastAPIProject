@@ -49,6 +49,7 @@ from services.oa_office_expenses import (
 from services.financial_facts import (
     manual_period_values, unlinked_settlement_events, valid_rate,
 )
+from services.batch_store_allocations import has_unassigned_provision
 from services.inventory_provision_data import load_inventory_provision_data
 from services.cost_layers import fifo_cost_groups, load_cost_layers, unit_adjustment
 from services.batch_store_allocations import (AssignedBatch, allocated_batch_amount, allocated_provision_period,
@@ -1566,6 +1567,9 @@ async def _sale_provision_adjustments(db, as_of: date) -> dict:
         rule = rule_at(batch, item.sale.sold_at.date())
         cost = batch.unit_cost
         owner = rule.stores[0]["id"] if rule.stores else None
+        if rule.is_explicit and not rule.stores and item.units != 0:
+            result[item.sale.detail_id] = (None, "跌价归属待分配，销售转销待核对")
+            continue
         if rule.is_explicit:
             # 显式归属的转销在产品线入口按归属店铺另行归集，不能全额抵到销售店铺。
             result[item.sale.detail_id] = (None, "历史流水异常，销售转销待核对") if item.units is None else (Decimal(0), "")
@@ -1577,27 +1581,37 @@ async def _sale_provision_adjustments(db, as_of: date) -> dict:
     return result
 
 
-async def _voided_inventory_holding_counts(db, store_id: int, periods: dict) -> dict[str, int]:
+async def _voided_inventory_holding_counts(db, store_id: int, periods: dict, *, unassigned_counts=None) -> dict[str, int]:
     """已作废来源不能作为0费用；按保存数量及流水圈定需复核的持有期间。"""
     cutoff = datetime.combine(max(end for _start, end in periods.values()), time.min)
+    pending_rule = select(BatchImpairmentRule.id).where(
+        BatchImpairmentRule.batch_id == InventoryBatch.id, BatchImpairmentRule.is_explicit.is_(True),
+        ~select(BatchImpairmentRuleStore.rule_id).where(
+            BatchImpairmentRuleStore.rule_id == BatchImpairmentRule.id).exists()).exists()
     rows = (await db.execute(
         select(InventoryBatch.id, InventoryBatch.arrived_at, InventoryBatch.voided_at,
                InventoryBatch.quantity, func.coalesce(func.sum(SaleCostDetail.quantity), 0),
-               func.max(Sale.sold_at), User.store_id)
+               func.max(Sale.sold_at), User.store_id, InventoryBatch.unit_cost)
         .outerjoin(User, User.id == InventoryBatch.user_id)
         .outerjoin(SaleCostDetail, SaleCostDetail.batch_id == InventoryBatch.id)
         .outerjoin(Sale, Sale.id == SaleCostDetail.sale_id)
         .where(InventoryBatch.voided_at.is_not(None), InventoryBatch.arrived_at < cutoff,
-               _impairment_store_scope(store_id))
+               or_(_impairment_store_scope(store_id), pending_rule))
         .group_by(InventoryBatch.id, InventoryBatch.arrived_at, InventoryBatch.voided_at,
-                  InventoryBatch.quantity, User.store_id)
+                  InventoryBatch.quantity, User.store_id, InventoryBatch.unit_cost)
     )).all()
     ids = [row[0] for row in rows]
     assignments = await load_batch_store_allocations(db, ids)
     history = await load_rules(db, ids)
+    pending_ids = {batch_id for batch_id, rules in history.items()
+                   if any(rule.is_explicit and not rule.stores for rule in rules)}
+    cost_layers = await load_cost_layers(db, pending_ids) if pending_ids else {}
     counts = {period: 0 for period in periods}
+    if unassigned_counts is not None:
+        unassigned_counts.clear()
+        unassigned_counts.update(counts)
     business_timezone = ZoneInfo("Asia/Shanghai")
-    for batch_id, arrived_at, voided_at, quantity, sold_quantity, last_sold_at, owner in rows:
+    for batch_id, arrived_at, voided_at, quantity, sold_quantity, last_sold_at, owner, unit_cost in rows:
         # 入库当天0天；作废日沿用现有月度核算时区，不能直接截UTC日期。
         held_start = arrived_at.date() + timedelta(days=1)
         held_end = voided_at.replace(tzinfo=timezone.utc).astimezone(
@@ -1610,9 +1624,16 @@ async def _voided_inventory_holding_counts(db, store_id: int, periods: dict) -> 
                               [{"id": owner, "name": ""}] if owner is not None else [])
         for period, (start, end) in periods.items():
             left, right = max(start, held_start), min(end, held_end)
-            if left < right and any(store_id in {s["id"] for s in rule.stores}
-                                    for _a, _b, rule in rule_segments(batch, left, right)):
+            if left >= right:
+                continue
+            rules = [rule for _a, _b, rule in rule_segments(batch, left, right)]
+            cost = unit_cost + unit_adjustment(cost_layers.get(batch_id, []))
+            # 无法确定归属的非零金额可能影响任一店铺；不能退回创建人或匹配空店铺列表。
+            pending = cost != 0 and any(rule.is_explicit and not rule.stores for rule in rules)
+            if pending or any(store_id in {s["id"] for s in rule.stores} for rule in rules):
                 counts[period] += 1
+            if pending and unassigned_counts is not None:
+                unassigned_counts[period] += 1
     return counts
 
 
@@ -1631,7 +1652,8 @@ def _impairment_store_scope(store_id):
 async def _store_provision_financial_values(db, store_id: int, periods: dict) -> dict:
     as_of = max(end for _start, end in periods.values()) - timedelta(days=1)
     batch_rows, _sale_rows, replay = await _load_inventory_provision_data(db, as_of)
-    voided_holdings = await _voided_inventory_holding_counts(db, store_id, periods)
+    unassigned_voided = {}
+    voided_holdings = await _voided_inventory_holding_counts(db, store_id, periods, unassigned_counts=unassigned_voided)
     batch_info = {row[0].id: (row[0].unit_cost, row[6]) for row in batch_rows}
     assignment_map = {row[0].id: bool(row[0].impairment_stores or row[0].allocation_rules) for row in batch_rows}
     result = {"inventory_impairment": {}, "inventory_writeoff": {}, "_warnings": []}
@@ -1664,7 +1686,8 @@ async def _store_provision_financial_values(db, store_id: int, periods: dict) ->
         transfers.extend(allocated_provision_period(replay, batch, store_id, start, end, writeoff=True)
             for batch, *_ in batch_rows if batch.impairment_stores or batch.allocation_rules)
         transferred = _sum_known(transfers)
-        if ambiguous or transferred is None:
+        if ambiguous or transferred is None or unassigned_voided.get(period, 0) or any(has_unassigned_provision(replay, batch, start, end)
+                                                    for batch, *_ in batch_rows):
             accrued = transferred = None
         result["inventory_impairment"][period] = accrued
         result["inventory_writeoff"][period] = transferred
@@ -1724,6 +1747,9 @@ async def _load_inventory_impairment_report_rows(
                          for s in r.stores}
                 store = names[store_id]
             note += "；按生效日归集归属，准备转移不重复计入费用，旧月度版本保留"
+        if configured and not stores:
+            owner = None
+            note += "；跌价归属待分配，店铺分摊待核对"
         row = {
             "product_id": batch.product_id, "store_name": store or "未关联店铺", "store_id": owner,
             "sku": sku, "product_name": name, "product_type": kind, "safe_stock_quantity": safe,

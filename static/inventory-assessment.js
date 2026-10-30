@@ -10,7 +10,7 @@
         arrival:'入库日期', age:'入库天数', quantity:'剩余数量', unitCost:'单件成本', stores:'跌价归属 / 分摊',
         save:'保存盘点', cancel:'取消', close:'关闭', note:'备注', uncounted:'未盘点', counted:'已盘点', stale:'账面已变化，需复核',
         saved:'盘点已保存；库存和跌价未调整。', loading:'正在读取…', failed:'操作失败：', empty:'没有符合条件的商品。',
-        pending:'待核对', unknownStore:'待分配', previous:'上一页', next:'下一页', total:'本页合计',
+        pending:'待核对', unknownStore:'待分配', allocations:'跌价归属', previous:'上一页', next:'下一页', total:'本页合计',
         page:'共{total}个商品 · 第{page}页', revision:'版本', savedAt:'保存时间（UTC）', actor:'操作人ID',
         help:'表格可左右滚动，录入和记录入口固定在右侧。差异 = 实盘数量 − 盘点时账面数。0是有效实盘，空白表示未盘点；保存仅记录对照，不调整库存、FIFO、成本或跌价。后续补单、更正或撤销会提示账面已变化，旧差异保留。日期按自然日日末核对。',
         restricted:'当前账号仅可查看/盘点今日共享库存；出库及店铺跌价分摊仅含绑定店铺。历史全量盘点由管理员处理。',
@@ -38,6 +38,7 @@
     let serial=0, historySerial=0, busy=false, state=null, editor=null, submission=null, historyProduct=0, historyPage=1;
     const controllers=new Set();
     function reset() {
+        window.InventoryAllocations?.reset();
         serial++;historySerial++;controllers.forEach(c=>c.abort());controllers.clear();busy=false;state=null;editor=null;submission=null;
         if(root()){root().querySelectorAll('dialog').forEach(d=>{if(d.open)d.close();});root().replaceChildren();root().hidden=true;}
     }
@@ -88,6 +89,11 @@
             }
             if(button.dataset.iaBatch){node('batch-title').textContent=`${t('batchDetails')} · ${state.data.items.find(row=>row.product_id===Number(button.dataset.iaBatch)).sku} · ${state.asOf}`;node('batch-body').innerHTML=node(`batches-${button.dataset.iaBatch}`).innerHTML;node('batches').showModal();return;}
             if(button.dataset.iaEdit){openEditor(Number(button.dataset.iaEdit));return;}
+            if(button.dataset.iaAllocation){
+                const row=state.data.items.find(item=>item.product_id===Number(button.dataset.iaAllocation));
+                if(row)window.InventoryAllocations?.open(row.product_id,`${row.sku} · ${row.name}`,()=>load());
+                return;
+            }
             if(button.dataset.iaHistory){historyProduct=Number(button.dataset.iaHistory);historyPage=1;node('history').showModal();history();return;}
             const action=button.dataset.iaAction;
             if(action==='overview'||action==='daily'){reset();window.InventoryWorkspace.show(action);}
@@ -106,7 +112,7 @@
             const count=row.count||{};
             const batches=row.batches.map(batch=>`<tr><td>${h(batch.batch_no)}</td><td>${h(batch.arrived_at)}</td><td>${h(n(batch.age_days))}</td><td>${h(n(batch.quantity))}</td><td>${h(money(batch.unit_cost))}</td><td title="${h(batch.note)}">${h(money(batch.impairment_amount))}</td><td>${h(batch.store_names.join(' / ')||t('unknownStore'))}${batch.store_allocations.map(owner=>`<div>${h(owner.store_name)}: ${h(money(owner.impairment_amount))}</div>`).join('')}</td></tr>`).join('');
             const warnings=(row.warnings||[]).map(code=>t(code)!==code?t(code):window.InventoryWorkspace.text(code)).join('；');
-            return `<tr><td><strong>${h(row.sku)}</strong><div>${h(row.name)}</div>${warnings?`<span class="tag tag-orange" title="${h(warnings)}">${h(t('pending'))}</span>`:''}<button type="button" class="btn btn-secondary" data-ia-batch="${row.product_id}">${h(t('batches'))}</button><template id="ia-batches-${row.product_id}"><table><thead><tr>${['batch','arrival','age','quantity','unitCost','impairment','stores'].map(key=>`<th>${h(t(key))}</th>`).join('')}</tr></thead><tbody>${batches}</tbody></table></template></td>${['month_inbound','month_outbound','system_quantity'].map(k=>`<td>${h(n(row[k]))}</td>`).join('')}${['average_unit_cost','inventory_amount','impairment_amount','monthly_total_impairment_amount','book_value'].map(k=>`<td>${h(money(row[k]))}</td>`).join('')}<td>${h(n(count.system_quantity))}</td><td>${h(n(count.actual_quantity))}</td><td>${h(n(count.difference))}</td><td>${h(t(row.count_basis_changed?'stale':row.count?'counted':'uncounted'))}</td><td>${state.data.can_write&&row.system_quantity!=null?`<button class="btn btn-secondary" data-ia-edit="${row.product_id}">${h(t('enter'))}</button>`:''}<button class="btn btn-secondary" data-ia-history="${row.product_id}">${h(t('history'))}</button></td></tr>`;
+            return `<tr><td><strong>${h(row.sku)}</strong><div>${h(row.name)}</div>${warnings?`<span class="tag tag-orange" title="${h(warnings)}">${h(t('pending'))}</span>`:''}<button type="button" class="btn btn-secondary" data-ia-batch="${row.product_id}">${h(t('batches'))}</button><template id="ia-batches-${row.product_id}"><table><thead><tr>${['batch','arrival','age','quantity','unitCost','impairment','stores'].map(key=>`<th>${h(t(key))}</th>`).join('')}</tr></thead><tbody>${batches}</tbody></table></template></td>${['month_inbound','month_outbound','system_quantity'].map(k=>`<td>${h(n(row[k]))}</td>`).join('')}${['average_unit_cost','inventory_amount','impairment_amount','monthly_total_impairment_amount','book_value'].map(k=>`<td>${h(money(row[k]))}</td>`).join('')}<td>${h(n(count.system_quantity))}</td><td>${h(n(count.actual_quantity))}</td><td>${h(n(count.difference))}</td><td>${h(t(row.count_basis_changed?'stale':row.count?'counted':'uncounted'))}</td><td>${state.data.can_write&&row.system_quantity!=null?`<button class="btn btn-secondary" data-ia-edit="${row.product_id}">${h(t('enter'))}</button>`:''}<button class="btn btn-secondary" data-ia-history="${row.product_id}">${h(t('history'))}</button><button class="btn btn-secondary" data-ia-allocation="${row.product_id}">${h(t('allocations'))}</button></td></tr>`;
         }).join(''):`<tr><td colspan="14">${h(t('empty'))}</td></tr>`;
         const sums=['month_inbound','month_outbound','system_quantity','average_unit_cost','inventory_amount','impairment_amount','monthly_total_impairment_amount','book_value'];
         node('total').innerHTML=`<tr><td>${h(t('total'))}</td>${sums.map((key,i)=>{

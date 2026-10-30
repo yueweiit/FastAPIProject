@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import Base, get_db
-from models import InventoryBatch, Product, User, BatchChangeLog, InventoryCostAdjustment, InventoryCostAdjustmentLine
+from models import (InventoryBatch, Product, User, BatchChangeLog, InventoryCostAdjustment,
+                    InventoryCostAdjustmentLine, Store, BatchImpairmentStore)
 from routers import batches
 
 
@@ -40,6 +41,8 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
         self.session = Session(self.engine, expire_on_commit=False)
+        self.session.add(Store(id=7, platform_store_id='batch-test-store', name='批次测试店铺',
+                               country_or_region='CN', settlement_currency='CNY'))
         self.session.add_all([User(id=7, username='batch-editor', role='operator', password_hash='test'),
                               Product(id=42, sku='HISTORY', name='历史批次测试')])
         self.session.flush()
@@ -70,9 +73,13 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
 
     async def save(self, **changes):
         payload = {'product_id': 42, 'quantity': 13, 'total_amount': '34.0054',
+                   'impairment_store_ids': [7],
                    'shipping_cost': '161.8555', 'last_mile_cost': '0', 'other_cost': '0',
                    'arrived_at': '2026-08-30T00:15:37', 'shipping_date': '2026-08-29T23:59:41',
                    'edit_version': getattr(self.session.get(InventoryBatch, 12), 'edit_version', None)}
+        if 'edit_version' not in changes:
+            opened = (await self.request('GET', '/batches')).json()[0]
+            payload['edit_version'] = opened['edit_version']
         payload.update(changes)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
             return await client.put('/batches/12', json=payload)
@@ -182,7 +189,7 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(older['page'], 2)
         self.assertEqual(older['items'][0]['actor_username'], 'batch-editor')
         response = await self.request('POST', '/batches/12/void', json={
-            'edit_version': self.session.get(InventoryBatch, 12).edit_version,
+            'edit_version': (await self.request('GET', '/batches')).json()[0]['edit_version'],
             'reason': '重复入库',
         })
         self.assertEqual(response.status_code, 200, response.text)
@@ -345,6 +352,8 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.session.scalars(select(BatchChangeLog)).all()), 1)
 
     async def test_unchanged_save_refreshes_with_current_read_for_audit_snapshot(self):
+        self.session.add(BatchImpairmentStore(batch_id=12, store_id=7))
+        self.session.commit()
         session = self.session
         refresh_options = []
 
@@ -366,7 +375,8 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_create_still_accepts_legacy_payload_without_edit_version(self):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
-            response = await client.post('/batches', json={'product_id': 42, 'quantity': 2, 'purchase_price': '3'})
+            response = await client.post('/batches', json={'product_id': 42, 'quantity': 2,
+                'purchase_price': '3', 'impairment_store_ids': [7]})
         self.assertEqual(response.status_code, 200, response.text)
         self.assertRegex(response.json()['edit_version'], r'^[a-f0-9]{64}$')
 

@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import event, select
 from openpyxl import load_workbook
@@ -16,7 +16,7 @@ from routers.reports import (_load_inventory_impairment_report_rows, _month_peri
                              _product_line_profit_data, _store_provision_financial_values,
                              _build_inventory_impairment_workbook, _workbook_bytes_with_formula_cache)
 from services.batch_store_allocations import (AssignedBatch, allocated_amount, allocated_batch_amount, allocated_provision_period,
-                                             allocated_provision_balance)
+                                             allocated_provision_balance, has_unassigned_provision)
 from services.inventory_provision_movements import ProvisionAccrual, ProvisionReplay, ProvisionSale, ProvisionWriteoff
 from services.inventory_impairment import InventoryLayer
 from services.inventory_provision_movements import replay_inventory_provisions
@@ -66,6 +66,144 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["impairment_store_names"], ["Store7", "Store8"])
         self.assertEqual((row["quantity"], row["remaining_quantity"]), (100, 100))
 
+    async def test_new_batch_can_wait_for_assignment_without_using_creator_store(self):
+        original_batches = self.session.query(InventoryBatch).count()
+        for number, selection in enumerate((None, []), 1):
+            payload = {"product_id": 1, "quantity": 100, "total_amount": "1000", "arrived_at": "2026-09-01T00:00:00"}
+            if selection is not None:
+                payload["impairment_store_ids"] = selection
+            response = await self.client.post("/batches", json=payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            row = response.json()
+            self.assertEqual(row["impairment_store_ids"], [])
+            self.assertEqual(row["impairment_store_history"], [{"effective_date":"2026-09-01", "store_ids":[],"store_names":[],"is_explicit":True}])
+            self.assertEqual(self.session.query(InventoryBatch).count(), original_batches + number)
+        rows = await _load_inventory_impairment_report_rows(InventoryReadSession(self.session), date(2026,9,2))
+        pending = [row for row in rows if row["store_id"] is None]
+        self.assertEqual(len(pending), 2)
+        self.assertTrue(all(row["impairment_amount"] == Decimal(10) for row in pending))
+        self.assertTrue(all("待分配" in row["comparison_note"] for row in pending))
+        periods = {"current": (date(2026,9,1),date(2026,9,3))}
+        for owner in (7,8):
+            values = await _store_provision_financial_values(InventoryReadSession(self.session),owner,periods)
+            self.assertIsNone(values["inventory_impairment"]["current"])
+            self.assertTrue(values["_warnings"])
+
+    async def test_voided_unassigned_batch_keeps_historical_unknown_for_unrelated_stores(self):
+        from routers.reports import _voided_inventory_holding_counts
+        response=await self.client.post('/batches',json={'product_id':1,'quantity':100,'total_amount':'1000','arrived_at':'2026-09-01T00:00:00'})
+        self.assertEqual(response.status_code,200,response.text)
+        row=response.json()
+        periods={'current':(date(2026,9,1),date(2026,9,3)),
+                 'previous':(date(2026,8,1),date(2026,9,1)),
+                 'ytd':(date(2026,1,1),date(2026,9,3))}
+        for owner in (7,8,9):
+            self.session.info.clear()
+            values=await _store_provision_financial_values(InventoryReadSession(self.session),owner,periods)
+            self.assertIsNone(values['inventory_impairment']['current'])
+            self.assertIsNone(values['inventory_writeoff']['current'])
+        voided=await self.client.post(f"/batches/{row['id']}/void",json={'edit_version':row['edit_version'],'reason':'regression'})
+        self.assertEqual(voided.status_code,200,voided.text)
+        self.session.get(InventoryBatch,row['id']).voided_at=datetime(2026,10,14,16) # 上海10/15
+        self.session.commit()
+        for owner in (7,8,9):
+            self.session.info.clear()
+            values=await _store_provision_financial_values(InventoryReadSession(self.session),owner,periods)
+            self.assertIsNone(values['inventory_impairment']['current'])
+            self.assertIsNone(values['inventory_writeoff']['current'])
+            self.assertIsNone(values['inventory_impairment']['ytd'])
+            self.assertEqual(values['inventory_impairment']['previous'],0)
+            self.assertTrue(any('已作废批次' in value for value in values['_warnings']))
+            counts=await _voided_inventory_holding_counts(InventoryReadSession(self.session),owner,
+                {'before':(date(2026,8,1),date(2026,9,2)),
+                 'held':(date(2026,9,2),date(2026,9,3)),
+                 'after':(date(2026,10,16),date(2026,11,1))})
+            self.assertEqual(counts,{'before':0,'held':1,'after':0})
+
+    async def test_zero_cost_pending_batch_keeps_known_zero_before_and_after_void(self):
+        response=await self.client.post('/batches',json={'product_id':1,'quantity':100,'total_amount':'0','arrived_at':'2026-09-01T00:00:00'})
+        self.assertEqual(response.status_code,200,response.text)
+        row=response.json()
+        periods={'current':(date(2026,9,1),date(2026,9,3))}
+        for after_void in (False,True):
+            if after_void:
+                voided=await self.client.post(f"/batches/{row['id']}/void",json={'edit_version':row['edit_version'],'reason':'zero cost'})
+                self.assertEqual(voided.status_code,200,voided.text)
+            self.session.info.clear()
+            values=await _store_provision_financial_values(InventoryReadSession(self.session),8,periods)
+            self.assertEqual(values['inventory_impairment']['current'],0)
+            self.assertEqual(values['inventory_writeoff']['current'],0)
+            self.assertEqual(values['_warnings'],[])
+
+    async def test_pending_provision_checks_amount_without_masking_unknown_units(self):
+        from services.batch_impairment_history import StoreRule
+        for cost,accrued,written,expected in [('10',0,0,False),('0',1,0,False),('0',0,1,False),
+                ('0.0001',1,0,True),('0',None,0,True),('10',0,None,True)]:
+            with self.subTest(cost=cost,accrued=accrued,written=written):
+                batch=AssignedBatch(SimpleNamespace(id=999,unit_cost=Decimal(cost)),[],[StoreRule(date.min,[],True)])
+                replay=SimpleNamespace(accrued_units=lambda *args:accrued,written_off_units=lambda *args:written)
+                self.assertEqual(has_unassigned_provision(replay,batch,date(2026,9,1),date(2026,10,1)),expected)
+
+    async def test_batch_edit_can_keep_unassigned_without_forcing_assignment(self):
+        response = await self.save(omit=True)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()["impairment_store_ids"],[])
+        self.assertEqual((await self.save([])).status_code,422)
+        self.assertEqual((await self.save([7])).status_code,200)
+
+    async def test_inventory_assignment_endpoint_only_changes_ownership_and_checks_version(self):
+        before = await self.batch()
+        data = {"impairment_store_ids":[8,7,8],"edit_version":before["edit_version"],"impairment_change_mode":"from_arrival"}
+        response = await self.client.put("/batches/1/impairment-stores",json=data)
+        self.assertEqual(response.status_code,200,response.text)
+        after=response.json()
+        self.assertEqual(after["impairment_store_ids"],[7,8])
+        for field in ("quantity","remaining_quantity","purchase_price","unit_cost","total_amount","shipping_cost","last_mile_cost","other_cost","arrived_at","shipping_date"):
+            self.assertEqual(after[field],before[field],field)
+        self.assertEqual((await self.client.put("/batches/1/impairment-stores",json=data)).status_code,409)
+        log=self.session.scalar(select(BatchChangeLog).order_by(BatchChangeLog.id.desc()))
+        self.assertEqual(log.after_values["impairment_store_ids"],[7,8])
+        current={**data,"edit_version":after["edit_version"]}
+        self.assertEqual((await self.client.put("/batches/1/impairment-stores",json={**current,"quantity":999})).status_code,422)
+        self.assertEqual((await self.client.put("/batches/1/impairment-stores",json={**current,"impairment_store_ids":[]})).status_code,422)
+        self.assertEqual((await self.client.put("/batches/1/impairment-stores",json={**current,"impairment_store_ids":[999]})).status_code,422)
+        self.actor.role='viewer'
+        self.assertEqual((await self.client.put("/batches/1/impairment-stores",json=current)).status_code,403)
+
+    async def test_inventory_assignment_allows_operator_and_rolls_back_failed_store_write(self):
+        before = await self.batch()
+        payload={"impairment_store_ids":[7,8],"edit_version":before["edit_version"],"impairment_change_mode":"from_arrival"}
+        with patch("routers.batches.replace_stores", new=AsyncMock(side_effect=RuntimeError('write failed'))):
+            with self.assertRaises(RuntimeError):
+                await self.client.put('/batches/1/impairment-stores',json=payload)
+        self.assertEqual((await self.batch())["edit_version"],before["edit_version"])
+        self.assertEqual(self.session.query(BatchImpairmentRule).count(),0)
+        self.assertEqual(self.session.query(BatchChangeLog).count(),0)
+        self.actor.id,self.actor.username,self.actor.role,self.actor.store_id=8,'U8','operator',8
+        response=await self.client.put('/batches/1/impairment-stores',json=payload)
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()["impairment_store_ids"],[7,8])
+        self.assertEqual(response.json()["remaining_quantity"],before["remaining_quantity"])
+
+    async def test_required_stores_cannot_be_cleared_and_omission_preserves_history(self):
+        await self.save([7])
+        with patch("services.batch_impairment_history.business_today", return_value=date(2026, 9, 15)):
+            changed = await self.save([8], mode="from_change_date")
+        self.assertEqual(changed.status_code, 200, changed.text)
+        before = await self.batch()
+        log_count = self.session.query(BatchChangeLog).count()
+        for mode in ("from_arrival", "from_change_date"):
+            with self.subTest(mode=mode):
+                response = await self.save([], mode=mode)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual(response.json()["detail"]["code"], "batch_impairment_store_required")
+                self.assertEqual(await self.batch(), before)
+                self.assertEqual(self.session.query(BatchChangeLog).count(), log_count)
+        kept = await self.save(omit=True)
+        self.assertEqual(kept.status_code, 200, kept.text)
+        self.assertEqual(kept.json()["impairment_store_ids"], [8])
+        self.assertEqual(kept.json()["impairment_store_history"], before["impairment_store_history"])
+
     async def test_edit_preserves_cost_stock_and_logs_assignments_with_stale_guard(self):
         old = await self.batch()
         response = await self.save([7, 8])
@@ -79,7 +217,8 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(log.before_values["impairment_store_ids"], [])
         self.assertEqual(log.after_values["impairment_store_ids"], [7, 8])
         self.assertEqual((await self.save(omit=True)).json()["impairment_store_ids"], [7, 8])
-        self.assertEqual((await self.save([])).json()["impairment_store_ids"], [])
+        self.assertEqual((await self.save([])).status_code, 422)
+        self.assertEqual((await self.batch())["impairment_store_ids"], [7, 8])
 
     async def test_invalid_inactive_and_readonly_accounts_cannot_change_assignments(self):
         for ids in ([999], [9], [0], [-1]):

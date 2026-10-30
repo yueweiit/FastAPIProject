@@ -43,7 +43,7 @@ function daily(url, role) {
 async function main() {
     const files = {'/': 'templates/index.html', '/copy': 'index.html',
         '/page-interactions.js': 'static/page-interactions.js', '/financial-control.js': 'static/financial-control.js',
-        '/inventory-workspace.js': 'static/inventory-workspace.js'};
+        '/inventory-workspace.js': 'static/inventory-workspace.js', '/inventory-assessment.js': 'static/inventory-assessment.js', '/inventory-allocations.js': 'static/inventory-allocations.js'};
     const server = http.createServer((req, res) => {
         const file = files[new URL(req.url, 'http://unit.invalid').pathname];
         if (!file) {res.writeHead(404); res.end(); return;}
@@ -61,6 +61,11 @@ async function main() {
         const productCalls = [];
         const exportCalls = [];
         const assignmentCalls = [];
+        const allocationCalls=[];let allocationGate=null,allocationStatus=200,allocationStoresStatus=200;let allocationTotal=1,allocationTotalAfterSave=null;
+        const salesExportCalls = [];
+        let salesExportStatus = 200;
+        let salesRows = [];
+        let countGate=null,countStatus=200,countNetworkError=false,countRecords=[],countCalls=[];
         const assignmentStores = [{id: 7, name: '店铺A', is_active: true}, {id: 8, name: '<店铺B>', is_active: true}];
         const batchFixture = {id: 1, product_id: 1, batch_no: 'IN-TEST-1', user_id: 10, quantity: 100, remaining_quantity: 70,
             purchase_price: '10.0000', total_amount: '1000.0000', unit_cost: '10.0000', shipping_cost: '0.0000', last_mile_cost: '0.0000',
@@ -86,13 +91,61 @@ async function main() {
             }
             if (url.pathname === '/products/options') return fulfill(products);
             if (url.pathname === '/finance-masters/platform-sku-mappings') return fulfill([]);
+            if(url.pathname==='/finance-masters/stores'&&allocationStoresStatus!==200)return route.fulfill({status:allocationStoresStatus,contentType:'application/json',body:JSON.stringify({detail:'store load failed'})});
             if (url.pathname === '/finance-masters/stores') return fulfill(assignmentStores);
+            if (url.pathname === '/inventory/assessment/export') return route.fulfill({status:200,
+                contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',body:Buffer.from('PK\x03\x04fixture')});
+            if (url.pathname === '/inventory/assessment') return fulfill({items:products.map(p=>({
+                product_id:p.id,sku:p.sku,name:p.name,as_of:url.searchParams.get('as_of'),system_quantity:p.stock_quantity,
+                month_inbound:100,month_outbound:20,average_unit_cost:p.id===4?null:10,inventory_amount:p.id===4?null:p.stock_quantity*10,
+                impairment_amount:p.id===4?null:10,monthly_total_impairment_amount:p.id===4?null:12,book_value:p.id===4?null:p.stock_quantity*10-10,
+                ledger_version:'a'.repeat(64),warnings:p.id===4?['inventory_assessment_quantity_mismatch']:[],count:countRecords.filter(r=>r.product_id===p.id).at(-1)||null,count_basis_changed:false,
+                batches:[{batch_no:'<BATCH>',arrived_at:'2026-09-01',age_days:29,quantity:p.id===4?null:p.stock_quantity,unit_cost:10,
+                    impairment_amount:p.id===4?null:10,store_names:['<店铺A>'],store_allocations:[{store_name:'<店铺A>',impairment_amount:p.id===4?null:10}],note:'<script>unsafe</script>'}]
+            })),total:4,page:1,page_size:20,can_write:role!=='viewer',scope:role==='admin'?'global':'shared_current'});
+            if (url.pathname === '/inventory/stock-counts') {
+                if(route.request().method()==='POST') {
+                    const payload=route.request().postDataJSON();countCalls.push(payload);
+                    if(countNetworkError)return route.abort('failed');
+                    const status=countStatus;
+                    if(countGate){const held=countGate;countGate=null;await held.promise;}
+                    if(status!==200)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({detail:{code:'inventory_count_conflict'}})});
+                    const result={...payload,id:countRecords.length+1,revision:countRecords.length+1,created_at:'2026-10-29T10:00:00',created_by:10,
+                        system_quantity:products.find(p=>p.id===payload.product_id).stock_quantity};result.difference=result.actual_quantity-result.system_quantity;
+                    countRecords.push(result);return fulfill(result);
+                }
+                const items=countRecords.filter(r=>r.product_id===Number(url.searchParams.get('product_id'))).reverse();
+                return fulfill({items,total:items.length,page:1,page_size:20});
+            }
+            if (url.pathname === '/sales/export') {
+                salesExportCalls.push(Object.fromEntries(url.searchParams));
+                if (salesExportStatus !== 200) return route.fulfill({status: salesExportStatus, contentType: 'application/json',
+                    body: JSON.stringify({detail: {code: 'sales_export_empty'}})});
+                return route.fulfill({status: 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    body: Buffer.from('PK\x03\x04sales-download-transport-fixture')});
+            }
+            if (url.pathname === '/sales/monthly-summary' || url.pathname === '/sales/imports') return fulfill([]);
+            if (url.pathname === '/sales') return fulfill({items: salesRows, total: salesRows.length, page: 1, page_size: 20});
+            if (url.pathname === '/sales/pending-confirmations') return fulfill({items: [], total: 0, page: 1, page_size: 20});
+            if (/^\/batches\/\d+\/impairment-stores$/.test(url.pathname)) {
+                const payload=route.request().postDataJSON();allocationCalls.push(payload);
+                const status=allocationStatus;
+                if(allocationGate){const held=allocationGate;allocationGate=null;await held.promise;}
+                if(status!==200)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({detail:{code:'batch_edit_conflict'}})});
+                Object.assign(batchFixture,payload,{edit_version:'b'.repeat(64),impairment_store_names:payload.impairment_store_ids.map(id=>assignmentStores.find(store=>store.id===id).name)});
+                if(allocationTotalAfterSave!==null){allocationTotal=allocationTotalAfterSave;allocationTotalAfterSave=null;}
+                return fulfill({...batchFixture,id:Number(url.pathname.split('/')[2])});
+            }
             if (url.pathname === '/batches' || url.pathname === '/batches/1') {
                 if (route.request().method() !== 'GET') {
                     const payload = route.request().postDataJSON(); assignmentCalls.push(payload);
-                    return fulfill({...batchFixture, ...payload, impairment_store_names: payload.impairment_store_ids.map(id => assignmentStores.find(store => store.id === id).name)});
+                    return fulfill({...batchFixture,...payload,impairment_store_ids:payload.impairment_store_ids||batchFixture.impairment_store_ids,impairment_store_names:(payload.impairment_store_ids||batchFixture.impairment_store_ids).map(id=>assignmentStores.find(store=>store.id===id).name)});
                 }
-                return fulfill({items: [batchFixture], total: 1, page: 1, page_size: 20});
+                const pageNumber=Math.min(Number(url.searchParams.get('page')||1),Math.max(1,Math.ceil(allocationTotal/20)));
+                const start=(pageNumber-1)*20;
+                const items=Array.from({length:Math.min(20,Math.max(0,allocationTotal-start))},(_,i)=>({
+                    ...batchFixture,id:start+i+1,batch_no:start+i===0?batchFixture.batch_no:`IN-TEST-${start+i+1}`}));
+                return fulfill({items,total:allocationTotal,page:pageNumber,page_size:20});
             }
             if (url.pathname === '/inventory/export') {
                 exportCalls.push(Object.fromEntries(url.searchParams));
@@ -497,49 +550,238 @@ async function main() {
         if (process.env.INVENTORY_QA_DIR) await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'inventory-product-search-mobile.png'), fullPage: true});
         await page.locator('#iw-product').press('Escape');
         if (process.env.INVENTORY_QA_DIR) await page.screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'inventory-mobile.png'), fullPage: true});
-        // 两份真实入库页面都支持多选归属，新建与编辑提交相同的稳定店铺ID。
-        await page.setViewportSize({width: 1440, height: 1000});
+        // 归属移入库存：入库/批次资料编辑不再选择；独立维护只提交归属和版本。
+        await page.setViewportSize({width:1440,height:1000});role='admin';
+        for (const suffix of ['/', '/copy']) {
+            Object.assign(batchFixture,{impairment_store_ids:[],impairment_store_names:[],edit_version:'a'.repeat(64),
+                impairment_store_history:[{effective_date:'2026-09-01',store_ids:[],store_names:[],is_explicit:true}]});
+            await page.goto(address+suffix);await page.waitForFunction(()=>CURRENT_USER_ID===10);
+            check(await page.locator('#p-product-type option').allTextContents(),['稳健商品','新品','不跌价商品']);
+            await page.getByRole('button',{name:'入库管理',exact:true}).click();
+            check(await page.locator('#b-impairment-stores').count(),0);
+            const beforeCreate=assignmentCalls.length;
+            await page.locator('#b-pid').selectOption('1');await page.locator('#b-qty').fill('100');await page.locator('#b-total-amount').fill('1000');
+            await page.getByRole('button',{name:'入库',exact:true}).click();
+            await page.waitForFunction(count=>document.getElementById('batches-tbody').textContent.includes('IN-TEST-1'),beforeCreate);
+            check(assignmentCalls.length,beforeCreate+1);check(assignmentCalls.at(-1).quantity,100);
+            check('impairment_store_ids' in assignmentCalls.at(-1),false);
+            await page.locator('#batches-tbody button').filter({hasText:'编辑'}).click();
+            check(await page.locator('#eb-impairment-stores').count(),0);
+            await page.locator('#eb-dingtalk-order').fill('OWNERSHIP-MOVED');await page.locator('#eb-save').click();
+            await page.waitForFunction(()=>document.getElementById('edit-batch-modal').style.display==='none');
+            check('impairment_store_ids' in assignmentCalls.at(-1),false);
+            await page.getByRole('button',{name:'库存',exact:true}).click();
+            allocationStoresStatus=503;await page.locator('[data-iw-allocation="1"]').click();
+            await page.locator('#ial-status').getByText('操作失败：',{exact:false}).waitFor();
+            check(await page.locator('[data-ial-edit]').count(),0);
+            allocationStoresStatus=200;await page.locator('[data-ial-action="refresh"]').click();
+            await page.locator('#ial-rows [data-ial-edit="1"]').waitFor();
+            check(await page.locator('#ial-rows').innerText().then(text=>text.includes('待分配')),true);
+            await page.locator('#ial-rows [data-ial-edit="1"]').click();
+            check(await page.locator('#ial-editor input[value="from_arrival"]').isChecked(),true);
+            const beforeAllocation=allocationCalls.length;
+            await page.getByRole('button',{name:'保存归属',exact:true}).click();
+            check(await page.locator('#ial-edit-status').innerText(),'请至少选择一家归属店铺。');check(allocationCalls.length,beforeAllocation);
+            await page.locator('#ial-editor input[value="7"]').check();await page.locator('#ial-editor input[value="8"]').check();
+            const held=wait();allocationGate=held;
+            await page.getByRole('button',{name:'保存归属',exact:true}).click();
+            await page.locator('#ial-edit-status').getByText('正在读取…',{exact:true}).waitFor();
+            check(await page.locator('#ial-editor input[value="7"]').isDisabled(),true);
+            check(await page.getByRole('button',{name:'保存归属',exact:true}).isDisabled(),true);
+            held.resolve();await page.locator('#ial-editor').waitFor({state:'hidden'});
+            check(allocationCalls.length,beforeAllocation+1);check(allocationCalls.at(-1).impairment_store_ids,[7,8]);
+            check(Object.keys(allocationCalls.at(-1)).sort(),['edit_version','impairment_change_mode','impairment_store_ids']);
+            check(allocationCalls.at(-1).impairment_change_mode,'from_arrival');
+            check(await page.locator('#ial-rows').innerText().then(text=>text.includes('<店铺B>')),true);
+            check(await page.locator('#ial-rows 店铺B').count(),0);
+            // 保存期间跨页增长和缩减：刷新结果必须决定分页，不能恢复旧disabled值。
+            allocationTotal=20;await page.locator('[data-ial-action="refresh"]').click();
+            await page.waitForFunction(()=>document.getElementById('ial-page').textContent.includes('共20批'));
+            check(await page.locator('#ial-next').isDisabled(),true);
+            await page.locator('[data-ial-edit="1"]').click();allocationTotalAfterSave=21;
+            await page.getByRole('button',{name:'保存归属',exact:true}).click();
+            await page.waitForFunction(()=>document.getElementById('ial-page').textContent.includes('共21批'));
+            check(await page.locator('#ial-next').isEnabled(),true);
+            await page.locator('#ial-next').click();await page.locator('[data-ial-edit="21"]').waitFor();
+            check(await page.locator('#ial-previous').isEnabled(),true);
+            await page.locator('[data-ial-edit="21"]').click();allocationTotalAfterSave=20;
+            await page.getByRole('button',{name:'保存归属',exact:true}).click();
+            await page.waitForFunction(()=>document.getElementById('ial-page').textContent.includes('共20批')&&document.getElementById('ial-page').textContent.includes('第1页'));
+            check(await page.locator('#ial-previous').isDisabled(),true);
+            check(await page.locator('#ial-next').isDisabled(),true);
+            check(await page.locator('#ial-rows tr').count(),20);
+            allocationTotal=1;await page.locator('[data-ial-action="refresh"]').click();
+            await page.waitForFunction(()=>document.getElementById('ial-page').textContent.includes('共1批'));
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'inventory-allocations-desktop.png'),fullPage:true});
+            await page.locator('#ial-rows [data-ial-edit="1"]').click();
+            check(await page.locator('#ial-editor input[value="from_change_date"]').isChecked(),true);
+            await page.locator('#ial-editor input[value="7"]').uncheck();allocationStatus=409;
+            await page.getByRole('button',{name:'保存归属',exact:true}).click();
+            await page.locator('#ial-edit-status').getByText('操作失败：',{exact:false}).waitFor();
+            check(await page.locator('#ial-editor input[value="8"]').isChecked(),true);
+            check(await page.getByRole('button',{name:'保存归属',exact:true}).isEnabled(),true);
+            allocationStatus=200;await page.getByRole('button',{name:'保存归属',exact:true}).click();await page.locator('#ial-editor').waitFor({state:'hidden'});
+            check(allocationCalls.at(-1).impairment_store_ids,[8]);check(allocationCalls.at(-1).impairment_change_mode,'from_change_date');
+            await page.locator('[data-ial-action="close"]').click();
+            await page.locator('[data-iw-action="assessment"]').click();await page.locator('[data-ia-allocation="1"]').click();
+            await page.locator('#ial-rows [data-ial-edit="1"]').waitFor();check(await page.locator('#ial-rows').innerText().then(text=>text.includes('<店铺B>')),true);
+            await page.locator('#ial-rows [data-ial-edit="1"]').click();
+            await page.locator('#ial-editor input[value="7"]').check();
+            const stale=wait();allocationGate=stale;allocationStatus=401;
+            await page.getByRole('button',{name:'保存归属',exact:true}).click();
+            await page.locator('#ial-edit-status').getByText('正在读取…',{exact:true}).waitFor();
+            await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
+            await page.getByRole('button',{name:'库存',exact:true}).click();await page.locator('[data-iw-allocation="1"]').click();
+            await page.locator('#ial-rows [data-ial-edit="1"]').waitFor();stale.resolve();allocationStatus=200;
+            check(await page.locator('#ial-dialog').isVisible(),true);
+            check(await page.locator('#login-box').isVisible(),false);
+            await page.locator('#ial-rows [data-ial-edit="1"]').click();
+            check(await page.getByRole('button',{name:'保存归属',exact:true}).isEnabled(),true);
+            await page.setViewportSize({width:390,height:844});
+            check(await page.locator('#ial-dialog').evaluate(node=>{const r=node.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth;}),true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'inventory-allocations-mobile.png'),fullPage:true});
+            await page.setViewportSize({width:1440,height:1000});
+            await page.locator('[data-ial-action="close"]').click();
+        }
+        role='viewer';await page.reload();await page.waitForFunction(()=>CURRENT_ROLE==='viewer');
+        await page.getByRole('button',{name:'库存',exact:true}).click();await page.locator('[data-iw-allocation="1"]').click();
+        await page.locator('#ial-rows tr').waitFor();check(await page.locator('[data-ial-edit]').count(),0);
+        check(await page.getByText('当前账号只读，管理员和运营可维护归属。',{exact:true}).isVisible(),true);
+        await page.locator('[data-ial-action="close"]').click();role='admin';await page.reload();await page.waitForFunction(()=>CURRENT_ROLE==='admin');
+        salesRows = [{id: 1, product_id: 1, order_no: 'ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
+            selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '60', platform_fee_cny: '5',
+            profit_cny: '35', total_cost: '20', order_total_cost_cny: '20', cost_status: 'unverified',
+            purchase_cost_cny: '8', head_shipping_cost_cny: '4', last_mile_cost_cny: '2', other_cost_cny: '6', impairment_cny: '0.9'},
+            {id: 2, product_id: 1, order_no: 'UNKNOWN-COST', quantity: 1, sold_at: '2026-09-11T00:00:00',
+             selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '30', platform_fee_cny: '0', profit_cny: '20', total_cost: '10',
+             cost_breakdown_review_reason: '<script>unsafe</script>', impairment_review_reason: '<img onerror="unsafe">'},
+            {id: -3, record_type: 'settlement_adjustment', quantity: 0, sold_at: '2026-09-12T00:00:00',
+             selling_price_cny: '-3', sales_revenue_cny: '-3', platform_fee_cny: '0', profit_cny: '-3', total_cost: '0',
+             order_total_cost_cny: '0', purchase_cost_cny: '0', head_shipping_cost_cny: '0', last_mile_cost_cny: '0',
+             other_cost_cny: '0', impairment_cny: '0'}];
         for (const suffix of ['/', '/copy']) {
             await page.goto(address + suffix);
             await page.waitForFunction(() => CURRENT_USER_ID === 10);
-            check(await page.locator('[data-provision-text="provisionTransferIn"]').first().textContent(), '本月准备转入(元)');
-            check(await page.locator('[data-provision-text="provisionEquation"]').textContent().then(value => value.includes('准备转入 − 准备转出')), true);
-            await page.getByRole('button', {name: '入库管理', exact: true}).click();
-            await page.locator('#b-impairment-stores input[value="7"]').waitFor();
-            await page.locator('#b-impairment-stores input[value="7"]').check();
-            await page.locator('#b-impairment-stores input[value="8"]').check();
-            check(await page.locator('#b-impairment-stores small').innerText().then(text => text.includes('2家')), true);
-            if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.locator('#b-impairment-stores').screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'batch-impairment-stores-create.png')});
-            check(await page.locator('#b-impairment-stores 店铺B').count(), 0);
-            await page.locator('#b-pid').selectOption('1');
-            await page.locator('#b-qty').fill('100');
-            await page.locator('#b-total-amount').fill('1000');
-            await page.getByRole('button', {name: '入库', exact: true}).click();
-            await page.waitForFunction(() => document.getElementById('batches-tbody').textContent.includes('店铺A'));
-            check(assignmentCalls.at(-1).impairment_store_ids, [7, 8]);
-            check(assignmentCalls.at(-1).quantity, 100);
-            await page.locator('#batches-tbody button').filter({hasText: '编辑'}).click();
-            check(await page.locator('#eb-impairment-stores input[value="8"]').isChecked(), true);
-            check(await page.locator('#eb-impairment-stores input[value="from_change_date"]').isChecked(), true);
-            check(await page.locator('[data-allocation-mode-help]').innerText().then(value => value.includes('不重复计入费用')), true);
-            if (process.env.INVENTORY_QA_DIR && suffix === '/') await page.locator('#eb-impairment-stores').screenshot({path: path.join(process.env.INVENTORY_QA_DIR, 'batch-impairment-stores-edit.png')});
-            await page.locator('#eb-impairment-stores input[value="8"]').uncheck();
-            await page.locator('#eb-save').click();
-            await page.waitForFunction(() => document.getElementById('edit-batch-modal').style.display === 'none');
-            check(assignmentCalls.at(-1).impairment_store_ids, [7]);
-            check(assignmentCalls.at(-1).quantity, 100);
-            check(assignmentCalls.at(-1).impairment_change_mode, 'from_change_date');
-            await page.locator('#batches-tbody button').filter({hasText: '编辑'}).click();
-            await page.locator('#eb-impairment-stores input[value="from_arrival"]').check();
-            check(await page.locator('[data-allocation-mode-help]').innerText().then(value => value.includes('替换已有归属历史')), true);
-            await page.locator('#eb-save').click();
-            await page.waitForFunction(() => document.getElementById('edit-batch-modal').style.display === 'none');
-            check(assignmentCalls.at(-1).impairment_change_mode, 'from_arrival');
-            check(assignmentCalls.at(-1).impairment_store_ids, [7, 8]); // 单选模式值不能混入店铺ID。
-            await page.evaluate(() => {delete currentBatchList[0].impairment_store_history; openEditBatch(1);});
-            check(await page.locator('#eb-impairment-stores input[value="from_change_date"]').isDisabled(), true);
-            check(await page.locator('#eb-impairment-stores input[value="from_arrival"]').isChecked(), true);
-            await page.evaluate(() => closeEditBatch());
+            await page.getByRole('button', {name: '销售记录', exact: true}).click();
+            await page.waitForFunction(() => document.querySelectorAll('#sales-tbody tr').length === 3);
+            check(await page.locator('.sales-ledger-table thead th').count(), 16);
+            check(await page.locator('#sales-tbody tr').first().locator('td').count(), 16);
+            check(await page.locator('#sales-tbody tr').first().locator('td').allTextContents().then(v => v.slice(11)),
+                ['¥8.00', '¥4.00', '¥2.00', '¥6.00', '¥0.90']);
+            check(await page.locator('#sales-tbody tr').first().locator('td').nth(8).innerText(), '¥20.00');
+            check(await page.locator('#sales-tbody tr').first().locator('td').nth(10).innerText(), '¥35.00');
+            check(await page.locator('#sales-tbody tr').nth(1).locator('td').allTextContents().then(v => v.slice(11)),
+                Array(5).fill('待核对'));
+            check(await page.locator('#sales-total-summary-body td').allTextContents().then(v => v.slice(-5)), Array(5).fill('待核对'));
+            check(await page.locator('#sales-tbody script, #sales-tbody img').count(), 0);
+            check(await page.locator('.sales-cost-help').innerText().then(v => v.includes('不代表销售店铺承担额')), true);
+            check(await page.locator('[data-sales-cost-text="salesCostTotal"]').innerText(), '订单总成本（元，本行）');
+            check(await page.locator('.sales-ledger-scroll').evaluate(e => e.scrollWidth > e.clientWidth), true);
+            await page.evaluate(() => {document.querySelector('.sales-ledger-scroll').scrollLeft = 9999;});
+            await page.evaluate(() => {document.querySelector('.sales-ledger-scroll').scrollLeft = 0;});
+            await page.locator('#sales-month').fill('2026-09');
+            await page.locator('#sales-product-keyword').fill(' CW0001 ');
+            await page.evaluate(() => {salesPage = 5;});
+            const download = page.waitForEvent('download');
+            await page.locator('#sales-export-button').click();
+            check((await download).suggestedFilename(), 'sales_202609.xlsx');
+            check(salesExportCalls.at(-1), {month: '2026-09', keyword: 'CW0001'});
+            await page.waitForFunction(() => !salesExportBusy);
+            check(await page.locator('#sales-month').isEnabled(), true);
+            salesExportStatus = 404;
+            await page.locator('#sales-export-button').click();
+            await page.waitForFunction(() => document.getElementById('sales-export-status').textContent.includes('没有符合条件'));
+            check(await page.locator('#sales-export-button').isEnabled(), true);
+            salesExportStatus = 200;
+        }
+        for(const suffix of ['/', '/copy']) {
+            countRecords=[];countCalls=[];
+            await page.goto(address+suffix);await page.waitForFunction(()=>CURRENT_USER_ID===10);
+            await page.locator('[data-inventory-nav]').click();
+            await page.locator('[data-iw-action="assessment"]').click();
+            await page.locator('[data-ia-edit="1"]').waitFor();
+            check(await page.locator('#inventory-workspace-root').isVisible(),false);
+            check(await page.locator('#ia-body > tr').count(),4);
+            check(await page.locator('#ia-body > tr').first().locator(':scope > td').count(),14);
+            check(await page.locator('#ia-body .tag-orange').getAttribute('title').then(value=>value.includes('逐批数量')),true);
+            check(await page.locator('#ia-total td').nth(5).innerText(),'待核对');
+            const countButton=await page.locator('[data-ia-edit="1"]').boundingBox();
+            check(countButton.x+countButton.width<=1440,true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'inventory-assessment-desktop.png'),fullPage:true});
+            await page.locator('[data-ia-batch="1"]').click();
+            check(await page.locator('#ia-batch-body').innerText().then(v=>v.includes('<BATCH>')),true);
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'inventory-assessment-batches.png'),fullPage:true});
+            await page.locator('[data-ia-action="close-batches"]').click();
+            check(await page.locator('#ia-body script').count(),0);
+            await page.locator('#ia-date').fill('2026-09-30');
+            await page.locator('[data-ia-edit="1"]').click();
+            check(await page.locator('#ia-edit').isVisible(),false);
+            check(await page.locator('#ia-status').innerText().then(v=>v.includes('请先查询')),true);
+            await page.locator('#ia-query button.btn-primary').click();
+            await page.waitForFunction(()=>document.getElementById('ia-status').textContent==='');
+            await page.locator('[data-ia-edit="1"]').click();
+            await page.locator('#ia-save').click();
+            if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'inventory-assessment-editor.png'),fullPage:true});
+            check(countCalls.length,0);
+            check(await page.locator('#ia-edit-status').innerText().then(v=>v.includes('整数')),true);
+            await page.locator('#ia-actual').fill('0');await page.locator('#ia-note').fill('<script>unsafe</script>');
+            await page.evaluate(()=>Object.defineProperty(globalThis.crypto,'randomUUID',{value:undefined,configurable:true}));
+            const held=wait();countGate=held;
+            await page.locator('#ia-save').click();await page.waitForFunction(()=>document.getElementById('ia-save').disabled);
+            check(await page.locator('#ia-actual').isEditable(),false);
+            check(await page.locator('#ia-note').isEditable(),false);
+            check(await page.locator('[data-ia-action="cancel"]').isDisabled(),true);
+            await page.evaluate(()=>document.getElementById('ia-save').click());
+            check(countCalls.length,1);held.resolve();
+            await page.locator('#ia-edit').waitFor({state:'hidden'});
+            check(countRecords[0].actual_quantity,0);check(countRecords[0].difference,-7281);
+            check(/^[A-Za-z0-9_-]{16,64}$/.test(countCalls[0].request_key),true);
+            check(await page.locator('#ia-body > tr').first().locator(':scope > td').nth(10).innerText(),'0');
+            await page.locator('[data-ia-history="1"]').click();
+            await page.locator('#ia-history-body tr').waitFor();
+            check(await page.locator('#ia-history-body').innerText().then(v=>v.includes('<script>unsafe</script>')),true);
+            check(await page.locator('#ia-history-body script').count(),0);
+            await page.locator('[data-ia-action="close-history"]').click();
+            await page.locator('[data-ia-edit="1"]').click();await page.locator('#ia-actual').fill('5');countStatus=409;
+            await page.locator('#ia-save').click();await page.waitForFunction(()=>document.getElementById('ia-edit-status').textContent.includes('已变化'));
+            check(await page.locator('#ia-edit').isVisible(),true);check(await page.locator('#ia-actual').inputValue(),'5');
+            check(await page.locator('#ia-actual').isEnabled(),true);
+            check(await page.locator('#ia-note').isEnabled(),true);
+            check(await page.locator('#ia-save').isEnabled(),true);
+            await page.locator('[data-ia-action="cancel"]').click();countStatus=200;
+            await page.locator('[data-ia-edit="1"]').click();
+            await page.locator('#ia-actual').fill('6');await page.locator('#ia-note').fill('retry-note');countNetworkError=true;
+            const recordsBeforeFailure=countRecords.length;
+            await page.locator('#ia-save').click();
+            await page.waitForFunction(()=>!document.getElementById('ia-save').disabled&&document.getElementById('ia-edit-status').textContent.includes('操作失败'));
+            check(await page.locator('#ia-actual').inputValue(),'6');check(await page.locator('#ia-note').inputValue(),'retry-note');
+            check(await page.locator('#ia-actual').isEnabled(),true);check(await page.locator('#ia-note').isEnabled(),true);
+            check(countRecords.length,recordsBeforeFailure);
+            const retryKey=countCalls.at(-1).request_key;countNetworkError=false;
+            await page.locator('#ia-save').click();await page.locator('#ia-edit').waitFor({state:'hidden'});
+            check(countCalls.at(-1).request_key,retryKey);
+            check(countRecords.length,recordsBeforeFailure+1);check(countRecords.at(-1).actual_quantity,6);
+            const downloaded=page.waitForEvent('download');await page.locator('[data-ia-action="export"]').click();
+            check((await downloaded).suggestedFilename().startsWith('inventory_assessment_'),true);
+            await page.waitForFunction(()=>document.getElementById('ia-status').textContent.includes('导出已生成'));
+            // 同账号重登也须忽略旧盘点POST的401，不能退出新会话。
+            await page.locator('[data-ia-edit="1"]').click();
+            const old=wait();countGate=old;countStatus=401;
+            const oldRequest=page.waitForRequest(r=>new URL(r.url()).pathname==='/inventory/stock-counts'&&r.method()==='POST');
+            await page.locator('#ia-save').click();await oldRequest;
+            const oldCancelled=page.waitForEvent('requestfailed',{predicate:r=>new URL(r.url()).pathname==='/inventory/stock-counts'});
+            await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
+            await oldCancelled;old.resolve();countStatus=200;
+            await page.waitForFunction(()=>CURRENT_USER_ID===10);
+            check(await page.locator('#inventory-assessment-root').innerHTML(),'');
+            check(await page.locator('#login-overlay').isVisible(),false);
+            await page.locator('[data-inventory-nav]').click();await page.locator('[data-iw-action="assessment"]').click();
+            await page.locator('[data-ia-edit="1"]').waitFor();
+            check(await page.locator('#ia-actual').isEnabled(),true);
+            check(await page.locator('#ia-note').isEnabled(),true);
+            await page.locator('[data-ia-action="overview"]').click();
+            check(await page.locator('#inventory-assessment-root').isVisible(),false);
+            check(await page.locator('#inventory-workspace-root').isVisible(),true);
         }
         role = 'viewer';
         await page.evaluate(async () => {handleSessionExpired(); await loadCurrentUser();});

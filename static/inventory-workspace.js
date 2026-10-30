@@ -32,7 +32,7 @@
         detailPagination: '共 {total} 条 · 第 {page} / {pages} 页',
         dataScope: '每日统计为本页商品合计', equation: '期末 = 期初 + 入库 − 出库 + 调整',
         matrixIn: '入', matrixOut: '出', matrixAdjustment: '调', matrixBalance: '余', noImage: '无图',
-        stable: '稳健商品', new: '新品', safe_stock: '稳健商品', no_impairment: '不跌价商品',
+        stable: '稳健商品', new: '新品', safe_stock: '稳健商品', no_impairment: '不跌价商品', allocations:'跌价归属',
         exportOverview: '导出库存 Excel', exportDaily: '导出整月 Excel', exportProduct: '导出所选商品 Excel',
         exportScope: '导出当前查询全部结果，不限当前页；每日进出包含所选月份。',
         exportLoading: '正在生成 Excel，请稍候…', exportReady: 'Excel 已生成，请查看浏览器下载列表。',
@@ -118,6 +118,12 @@
             if (move) { openDetail(Number(move.dataset.product), move.dataset.day, move.dataset.iwMove); return; }
             const trace = event.target.closest('[data-iw-trace]');
             if (trace) { traceProduct(Number(trace.dataset.iwTrace)); return; }
+            const allocation = event.target.closest('[data-iw-allocation]');
+            if (allocation) {
+                const product=state.data?.items.find(row=>row.id===Number(allocation.dataset.iwAllocation));
+                if(product)window.InventoryAllocations?.open(product.id,`${product.sku} · ${product.name}`,()=>refresh());
+                return;
+            }
             const action = event.target.closest('[data-iw-action]')?.dataset.iwAction;
             if (!action) return;
             if (action === 'assessment') {
@@ -234,7 +240,7 @@
                 <td>${h(text(product.product_type))}</td><td>${['stable','safe_stock'].includes(product.product_type) ? h(number(product.safe_stock_quantity)) : '—'}</td>
                 <td class="inventory-balance">${h(number(product.stock_quantity))}</td><td>${h(money(product.stock_value))}</td>
                 <td>${h(product.last_batch_at || '—')}</td><td><span class="tag ${product.stock_status === 'low' || product.stock_status === 'pending' ? 'tag-orange' : product.stock_status === 'zero' ? 'tag-red' : 'tag-green'}">${h(text(product.stock_status))}</span></td>
-                <td><button type="button" class="btn btn-secondary" data-iw-trace="${Number(product.id)}">${h(text('trace'))}</button></td></tr>`).join('');
+                <td><button type="button" class="btn btn-secondary" data-iw-trace="${Number(product.id)}">${h(text('trace'))}</button> <button type="button" class="btn btn-secondary" data-iw-allocation="${Number(product.id)}">${h(text('allocations'))}</button></td></tr>`).join('');
         } else {
             const warningKeys = [...new Set([...(data.warnings || []), ...data.items.flatMap(product => product.warnings || [])])];
             node('scope').textContent = warningKeys.map(key => text(key)).join(' ');
@@ -472,6 +478,7 @@
         }
     }
     function reset() {
+        window.InventoryAllocations?.reset();
         window.InventoryAssessment?.reset();
         closeSearches(); keywordPicker.product = null;
         const previousExport = exportRequest;

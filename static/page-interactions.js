@@ -21,8 +21,10 @@
         salesCostImpairment: '出库商品跌价（元，参考）', salesCostPending: '待核对',
         salesCostHelp: '导入后按实际FIFO出库批次自动拆分采购、头程、尾程和其他入库成本，四项合计为本行订单总成本；组合商品同一订单号各行相加为整单成本。展示按分舍入，尾差按科目金额由大到小分配。出库商品跌价单列，不加到订单成本或重复扣减毛利；店铺损益仍按批次归属分摊，本列不代表销售店铺承担额。横向滚动可查看全部成本列。',
         batchExport: '导出', batchEdit: '编辑',
-        batchImpairmentStores: '跌价归属店铺', batchImpairmentDefault: '未指定（沿用原归属）',
-        batchImpairmentHelp: '可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
+        batchImpairmentStores: '跌价归属店铺（必选）', batchImpairmentDefault: '待分配（在库存页管理）',
+        batchImpairmentHelp: '至少选择一家店铺，可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
+        batchImpairmentEmpty: '尚未选择，请至少选择一家店铺。',
+        batchImpairmentRequired: '请至少选择一家跌价归属店铺后再保存。',
         batchImpairmentMode: '归属生效范围',
         batchImpairmentFromArrival: '从入库日开始（历史更正）',
         batchImpairmentFromChange: '从修改日开始（北京时间）',
@@ -272,7 +274,8 @@
                 `<label style="display:flex;gap:6px;align-items:center;max-width:100%;overflow-wrap:anywhere"><input type="checkbox" value="${Number(store.id)}" ${ids.has(store.id) ? 'checked' : ''}
                     ${allocationStores === null || !store.is_active && !ids.has(store.id) ? 'disabled' : ''}>${escapeHtml(store.name)}${store.is_active ? '' : escapeHtml(text('batchImpairmentInactive'))}</label>`).join('')}</div>
             <small>${escapeHtml(allocationStores === null ? text('batchImpairmentLoading') : selected.length
-                ? text('batchImpairmentSelected').replace('{count}', selected.length) : text('batchImpairmentDefault'))}</small>
+                ? text('batchImpairmentSelected').replace('{count}', selected.length) : text('batchImpairmentEmpty'))}</small>
+            <p data-allocation-error class="msg msg-err" role="alert" hidden></p>
             ${prefix === 'eb' ? `<fieldset style="margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:12px">
                 <legend>${escapeHtml(text('batchImpairmentMode'))}</legend>
                 <div style="display:flex;flex-wrap:wrap;gap:16px">${[['from_change_date', 'batchImpairmentFromChange'], ['from_arrival', 'batchImpairmentFromArrival']].map(([mode, label]) =>
@@ -283,7 +286,8 @@
         root.onchange = () => {
             allocationSelections[prefix] = [...root.querySelectorAll('input[type="checkbox"]:checked')].map(input => Number(input.value));
             root.querySelector('small').textContent = allocationSelections[prefix].length
-                ? text('batchImpairmentSelected').replace('{count}', allocationSelections[prefix].length) : text('batchImpairmentDefault');
+                ? text('batchImpairmentSelected').replace('{count}', allocationSelections[prefix].length) : text('batchImpairmentEmpty');
+            if (allocationSelections[prefix].length) root.querySelector('[data-allocation-error]').hidden = true;
             if (prefix === 'eb') {
                 allocationMode = root.querySelector('input[type="radio"]:checked').value;
                 root.querySelector('[data-allocation-mode-help]').textContent = allocationModeHelp();
@@ -322,6 +326,13 @@
         readMode: () => allocationMode,
         read: prefix => {
             if (allocationStores === null) throw new Error(text('batchImpairmentFailed'));
+            if (!allocationSelections[prefix].length) {
+                const root = document.getElementById(`${prefix}-impairment-stores`);
+                const error = root?.querySelector('[data-allocation-error]');
+                if (error) {error.textContent = text('batchImpairmentRequired'); error.hidden = false;}
+                root?.querySelector('input[type="checkbox"]:not(:disabled)')?.focus();
+                throw new Error(text('batchImpairmentRequired'));
+            }
             return [...allocationSelections[prefix]];
         },
         label: batch => batch.impairment_store_names?.join(' / ') || text('batchImpairmentDefault'),

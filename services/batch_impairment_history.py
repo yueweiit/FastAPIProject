@@ -62,6 +62,14 @@ async def load_rules(db, batch_ids, *, lock=False):
     return dict(result)
 
 
+async def initialize_unassigned(db, batch):
+    """新批次显式待分配；区别于无历史的旧批次创建人绑定兼容。"""
+    row = BatchImpairmentRule(batch_id=batch.id, effective_date=batch.arrived_at.date(), is_explicit=True)
+    db.add(row)
+    await db.flush()
+    return [StoreRule(batch.arrived_at.date(), [], True)]
+
+
 async def save_change(db, batch, old_stores, new_stores, history, mode, *, arrived_at):
     """历史更正替换整段规则；按日变更保留基线，当日再次更正合并为一条。"""
     old_ids, new_ids = [s["id"] for s in old_stores], [s["id"] for s in new_stores]
