@@ -3,6 +3,7 @@
 | 功能 | 页面函数 | 后端/服务函数 | 核心数据 |
 | --- | --- | --- | --- |
 | 手工结算补录 | loadManualSaleStores、createSale → SalesLedger.createManualSettlement | create_manual_settlement | stores、sales_import_batches、settlement_entries；不扣库存 |
+| 补录产品名联想 | initializeManualProductSearch → ProductSearch.bind（static/product-search.js） | products.list_products | 复用库存候选/键盘/会话保护；选择仅填产品名，不改来源SKU或库存关联 |
 | 文件上传 | importSalesFile | import_sales_file、_read_import_file、_source_key | 导入批次、结算行 |
 | 产品名识别 | Excel产品名表达式 | _resolve_product_components(strict_names=True)、_resolve_product_name、_product_expression_parts | products、来源产品名；不读取平台映射 |
 | 库存预检/扣库 | 上传结果提示 | _allocate_available_stock、lock_fifo_batches、fifo_sell | inventory_batches、sale_cost_details |
@@ -28,4 +29,4 @@
 
 单件与解释入口：[sales-ledger.js](../../../static/sales-ledger.js)负责分组、公式问号、代入/批次/整单弹窗及会话代次；[sales-fields.zh-CN.json](../../../static/sales-fields.zh-CN.json)与[sales_fields.py](../../../services/sales_fields.py)为页面/Excel的单一字段说明资源。后端`_sale_response_rows/_order_cost_data/sale_cost_breakdown`复用原分项和回放，跨筛选取同店完整订单。回归[test_sales_cost_explanations.py](../../../tests/test_sales_cost_explanations.py)覆盖未舍入除法、同号跨店/旧绑定、映射缺失或冲突下整单ID/名称一致、未知范围、完整订单和导出资源；页面VM及浏览器夹具另覆盖待确认区域失败保留台账、合计/分页及重试恢复，VM覆盖旧会话失败隔离。原销售/财务回归继续执行。
 
-来源与补录回归：[test_sales_name_import.py](../../../tests/test_sales_name_import.py)覆盖名称/倍数/组合、无SKU映射、精确/歧义识别、份额跨筛选一致、来源字段/Excel、赔付、补录权限/幂等/唯一键竞态/撤销不扣库；另验已识别退款的商品筛选/月度/导出/产品线一致、组合/未知退款不部分关联且不改变库存。[sales_manual_page_checks.cjs](../../../tests/sales_manual_page_checks.cjs)执行两份页面补录模块和实际api/刷新函数，验证精度、重复点击、网络重试，以及保存后五类子请求的旧响应/正文/401/网络异常在同账号重登及换账号后的隔离，当前会话刷新失败仍反馈；真实浏览器另验来源列、补录重试和布局。
+来源与补录回归：[test_sales_name_import.py](../../../tests/test_sales_name_import.py)覆盖名称/倍数/组合、无SKU映射、精确/歧义识别、份额跨筛选一致、来源字段/Excel、赔付、补录权限/幂等/唯一键竞态/撤销不扣库；另验已识别退款的商品筛选/月度/导出/产品线一致、组合/未知退款不部分关联且不改变库存。[sales_manual_page_checks.cjs](../../../tests/sales_manual_page_checks.cjs)执行两份页面补录模块和实际api/刷新函数，验证精度、重复点击、网络重试，以及保存后五类子请求的旧响应/正文/401/网络异常在同账号重登及换账号后的隔离，当前会话刷新失败仍反馈。真实浏览器另验来源列、补录重试和布局，以及产品名联想的名称/SKU、点击/键盘/输入法、空值/失败/自由输入、移动端和旧请求隔离；选中不会改来源SKU ID。

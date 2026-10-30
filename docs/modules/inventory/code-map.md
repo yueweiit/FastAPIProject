@@ -17,7 +17,7 @@
 | 保存/查询盘点历史 | InventoryAssessment内save/history | inventory.save_stock_count/stock_counts；quantity_basis/latest_counts | inventory_stock_counts；按FIFO顺序锁批次重验数量，幂等/乐观版本/唯一约束 |
 | 历史逐批核对/权限入库 | 同一盘点页及Excel | inventory_activity.build_activity(batch_balances)、quantity_basis的入库事件、assessment_rows(include_voided_receipts) | 内部逐批余量和完整数量版本；viewer仅展示可见入库，抵消更正不能确认错误历史金额 |
 | 每日进出/三种视图 | inventory-workspace.js | inventory.daily、product_page、activity_data | inventory_activity.load_activity_sources/build_activity |
-| 顶部联想/按商品输入检索 | searchField、bindProductSearch、searchProducts、chooseProduct、applyKeywordQuery | products.list_products；inventory.overview/daily/export(product_id) | 共用候选20项与键盘逻辑，独立请求状态；精确ID、关键字查询、输入法、取消及会话隔离 |
+| 顶部联想/按商品输入检索 | searchField、bindProductSearch → ProductSearch.bind、applyKeywordQuery、traceProduct | products.list_products；inventory.overview/daily/export(product_id) | product-search.js与销售共用候选20项/键盘/防抖，独立请求状态；精确ID、关键字查询、输入法、取消及会话隔离 |
 | 来源弹窗 | openDetail、loadDetail、closeDetail | inventory.movements | 分页FIFO、到货基数、更正及作废负调整 |
 | 库存/整月/横向Excel导出 | exportInventory；固定条件、会话隔离 | inventory.export_inventory；overview_row、activity_rows | services/inventory_export.py只格式化查询结果，含范围/空值说明 |
 | 搜索/分页 | loadBatches、searchBatches、renderBatchPage | list_batches | 批次、商品 |

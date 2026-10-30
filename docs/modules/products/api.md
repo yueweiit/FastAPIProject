@@ -10,7 +10,7 @@
 | `POST /products/import` | [import_products](../../../routers/products.py) | admin/operator/viewer | multipart：file、preview_token | ProductImportResponse；整批新增 |
 | `POST /products/import/result` | [export_product_import_result](../../../routers/products.py) | admin/operator/viewer | JSON：rows | 校验/导入结果 .xlsx |
 | `GET /products/options` | [list_product_options](../../../routers/products.py) | admin/operator/viewer | 无 | list[ProductOptionResponse] |
-| `GET /products` | [list_products](../../../routers/products.py) | admin/operator/viewer | keyword、page、page_size | list[ProductResponse] \| ProductPageResponse |
+| `GET /products` | [list_products](../../../routers/products.py) | admin/operator/viewer | keyword、page、page_size、prioritize_exact_sku | list[ProductResponse] \| ProductPageResponse |
 | `GET /products/export` | [export_products](../../../routers/products.py) | admin/operator/viewer | product_ids | Excel 文件 |
 | `PUT /products/{product_id}` | [update_product](../../../routers/products.py) | admin/operator/viewer | product_id、sku、name、product_type、safe_stock_quantity、image | ProductResponse |
 | `DELETE /products/{product_id}` | [delete_product](../../../routers/products.py) | admin/operator/viewer | product_id | ok |
@@ -24,6 +24,8 @@
 图片仅接受可解码的JPEG/PNG/GIF/WebP；扩展名不支持、内容伪造或损坏返回422，原文件超过5 MiB、像素超过2000万或重新编码后超过10 MiB返回413。图片会重新编码，动图保留首帧；保存和静态访问规则见[图片流程](workflow.md#创建与图片)。`/uploads`中非图片扩展名返回404，已有图片地址仍公开。
 
 GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认20，1–100）；名称或 SKU 模糊查询。不传 page 是数组，传 page 是 ProductPageResponse。options 返回 id、sku、name、image，适合下拉选择。
+
+联想组件显式传prioritize_exact_sku=true：有非空keyword时，先将忽略大小写的完整SKU字面匹配置顶，再按商品ID倒序排列，最后分页；即使存在超过20个近似SKU，精确项仍在第一页。百分号/下划线仅在已有模糊过滤中保留通配语义，精确排序使用相等比较。参数默认false，普通列表、图册和内部库存查询的顺序、总数、分页/数组格式及权限保持兼容；不传关键字或没有精确项时沿用原顺序。
 
 导出通过重复参数 product_ids 选择，例如 /products/export?product_ids=1&product_ids=2；未传 ID 导出全部，不支持后端 keyword 查询。无记录返回 404；SKU 重复返回 400；商品规则不合法返回 422；删除仍被平台组件引用的商品返回 400。
 

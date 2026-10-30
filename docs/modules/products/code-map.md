@@ -7,6 +7,7 @@
 | 商品批量新增 | openProductImport、previewProductImport、confirmProductImport | preview_products、import_products | services/product_import.py；products、product_impairment_rules |
 | 模板/结果清单 | downloadProductImportTemplate、downloadProductImportResult | product_import_template、export_product_import_result | openpyxl；ProductImportResponse、ProductImportResultRequest |
 | 搜索/分页/汇总 | loadProducts、searchProducts、renderProductPage | list_products、_product_summary_stmt、_enrich_product | products、inventory_batches |
+| 库存/销售商品联想 | ProductSearch.bind（static/product-search.js） | list_products(prioritize_exact_sku=true) | CASE精确SKU优先在LIMIT/OFFSET之前；默认列表顺序不变 |
 | 下拉选项 | loadProductOptions、loadSkuOptions | list_product_options | products |
 | 图片/图册 | loadGallery、分页与下载处理 | read_product_image、_save_product_image、ProductImageFiles；list_products | services/product_images.py；uploads 文件、products.image |
 | 导出 | downloadProductExport、exportProduct、exportAllProducts | export_products | 商品、批次；openpyxl/Pillow |
@@ -18,5 +19,7 @@
 规则变更涉及现行报表的 [services/inventory_provision_movements.py](../../../services/inventory_provision_movements.py)，以及快照路径的 [services/inventory_impairment.py](../../../services/inventory_impairment.py)、[services/accounting_periods.py](../../../services/accounting_periods.py)。测试入口为 [test_product_feature_permissions.py](../../../tests/test_product_feature_permissions.py)、[test_inventory_provision_movements.py](../../../tests/test_inventory_provision_movements.py)、[test_inventory_impairment_report.py](../../../tests/test_inventory_impairment_report.py)。
 
 图片校验、重新编码、历史活动文件隔离及失败清理由 [test_product_images.py](../../../tests/test_product_images.py) 验证；不写实际上传目录或业务数据库。
+
+联想排序回归：[test_product_search.py](../../../tests/test_product_search.py)用隔离SQLite/ASGI验证超过20个近似SKU时精确项置顶、跨页不丢不重、大小写/空格/特殊字符、默认及内部调用兼容、数组格式、三角色共享权限和仅SELECT。浏览器夹具另验库存选中/导出及销售只填写产品名，真实MySQL排序性能仍需按实际规模验证。
 
 批量导入解析、预览、预览签名及整批提交位于 [services/product_import.py](../../../services/product_import.py)。自动化入口为 [test_product_import.py](../../../tests/test_product_import.py)；手工真实 MySQL 验证为 [mysql_product_import.py](../../../tests/mysql_product_import.py)，只允许显式设置的本机专用库，不能直接复用业务库连接。

@@ -110,3 +110,5 @@
 - `migrations/add_financial_controls.py --write-sql ...`只离线生成DDL；省略参数默认只读核验指定隔离库，显式apply才加表，前置授权与目标保护见[运行步骤](../../PROJECT_RUNBOOK.md#财务增强结构与启用)。不复用旧并发脚本启动全库迁移。
 
 - 产品名导入及手工补录：`python -m unittest tests.test_sales_name_import -v`使用隔离SQLite/ASGI，含已识别退款的商品筛选、导出、产品线及不扣库存；`node tests/sales_manual_page_checks.cjs`执行真实页面模块、api和刷新函数，含补录成功后五类子请求在同账号重登/换账号时的旧响应、正文、401和网络异常隔离，以及当前会话刷新失败提示。既有浏览器夹具覆盖两份页面的来源SKU/类型/数量和补录失败重试，不连接业务库或启动main。
+
+- 商品联想排序：`python -m unittest tests.test_product_search -v`覆盖分页前精确SKU置顶、26项跨页完整性、特殊字符/大小写、原列表及内部调用兼容、角色和只读边界。`node tests/inventory_workspace_browser_checks.cjs`的模拟候选接口执行分页，覆盖两份页面在26个相似SKU中的精确选择、库存导出及销售来源SKU保留；不启动main、不连接业务数据库。

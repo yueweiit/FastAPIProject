@@ -427,3 +427,7 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 产品名识别与结算补录更新（2026-10-30）：订单详情不再要求平台SKU映射，按产品名拆解倍数/组合后FIFO扣库；台账保留来源SKU ID、产品名、交易类型和来源数量（24列），导出29列。手工录入改用不扣库的人民币结算补录，物流/平台/物料赔付按结算金额计收入。复用现有表与source_key唯一键，无DDL、无历史回填；同步更新routers/sales.py、schemas.py、financial_facts.py、sales_export.py、静态模块/JSON及两份页面后，由用户手动重启8010并Ctrl+F5刷新。旧报表版本和原始数据保留，动态查询按新赔付口径计算。
 
 后续审查修复：非赔付退款按产品名保留可靠商品/组件归属，不创建出库或恢复库存；手工补录仍不关联商品。销售工作台刷新增加可选会话校验，旧响应/401不影响重登后的页面，当前刷新失败保留已保存结果并提示。仅更新销售路由、前端模块和两份页面；无DDL或历史回填，服务仍由用户手动重启。规则及隔离回归入口见[销售流程](docs/modules/sales/workflow.md)。
+
+产品名输入联想：库存与销售共用新增static/product-search.js，main.py以/product-search.js公开该静态脚本，两份首页在sales-ledger.js和inventory-workspace.js之前加载。更新时需同时包含这些脚本、main.py与两份页面；由用户按原约定手动重启8010并Ctrl+F5刷新。此功能只查已有GET /products候选、选择后填写产品名，不改平台SKU、补录库存规则或数据库结构。
+
+精确SKU联想修复需同步routers/products.py与static/product-search.js：组件传prioritize_exact_sku=true，服务端在分页前置顶精确项；旧服务会忽略新参数，不能只刷新静态文件作为修复生效的依据。默认列表和库存总览查询顺序保持兼容，无DDL/数据回填，仍由用户手动重启8010后刷新。
