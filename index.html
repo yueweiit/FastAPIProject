@@ -278,6 +278,15 @@
         .inventory-stats > div { border-left:3px solid var(--line); padding:4px 16px; }
         .inventory-stats span { display:block; color:var(--muted); font-size:12px; }
         .inventory-stats strong { display:block; margin-top:5px; font-size:23px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+        #ia-table { min-width:1800px; }
+        #ia-table > thead > tr > th:last-child { right:0; z-index:4; box-shadow:-3px 0 5px rgba(15,59,93,.08); }
+        #ia-body > tr > td:last-child { position:sticky; right:0; min-width:120px; background:#fff; z-index:1; box-shadow:-3px 0 5px rgba(15,59,93,.08); }
+        #ia-body > tr > td:last-child .btn { display:block; white-space:nowrap; margin:4px 0; }
+        #ia-table tfoot td { background:#f4f7fa; font-weight:700; }
+        #ia-edit { width:min(560px,94vw); }
+        #ia-edit .form-group { margin-top:12px; }
+        #ia-edit textarea { font:inherit; width:100%; min-height:100px; padding:10px; border:1px solid var(--line); border-radius:6px; resize:vertical; }
+        #ia-edit-status { color:#be123c; font-size:13px; margin:10px 0; }
         .inventory-table-scroll { max-height:62vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
         .inventory-table { width:100%; margin:0; font-variant-numeric:tabular-nums; }
         .inventory-table td { white-space:nowrap; }
@@ -348,7 +357,7 @@
 <div class="container">
     <div id="msg"></div>
 
-    <div id="sec-inventory" class="section"><div id="inventory-workspace-root"></div></div>
+    <div id="sec-inventory" class="section"><div id="inventory-workspace-root"></div><div id="inventory-assessment-root" hidden></div></div>
 
     <!-- ========== 商品管理 ========== -->
     <div id="sec-products" class="section active">
@@ -3172,6 +3181,7 @@ initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
 <script src="/inventory-workspace.js" defer></script>
+<script src="/inventory-assessment.js" defer></script>
 <script src="/financial-control.js" defer></script>
 </body>
 </html>

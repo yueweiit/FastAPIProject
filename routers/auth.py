@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from database import get_db
-from models import Store, User
+from models import InventoryStockCount, Store, User
 from schemas import LoginRequest, LoginResponse, UserResponse
 from auth import hash_password, verify_password, create_token, get_current_user, RequireAdmin
 from services.auth_sessions import check_origin, cookie_name, revoke_user_sessions, set_cookie, store
@@ -244,8 +245,15 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
 
+    if await db.scalar(select(InventoryStockCount.id).where(InventoryStockCount.created_by == user_id).limit(1)):
+        raise HTTPException(409, detail={"code": "inventory_count_user_referenced", "message": "用户有盘点操作记录，不能删除；可停用账号以保留审计记录。"})
+
     await db.delete(user)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(409, detail={"code": "user_referenced", "message": "用户已被业务记录引用，不能删除；可停用账号。"}) from error
     return {"ok": True}
 
 

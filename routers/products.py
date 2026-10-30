@@ -1,4 +1,5 @@
 import uuid
+import logging
 from datetime import date, datetime
 from io import BytesIO
 from decimal import Decimal
@@ -12,10 +13,12 @@ from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from database import get_db
 from models import (
     InventoryBatch,
+    InventoryStockCount,
     PlatformSkuComponent,
     Product,
     ProductImpairmentRule,
@@ -453,6 +456,9 @@ async def delete_product(
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
 
+    if await db.scalar(select(InventoryStockCount.id).where(InventoryStockCount.product_id == product_id).limit(1)):
+        raise HTTPException(409, detail={"code": "inventory_count_product_referenced", "message": "商品已有盘点记录，不能删除，以保留盘点历史。"})
+
     platform_sku_mapping_count = await db.scalar(
         select(func.count()).select_from(PlatformSkuComponent).where(
             PlatformSkuComponent.product_id == product_id
@@ -461,11 +467,19 @@ async def delete_product(
     if platform_sku_mapping_count:
         raise HTTPException(status_code=400, detail="商品已被平台 SKU 映射引用，请先删除或修改映射")
 
-    if product.image:
-        filepath = Path(__file__).parent.parent / product.image.lstrip("/")
-        if filepath.exists():
-            filepath.unlink()
-
+    image = product.image
     await db.delete(product)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(409, detail={"code": "product_referenced", "message": "商品已被业务记录引用，不能删除。"}) from error
+    if image:
+        filepath = Path(__file__).parent.parent / image.lstrip("/")
+        try:
+            if filepath.exists():
+                filepath.unlink()
+        except OSError:
+            logging.getLogger(__name__).warning("商品已删除，图片清理失败", exc_info=True)
+            return {"ok": True, "warning": "product_image_cleanup_failed"}
     return {"ok": True}

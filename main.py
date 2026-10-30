@@ -132,3 +132,9 @@ async def page_interactions_script():
 async def inventory_workspace_script():
     return FileResponse(BASE_DIR / "static" / "inventory-workspace.js", media_type="text/javascript",
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/inventory-assessment.js", include_in_schema=False)
+async def inventory_assessment_script():
+    return FileResponse(BASE_DIR / "static" / "inventory-assessment.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})

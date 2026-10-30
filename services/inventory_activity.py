@@ -82,8 +82,10 @@ async def load_activity_sources(db, product_ids, start, end, sale_scope=None):
     return batches, changes, daily, totals
 
 
-def build_activity(batches, changes, sales, totals, start, end, *, full_scope, include_voided=True):
+def build_activity(batches, changes, sales, totals, start, end, *, full_scope, include_voided=True, batch_balances=None):
     """数量更正按日志日列调整；作废日移除余额；缺失/矛盾不伪造平账数。"""
+    if batch_balances is not None:
+        batch_balances.clear()
     days = [start + timedelta(days=i) for i in range((end - start).days + 1)]
     result = {}
     events = []
@@ -191,6 +193,9 @@ def build_activity(batches, changes, sales, totals, start, end, *, full_scope, i
             item["opening_quantity"] += opening
             item["closing_quantity"] += balance
             item["adjustment"] += adjustment
+        if batch_balances is not None:
+            # 可选内部结果：复用同一数量回放逐批核对截止日余量，不改变原返回契约。
+            batch_balances.setdefault(batch.product_id, {})[batch.id] = balance if full_scope and not invalid else None
         if invalid:
             # 日结本就只对全量范围提供；异常不靠虚构调整强行对平。
             product["invalid"] = True

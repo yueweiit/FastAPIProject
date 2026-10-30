@@ -365,6 +365,16 @@ class SaleResponse(BaseModel):
     display_name: str | None = None
 
 
+class InventoryCountCreate(BaseModel):
+    product_id: int = Field(gt=0)
+    count_date: date
+    actual_quantity: int = Field(ge=0, le=2147483647, strict=True)
+    ledger_version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    previous_id: int | None = Field(default=None, gt=0)
+    request_key: str = Field(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    note: str = Field(default="", max_length=1000)
+
+
 class SalePageResponse(BaseModel):
     items: list[SaleResponse]
     total: int

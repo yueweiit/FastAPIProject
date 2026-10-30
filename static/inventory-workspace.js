@@ -2,7 +2,7 @@
 (() => {
     'use strict';
     const messages = {'zh-CN': {
-        nav: '库存', title: '库存查看', overview: '库存总览', daily: '每日进出',
+        nav: '库存', title: '库存查看', overview: '库存总览', daily: '每日进出', assessment: '库存盘点与跌价',
         lead: '查看共享库存，按日期追踪商品的入库、出库和结余。',
         keyword: '商品名称 / SKU', search: '查询', refresh: '刷新', month: '查看月份',
         layout: '查看方式', dayView: '按天查看', productView: '按商品查看', matrixView: '横向日期表',
@@ -80,7 +80,7 @@
         root().innerHTML = `<div class="card inventory-workspace">
             <div class="inventory-heading"><div><h3>${h(text('title'))}</h3><p>${h(text('lead'))}</p></div>${button('export', 'exportOverview', `id="iw-export" title="${h(text('exportScope'))}" disabled`)}</div>
             <div class="inventory-tabs" role="group" aria-label="${h(text('title'))}">
-                ${button('overview', 'overview')}${button('daily', 'daily')}
+                ${button('overview', 'overview')}${button('daily', 'daily')}${button('assessment', 'assessment')}
             </div>
             <form id="iw-query" class="inventory-filters">
                 ${searchField('keyword', 'keyword', 'keywordSearchHint')}
@@ -120,6 +120,10 @@
             if (trace) { traceProduct(Number(trace.dataset.iwTrace)); return; }
             const action = event.target.closest('[data-iw-action]')?.dataset.iwAction;
             if (!action) return;
+            if (action === 'assessment') {
+                closeSearches(true); closeDetail(); serial++; state.mode='assessment'; root().hidden=true;
+                window.InventoryAssessment.open({keyword:state.keyword,productId:state.productId}); return;
+            }
             if (action === 'export') {exportInventory(); return;}
             if (action === 'overview' || action === 'daily') {
                 state.mode = action; applyKeywordQuery();
@@ -166,6 +170,8 @@
     async function refresh() {
         initialize();
         if (!CURRENT_USER_ID || !root() || exportRequest) return;
+        if (state.mode === 'assessment') return window.InventoryAssessment.open();
+        root().hidden=false;
         closeSearches(true);
         closeDetail();
         const request = ++serial;
@@ -466,6 +472,7 @@
         }
     }
     function reset() {
+        window.InventoryAssessment?.reset();
         closeSearches(); keywordPicker.product = null;
         const previousExport = exportRequest;
         exportRequest = null;
@@ -474,5 +481,5 @@
         if (root()) root().replaceChildren();
     }
     document.querySelectorAll('[data-inventory-nav]').forEach(element => element.textContent = text('nav'));
-    window.InventoryWorkspace = {open: refresh, reset, text};
+    window.InventoryWorkspace = {open: refresh, reset, text, show: mode => {state.mode=mode;root().hidden=false;return refresh();}};
 })();

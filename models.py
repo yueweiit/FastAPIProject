@@ -5,6 +5,7 @@ import json
 
 from sqlalchemy import (
     Boolean,
+    BigInteger,
     Date,
     DateTime,
     DECIMAL,
@@ -77,6 +78,25 @@ class AuthSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class InventoryStockCount(Base):
+    """不可覆盖的盘点版本；只保存对照结果，不改变库存。"""
+    __tablename__ = "inventory_stock_counts"
+    __table_args__ = (UniqueConstraint("product_id", "count_date", "revision", name="uq_inventory_count_revision"),
+                      {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), index=True)
+    count_date: Mapped[date] = mapped_column(Date, index=True)
+    revision: Mapped[int] = mapped_column(Integer)
+    system_quantity: Mapped[int] = mapped_column(BigInteger)
+    actual_quantity: Mapped[int] = mapped_column(BigInteger)
+    ledger_version: Mapped[str] = mapped_column(String(64))
+    request_key: Mapped[str] = mapped_column(String(64), unique=True)
+    note: Mapped[str] = mapped_column(String(1000), default="")
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class Product(Base):

@@ -14,6 +14,8 @@ EXPORT_BATCH_SIZE = 100
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 STATUS_NAMES = {"normal": "正常", "low": "低于安全库存", "zero": "无库存", "pending": "待核对"}
 WARNING_MESSAGES = {
+    "inventory_assessment_quantity_mismatch": "逐批数量日结与准备回放不一致，相关成本及跌价待核对。",
+    "inventory_assessment_voided_history": "存在本月历史持有的已作废批次，本月计提总额待核对。",
     "inventory_history_inconsistent": "批次数量、销售明细或更正记录不一致，相关日结待核对。",
     "inventory_arrival_restatement": "存在入库日期更正，按当前入库日期重算。",
     "inventory_scope_restricted": "入库按可见批次，出库仅含绑定店铺；全量期初、调整和期末不展示。",
@@ -160,3 +162,60 @@ def build_inventory_workbook(view, products, *, scope, keyword=None, selected_sk
     workbook.save(result)
     result.seek(0)
     return result
+
+
+def build_assessment_workbook(products, *, as_of, scope, keyword=None):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "库存盘点与跌价"
+    headers = ["SKU", "商品名称", "本月入库", "本月出库" if scope == "global" else "本店本月出库",
+               "截止日账面库存", "平均单件成本(元)", "库存成本金额(元)", "期末跌价余额(元)",
+               "本月计提总额(元)", "账面价值(元)", "盘点时账面数", "实盘数量", "盘点差异(实盘-账面)",
+               "盘点日期", "保存时间(UTC)", "盘点状态", "备注/警示"]
+    _append(sheet, headers, 1)
+    rows = []
+    for product in products:
+        count = product["count"] or {}
+        status = "账面已变化，需复核" if product["count_basis_changed"] else "已盘点" if count else "未盘点"
+        row = [product["sku"], product["name"], product["month_inbound"], product["month_outbound"],
+               product["system_quantity"], product["average_unit_cost"], product["inventory_amount"],
+               product["impairment_amount"], product["monthly_total_impairment_amount"], product["book_value"],
+               count.get("system_quantity"), count.get("actual_quantity"), count.get("difference"),
+               count.get("count_date"), count.get("created_at"), status,
+               "；".join(filter(None, [count.get("note"), _notes(product, scope)]))]
+        rows.append(row)
+        _append(sheet, row, len(rows) + 1)
+    _format(sheet, {1:24,2:36,**{col:23 for col in range(3,17)},17:70}, numeric=(3,4,5,11,12,13), money=range(6,11))
+    _total(sheet, rows, (3,4,5,7,8,9,10,11,12,13))
+    for column in (3,4,5,11,12,13):
+        sheet.cell(sheet.max_row,column).number_format = '#,##0'
+    for column in (7,8,9,10):
+        sheet.cell(sheet.max_row,column).number_format = '¥#,##0.00'
+    batches = workbook.create_sheet("批次明细")
+    _append(batches, ["SKU","商品名称","批次号","入库日期","入库天数","剩余数量","单件成本(元)",
+                      "库存成本金额(元)","期末跌价余额(元)","本月计提总额(元)","跌价归属店铺","说明"],1)
+    owners = workbook.create_sheet("店铺跌价分摊")
+    _append(owners,["SKU","批次号","归属店铺","期末跌价金额(元)"],1)
+    batch_number = owner_number = 2
+    for product in products:
+        for batch in product["batches"]:
+            _append(batches,[product["sku"],product["name"],batch["batch_no"],batch["arrived_at"],batch["age_days"],
+                batch["quantity"],batch["unit_cost"],batch["inventory_amount"],batch["impairment_amount"],
+                batch["monthly_total_impairment_amount"]," / ".join(batch["store_names"]) or "未关联店铺",batch["note"]],batch_number)
+            batch_number += 1
+            for owner in batch["store_allocations"]:
+                _append(owners,[product["sku"],batch["batch_no"],owner["store_name"],owner["impairment_amount"]],owner_number)
+                owner_number += 1
+    _format(batches,{1:24,2:36,3:30,4:18,5:16,6:18,7:22,8:24,9:24,10:24,11:36,12:70},numeric=(5,6),money=(7,8,9,10))
+    _format(owners,{1:24,2:30,3:36,4:28},money=(4,))
+    notes=workbook.create_sheet("说明")
+    for index,pair in enumerate([
+        ["截止日",as_of], ["查询",keyword or "全部商品"], ["范围","全部匹配商品，不限当前页；" + ("全量出库/分摊" if scope == "global" else "出库和店铺分摊仅绑定店铺；共享库存仅今日")],
+        ["盘点", "实盘减保存时账面数；0是有效盘点，空白是未盘点。旧盘点差异不随后续销售重算。保存不修改库存、FIFO、成本或跌价。"],
+        ["日期", "盘点对照以所选自然日日末为界，保存时间为UTC。后续补单、更正或撤销会提示账面已变化，须重新核对。"],
+        ["金额", "跌价按既有持有期间规则逐批计算后汇总；本月计提包含已售部分，账面价值=库存成本-期末跌价余额；实盘数不参与金额计算。"],
+        ["待核对", "未知/异常金额及不完整合计留空；明细备注保留规则历史推定和异常提示。"],
+    ],1): _append(notes,pair,index)
+    _format(notes,{1:24,2:110})
+    output=BytesIO();workbook.save(output);output.seek(0)
+    return output
