@@ -1,12 +1,13 @@
 # 销售、导入及待确认 API
 
-前缀 /sales，共 11 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
+前缀 /sales，共 12 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `POST /sales/import` | [import_sales_file](../../../routers/sales.py) | admin/operator | file、store_id | SalesImportResponse |
 | `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit | list[SalesImportBatchResponse] |
 | `POST /sales/imports/{import_batch_id}/rollback` | [rollback_sales_import](../../../routers/sales.py) | admin/operator | import_batch_id | SalesImportRollbackResponse |
+| `POST /sales/manual-settlements` | create_manual_settlement | admin/operator | 店铺、来源字段、人民币金额、request_key | 不扣库存的结算补录SaleResponse |
 | `POST /sales` | [create_sale](../../../routers/sales.py) | admin/operator | SaleCreate | SaleResponse |
 | `GET /sales/pending-confirmations` | [list_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | page、page_size | PendingConfirmationPageResponse |
 | `GET /sales/pending-confirmations/export` | [export_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | 无 | Excel 文件 |
@@ -24,7 +25,9 @@ SaleCreate：product_id、order_no、quantity>0；store_id 可在模型层为空
 
 GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM；列表还支持 page/page_size。monthly-summary 按全部筛选结果汇总，不只是当前页，返回数量、人民币收入/成本/费用/毛利、fx_missing_count及新增settlement_event_count。未关联出库的退款/调整/赔付事件纳入金额，不增加销售单数或数量；同事件只计一次。
 
-SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页/数组列表均包含独立财务事件：赔付record_type=other_expense，其他退款/调整为settlement_adjustment，负id、quantity=0；不是sales主键，不能调用GET /sales/{sale_id}。先合并完整结果再分页；月度统计采用相同事件取数。商品筛选仅归属明确单一product_id的事件；组合份额未定的事件保留全店汇总，不猜测商品分摊。
+SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页/数组列表均包含独立财务事件：赔付record_type=compensation_income，其他退款/调整为settlement_adjustment，负id、quantity=0；不是sales主键，不能调用GET /sales/{sale_id}。物流/平台/物料赔付以结算总金额乘固化汇率计入收入，负数冲减收入、费用为0；缺失汇率仍返回null。先合并完整结果再分页；月度统计采用相同事件取数。商品筛选仅归属明确单一product_id的事件；组合份额未定的事件保留全店汇总，不猜测商品分摊。
+
+新导入的非赔付退款/调整可按产品名保留明确的单一product_id，因而纳入product_id/本地SKU筛选、月度统计及相同条件导出；识别不到仍接受为未归属结算，不强制商品匹配。组件关联不等于库存出入库，返回实际出库数量仍为0，来源数量保留原值。手工结算补录继续不关联商品，见[导入流程](workflow.md#文件导入)。
 
 ## 销售台账导出
 
@@ -47,11 +50,17 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 
 接口复用`list_sales`的不分页响应，包含相同的独立退款/调整/赔付事件及0数量、固化汇率、成本追溯和待核对空值；商品名称/SKU批量读取，无逐记录查询。先用相同权限/筛选SQL统计销售及独立事件，超过20,000条返回422 `sales_export_too_large`（含max_rows），不截断；空结果404 `sales_export_empty`。非法月份沿用400/422校验，商品ID或关键字长度错误422。
 
-文件包含“销售记录”和“说明”：原23列保留顺序，现追加4列单件分项共27列；前18列保留原位置（第9列展示本行订单总成本），追加采购、头程、尾程、其他入库成本及出库商品跌价参考。数量/收入/成本/费用/毛利、四项成本及跌价提供全部导出记录合计，未知金额及对应合计为空；单价和汇率不合计。所有用户文本按Excel文本写入，保留前导零并防止公式注入。“说明”记录月份、关键字、可选商品ID、权限范围、分项舍入及跌价独立口径。附件名`sales_YYYYMM.xlsx`，无月份为`sales_all.xlsx`，MIME为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
+文件包含“销售记录”和“说明”：原23列保留顺序，现追加4列单件分项及交易类型、来源数量共29列；前18列保留原位置（第9列展示本行订单总成本），追加采购、头程、尾程、其他入库成本及出库商品跌价参考。数量/收入/成本/费用/毛利、四项成本及跌价提供全部导出记录合计，未知金额及对应合计为空；单价和汇率不合计。所有用户文本按Excel文本写入，保留前导零并防止公式注入。“说明”记录月份、关键字、可选商品ID、权限范围、分项舍入及跌价独立口径。附件名`sales_YYYYMM.xlsx`，无月份为`sales_all.xlsx`，MIME为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
 
 只SELECT，不扣库、改成本、补快照或写导出记录。取数完成后释放只读事务，在线程生成文件。新接口须加载更新后的后端；前端未加载接口时会明确提示，不把错误网页下载为Excel。页面行为见[流程](workflow.md#销售台账导出)。
 
 ## 单件成本与计算明细
+
+SaleResponse增加`transaction_type`、`source_sku_id`、`source_product_name`、`source_quantity`及`source_type`，从保存的结算来源读取，原product_id仍为本地成本组件。列表display_sku/display_name展示来源SKU ID及产品名；没有来源的旧手工库存销售保留本地商品展示兼容。SKU ID按文本保留前导零及长编号；keyword同时匹配来源SKU ID、产品名、交易类型和本地商品，列表/月度/导出采用同一筛选。计算明细展示本地组件，并附来源表达式与数量。旧版只有直接sale_id的来源也可读取，不补写关联。
+
+`POST /sales/manual-settlements`为人民币独立结算补录：接收store_id、request_key（16至64位字母/数字/下划线/连字符）、occurred_on日期、order_no≤128、sku_id≤128、product_name≤500、transaction_type≤32、整数quantity、net_product_sales及settlement_total（16位/4位小数，允许负数）。管理员须指定有效店铺，运营只能写绑定店铺，viewer禁止。响应quantity固定0、source_quantity为录入值，成本/跌价为0且单件成本不适用。普通补录record_type=manual_settlement，赔付为compensation_income；两者source_type=manual_settlement。
+
+补录只写现有SalesImportBatch与SettlementEntry，file_type=manual_settlement、product_id/sale_id为空，不创建Sale、成本或组件分摊。request_key按店铺唯一，同内容重试返回原记录，冲突内容409 manual_settlement_conflict；唯一键竞态回滚新尝试后重读原记录。补录可通过原imports历史与撤销入口查看/撤销，撤销不改库存。旧POST /sales保持库存销售兼容，当前手工表单不再调用。
 
 SaleResponse追加可空只读字段`unit_purchase_cost_cny`、`unit_head_shipping_cost_cny`、`unit_last_mile_cost_cny`、`unit_other_cost_cny`、`unit_total_cost_cny`，均为Decimal，展示4位。四项由未舍入的有效成本分项除本行实际出库数量后ROUND_HALF_UP；不能用已舍入的两位金额反推。总单价由有效FIFO总成本除数量；分项未知但总成本已知时，总单价可保留。作废成本的总单价及无出库事件的全部单价为null，页面分别显示待核对/不适用。原有成本、利润和月度精度不变。
 
@@ -61,7 +70,7 @@ SaleResponse追加可空只读字段`unit_purchase_cost_cny`、`unit_head_shippi
 
 整单名称按上述分组店铺ID批量读取Store.name，计算明细响应中的sale/order_lines及order_summary使用同一名称，不借用商品映射推断的店铺；未知店铺的名称保持null。Excel“订单汇总”使用相同名称，不将有明确兼容绑定的历史整单误标成其他店铺或“未关联店铺”。
 
-导出原23列位置保留，另追加4列单件采购/头程/尾程/其他入库成本，第7列为相同单件总成本口径，单位价格4位、不合计，现共27列。增加“字段口径说明”和“订单汇总”，后者对本次筛选涉及的订单读取完整明细并去重，不与筛选行重复累加；全量关联明细上限20000，超限同样拒绝导出。原筛选权限、20,000匹配行上限、未知金额留空及Excel文本安全规则不变。
+导出原23列位置保留，另追加4列单件采购/头程/尾程/其他入库成本及交易类型、来源数量，第7列为相同单件总成本口径，单位价格4位、不合计，现共29列。增加“字段口径说明”和“订单汇总”，后者对本次筛选涉及的订单读取完整明细并去重，不与筛选行重复累加；全量关联明细上限20000，超限同样拒绝导出。原筛选权限、20,000匹配行上限、未知金额留空及Excel文本安全规则不变。
 
 页面脚本`/sales-ledger.js`和公开静态资源`/sales-fields.json`由main提供，后者仅包含字段标签/分组/公式/来源/口径，无业务数据、无写入。资源来自[局部zh-CN文件](../../../static/sales-fields.zh-CN.json)，Excel通过[sales_fields.py](../../../services/sales_fields.py)读取相同文件。主业务API仍在登录/店铺权限下读取；静态资源不授予业务访问权限。
 

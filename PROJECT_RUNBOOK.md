@@ -423,3 +423,7 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 单件按未舍入金额/实际库存出库件数，分位和原利润计算不改。解释接口及导出订单汇总跨当前筛选取同店完整订单，未知店铺或金额保持待核对；整单明细1000/导出关联20000上限不截断。部署需包含static/sales-fields.zh-CN.json，页面与Excel共用同源字段说明。隔离回归入口为test_sales_cost_explanations/test_sales_costs/test_sales_export、sales_cost_page_checks.cjs及inventory_workspace_browser_checks.cjs；实际目标库性能和历史资料完整性仍需按环境核验，隔离通过不等于生产验收。
 
 复查修复：整单解释及订单汇总名称按分组店铺ID读取，覆盖历史绑定与商品映射缺失/冲突；两份首页独立处理待确认区域失败，保留已加载台账和统计。无新增结构或数据修复步骤，仍按上述方式手动重启后端并刷新静态页面。
+
+产品名识别与结算补录更新（2026-10-30）：订单详情不再要求平台SKU映射，按产品名拆解倍数/组合后FIFO扣库；台账保留来源SKU ID、产品名、交易类型和来源数量（24列），导出29列。手工录入改用不扣库的人民币结算补录，物流/平台/物料赔付按结算金额计收入。复用现有表与source_key唯一键，无DDL、无历史回填；同步更新routers/sales.py、schemas.py、financial_facts.py、sales_export.py、静态模块/JSON及两份页面后，由用户手动重启8010并Ctrl+F5刷新。旧报表版本和原始数据保留，动态查询按新赔付口径计算。
+
+后续审查修复：非赔付退款按产品名保留可靠商品/组件归属，不创建出库或恢复库存；手工补录仍不关联商品。销售工作台刷新增加可选会话校验，旧响应/401不影响重登后的页面，当前刷新失败保留已保存结果并提示。仅更新销售路由、前端模块和两份页面；无DDL或历史回填，服务仍由用户手动重启。规则及隔离回归入口见[销售流程](docs/modules/sales/workflow.md)。

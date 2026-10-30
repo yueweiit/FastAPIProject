@@ -2,6 +2,12 @@
 
 本模块维护销售、FIFO 明细、文件导入、原始结算和组件分摊。字段类型/默认基于 ORM，实际数据库约束需核验。通用关系见[数据库总览](../../knowledge/database.md)。
 
+名称识别不新增结构：Sale.product_id及SaleCostDetail仍保存实际出库组件；SettlementEntry保存来源SKU ID、产品名、交易类型和来源数量，原始商品标题等仍在raw_data。响应source_sku_id/source_product_name/source_quantity/source_type及transaction_type为派生字段，不回填历史数据。
+
+非赔付退款/调整识别成功时沿用SettlementEntry.product_id（仅单一商品）及SettlementEntryAllocation.product_id/multiplier/quantity保存归属，sale_id为空，组件数量保留来源符号；不创建Sale或SaleCostDetail，不改变批次剩余数。识别失败不保留部分关联；多商品退款无金额分摊时保持未分配产品线。此关联用于查询归属，不能作为库存恢复依据，历史空归属不自动回填。
+
+手工补录复用SalesImportBatch（file_type=manual_settlement）及SettlementEntry，来源product_id/sale_id为空且不生成分摊。source_key使用manual:店铺ID:request_key占用现有唯一键，raw_data保存_manual_settlement及_manual_fingerprint用于来源识别与幂等内容校验；来源数量不等于出库数量，响应出库数为0。未新增表、字段或迁移。
+
 ## sales
 
 来源：[models.py](../../../models.py) 的 `Sale`。

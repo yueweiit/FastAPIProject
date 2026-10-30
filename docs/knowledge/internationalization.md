@@ -90,3 +90,5 @@
 销售台账新增局部[JSON资源](../../static/sales-fields.zh-CN.json)，字段编码与显示标签分离，包含分组、类型、公式、来源及口径；main公开资源仅提供静态文字，无业务数据。页面与Excel“字段口径说明”读取同一文件，当前zh-CN、未知语言回退中文，不引入全局翻译框架/依赖。新增计算弹窗、错误和单位文案集中在[sales-ledger.js](../../static/sales-ledger.js)的局部字典；旧服务未加载模块的提示在PageInteractions字典。用户订单号、SKU、商品/批次名及错误文本全部转义；Excel文本沿用字面量写入。
 
 待确认区域独立加载失败的文案使用PageInteractions的salesPendingLoadFailed键；服务器错误通过textContent或escapeHtml显示，保留行内错误而不收进问号说明。
+
+来源SKU ID、产品名、交易类型及来源数量的表头/说明集中在同一JSON资源；手工补录表单和状态在sales-ledger.js的manualMessages局部字典中，当前zh-CN并回退中文。交易类型是导入业务原文，保留原值，不作为界面翻译改写。新增手工补录历史标签使用PageInteractions.salesManualEntry；输入字段与服务器错误按原值安全显示。

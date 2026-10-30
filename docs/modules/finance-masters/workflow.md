@@ -25,10 +25,10 @@ admin 创建产品线，code 唯一；创建店铺，(platform,platform_store_id
 flowchart LR
     A["多个平台 SKU ID"] --> M["批量建立映射"]
     M --> P["组件列表：本地商品 + quantity_per_sale"]
-    P --> S["订单详情：按 SKU ID 严格匹配"]
-    S --> F["按倍数 FIFO 出库与成本分摊"]
+    P --> S["历史映射API兼容；维护入口已隐藏"]
+    N["订单详情产品名"] --> F["按名称/倍数/组合识别后FIFO出库与分摊"]
 ```
 
 创建一次可提交最多100个 SKU ID，共用同一组件列表；不能为空、不能重复或与现有平台 SKU 冲突。组件至少一个、同商品不能重复、商品必须存在、每次销售数量≥1。创建映射启用，更新可停用并按商品 ID 差量增删组件；只有多个不同商品组件才标 is_bundle=true，单一商品倍数>1不因此标组合。
 
-平台映射的唯一性为平台+SKU，没有店铺维度和生效日期。导入只使用启用的 tiktok_shop 映射；平台映射删除级联组件，但不重写过去分摊记录。依据：_validate_platform_sku_components、create_platform_sku_mappings、update_platform_sku_mapping、delete_platform_sku_mapping。
+平台映射的唯一性为平台+SKU，没有店铺维度和生效日期。订单详情导入已不读取该映射，商品页维护入口隐藏，API及历史数据保留兼容；平台映射删除级联组件，但不重写过去分摊。依据：_validate_platform_sku_components、create_platform_sku_mappings、update_platform_sku_mapping、delete_platform_sku_mapping；当前导入识别见[销售流程](../sales/workflow.md#文件导入)。
