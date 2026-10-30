@@ -1,6 +1,6 @@
 # 销售、导入及待确认 API
 
-前缀 /sales，共 9 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
+前缀 /sales，共 10 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
@@ -12,6 +12,7 @@
 | `GET /sales/pending-confirmations/export` | [export_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | 无 | Excel 文件 |
 | `GET /sales/monthly-summary` | [monthly_sales_summary](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | list[MonthlySalesSummaryResponse] |
 | `GET /sales` | [list_sales](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month、page、page_size | list[SaleResponse] \| SalePageResponse |
+| `GET /sales/export` | [export_sales_records](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | 全部匹配台账的Excel文件 |
 | `GET /sales/{sale_id}` | [get_sale](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleResponse |
 
 ## 手工销售与查询
@@ -23,6 +24,31 @@ SaleCreate：product_id、order_no、quantity>0；store_id 可在模型层为空
 GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM；列表还支持 page/page_size。monthly-summary 按全部筛选结果汇总，不只是当前页，返回数量、人民币收入/成本/费用/毛利、fx_missing_count及新增settlement_event_count。未关联出库的退款/调整/赔付事件纳入金额，不增加销售单数或数量；同事件只计一次。
 
 SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页/数组列表均包含独立财务事件：赔付record_type=other_expense，其他退款/调整为settlement_adjustment，负id、quantity=0；不是sales主键，不能调用GET /sales/{sale_id}。先合并完整结果再分页；月度统计采用相同事件取数。商品筛选仅归属明确单一product_id的事件；组合份额未定的事件保留全店汇总，不猜测商品分摊。
+
+## 销售台账导出
+
+列表（分页/数组）、`GET /sales/{sale_id}` 及手工销售响应在 `SaleResponse` 增加以下只读字段，旧字段和结构兼容，无数据库迁移；规则见[成本流程](workflow.md#出库成本拆分与跌价参考)。
+
+| 字段 | 类型/精度 | 含义 |
+| --- | --- | --- |
+| `purchase_cost_cny` | Decimal / null，分 | 本行采购成本 |
+| `head_shipping_cost_cny` | Decimal / null，分 | 本行头程成本 |
+| `last_mile_cost_cny` | Decimal / null，分 | 本行尾程成本 |
+| `other_cost_cny` | Decimal / null，分 | 本行其他入库成本，与平台其他费用分开 |
+| `order_total_cost_cny` | Decimal / null，分 | 四项展示金额之和，本行总成本；原 `total_cost` 仍为完整精度 |
+| `cost_breakdown_review_reason` | string / null | 原始构成/明细缺失、不一致或作废的拆分待核对说明 |
+| `impairment_cny` | Decimal / null，完整计算精度 | 出库商品已提跌价参考金额，独立于成本及毛利 |
+| `impairment_review_reason` | string / null | 跌价待核对或历史规则推定说明，已知参考金额也可附说明 |
+
+非库存事件上述金额为0；有出库但未知的分项/跌价为null。字段按实际本地组件数量计算，不对组合订单重复返回整单总额；不得把 `impairment_cny` 直接作为销售店铺跌价费用。服务端先校验现有店铺权限，再为获准响应计算，跨店全局事实仅用于共享安全库存计算。
+
+`GET /sales/export`沿用列表的`month=YYYY-MM`、`keyword≤255`和可选`product_id>0`筛选；月份为空导出全部月份，keyword首尾空白忽略，商品ID与关键字按AND组合。没有page/page_size限制，不按当前页截断。admin读取全部店铺，operator/viewer固定当前绑定店铺，无绑定403；不接受以store_id切换范围。静态路径先于`/{sale_id}`注册，不改变已有详情接口。
+
+接口复用`list_sales`的不分页响应，包含相同的独立退款/调整/赔付事件及0数量、固化汇率、成本追溯和待核对空值；商品名称/SKU批量读取，无逐记录查询。先用相同权限/筛选SQL统计销售及独立事件，超过20,000条返回422 `sales_export_too_large`（含max_rows），不截断；空结果404 `sales_export_empty`。非法月份沿用400/422校验，商品ID或关键字长度错误422。
+
+文件包含“销售记录”和“说明”：共23列，前18列保留原位置（第9列展示本行订单总成本），追加采购、头程、尾程、其他入库成本及出库商品跌价参考。数量/收入/成本/费用/毛利、四项成本及跌价提供全部导出记录合计，未知金额及对应合计为空；单价和汇率不合计。所有用户文本按Excel文本写入，保留前导零并防止公式注入。“说明”记录月份、关键字、可选商品ID、权限范围、分项舍入及跌价独立口径。附件名`sales_YYYYMM.xlsx`，无月份为`sales_all.xlsx`，MIME为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
+
+只SELECT，不扣库、改成本、补快照或写导出记录。取数完成后释放只读事务，在线程生成文件。新接口须加载更新后的后端；前端未加载接口时会明确提示，不把错误网页下载为Excel。页面行为见[流程](workflow.md#销售台账导出)。
 
 ## 文件导入
 

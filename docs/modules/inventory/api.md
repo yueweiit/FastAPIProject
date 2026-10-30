@@ -1,6 +1,6 @@
 # 入库批次与库存查看 API
 
-前缀 /batches，共7个端点（含1个已停用的兼容入口）。admin/operator可编辑或作废任意创建人的历史批次（含已售），强制留痕。页面统一通过“强制删除”执行软作废，未出库批次也保留原记录；旧物理删除接口返回410。活动批次共享读取，修改日志仅admin/operator可读。
+前缀 /batches，共8个端点（含1个已停用的兼容入口）。admin/operator可编辑或作废任意创建人的历史批次（含已售），强制留痕。页面统一通过“强制删除”执行软作废，未出库批次也保留原记录；旧物理删除接口返回410。活动批次共享读取，修改日志仅admin/operator可读。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
@@ -12,9 +12,34 @@
 | `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、keyword、page、page_size、voided_only | list[BatchResponse] \| BatchPageResponse |
 | `GET /batches/export` | [export_batches](../../../routers/batches.py) | admin/operator/viewer | batch_ids、product_id、keyword、voided_only | Excel 文件 |
 
+## 库存内归属管理API
+
+`PUT /batches/{batch_id}/impairment-stores`仅admin/operator。请求为`impairment_store_ids`（至少1项、最多100）、`edit_version`（64位内容版本）、`impairment_change_mode=from_arrival/from_change_date`（默认from_arrival），禁止额外字段。返回BatchResponse。父批次及关联锁内重验版本，冲突409，作废409，不存在404，无效/空/停用店铺422；不修改数量、剩余、单价、成本或日期，追加update日志。GET /batches?product_id=...&page=...&page_size=20用于分页读取；旧数组响应不变。新管理器按角色隐藏写入口，失败保留选择，保存期间锁表单、关闭/退出/同账号重登使旧请求失效。
+
 ## 库存查看 API
 
-新增[inventory.py](../../../routers/inventory.py)的4个只读GET接口，既有批次/商品契约和写入权限不变：
+### 盘点与跌价扩展
+
+`/inventory`现共8个业务端点，原4个接口保持兼容，另增加以下4个。以下读取用RequireAnyRole，保存用RequireOperator；全部校验当前角色/绑定，未来日期及1900年前日期422，非管理员历史日期403，不接受店铺参数切换范围。
+
+| 方法/路径 | 输入 | 响应/范围 |
+| --- | --- | --- |
+| `GET /inventory/assessment` | as_of可选（默认上海今天）、keyword≤255、product_id>0、page≥1、page_size1–100默认20 | items/total/page/page_size/as_of/scope/can_write；scope为global或shared_current |
+| `GET /inventory/assessment/export` | as_of、keyword、product_id；忽略分页参数 | 全部匹配商品xlsx；`inventory_assessment_YYYYMMDD.xlsx`，上限2000商品/10000批次 |
+| `POST /inventory/stock-counts` | InventoryCountCreate JSON | 新增不可覆盖盘点版本；相同幂等键/内容返回原记录 |
+| `GET /inventory/stock-counts` | product_id、count_date、page、page_size | 按该商品/日期分页，items/total/page/page_size；版本ID倒序 |
+
+assessment.items含product_id/sku/name/image/as_of、month_inbound/month_outbound、system_quantity、average_unit_cost、inventory_amount、impairment_amount、monthly_total_impairment_amount、book_value、product_type/safe_stock_quantity、warnings、batches、ledger_version、count及count_basis_changed。count为空表示未盘点；0不能当未填写。batches含batch_id/no、quantity、arrived_at、age_days、unit_cost、inventory_amount、impairment_amount、monthly_total_impairment_amount、store_names、store_allocations及note；店铺分摊金额非管理员仅含本人绑定店铺，不返回历史days。保存的count包含id/count_date/revision/system_quantity/actual_quantity/difference/note/created_by/created_at。
+
+month_inbound沿用既有入库可见范围：viewer不包含作废批次，admin/operator保留原范围；页面和Excel一致。内部system_quantity/ledger_version仍按完整共享数量事实计算，不能随读取角色变化。逐批数量核对失败（即使SKU合计相等）时，warnings增加`inventory_assessment_quantity_mismatch`，该商品相关货币字段及批次quantity/金额、店铺分摊为null（单件成本保留已知源值）；其他商品保留已知值，Excel相关不完整合计留空。接口不新增/改名字段，不暴露内部逐批核验映射。
+
+保存必传product_id、count_date、actual_quantity（严格JSON整数0–2147483647）、ledger_version（页面给出的64位小写十六进制）、request_key（16–64位字母数字/横线/下划线），可传previous_id（当前盘点ID，首次null）及note≤1000。客户端不得用当前显示总数自行伪造版本。差异在服务端计算；记录当时账面，不提交直接库存调整。
+
+稳定错误：`inventory_count_schema_required`为503（表未准备，不自动DDL）；`inventory_count_conflict`/`inventory_count_untrusted`为409（版本或数量不可信）；`inventory_count_date_restricted`为403；`inventory_date_invalid`/`inventory_future_date`为422；源/导出上限复用既有inventory_sources_too_large、inventory_export_too_large、inventory_export_sources_too_large，空导出404 inventory_export_empty。保存时可能发生批次锁等待；新表唯一约束冲突整笔回滚，不调整库存。
+
+以下为原有只读接口：
+
+既有[inventory.py](../../../routers/inventory.py)的4个只读GET接口，批次/商品契约和写入权限不变：
 
 | 方法与路径 | 参数 | 范围与响应 |
 | --- | --- | --- |
@@ -23,7 +48,7 @@
 | GET /inventory/movements | product_id>0、day、kind=inbound/outbound/adjustment（默认outbound）、page/page_size | 出库按销售权限，adjustment仅admin，viewer入库来源排除作废；items/total/page/page_size、product_id/sku/name/day/kind |
 | GET /inventory/export | view=overview/daily/matrix（默认overview）、keyword、可选product_id；daily/matrix必传month | 总览共享，日结沿用绑定店铺权限；xlsx附件，不按页面分页截断 |
 
-overview.items沿用商品响应，旧stable正安全库存显示safe_stock，追加stock_status=zero/low/normal/pending（负库存待核对）；summary.quantity/inventory_amount/low_count/zero_count仅为本页小计。预警只针对安全库存商品；金额含启用的成本补差，不扣跌价准备。
+overview.items沿用商品响应，旧safe_stock和stable正安全库存均显示stable；stock_status=zero/low/normal/pending，低库存预警针对稳健商品的安全库存字段。summary仍仅为本页小计，成本含启用的补差、不扣准备。
 
 overview的可选product_id用于联想候选精确筛选，复用商品有效成本聚合；与keyword按AND组合，无匹配返回空页，页码归一为1。未传时保留原搜索/分页契约。联想继续复用`GET /products?keyword=...&page=1&page_size=20`，不新增候选API或变更商品接口；总览、日结和导出均携带所选ID。
 
@@ -47,7 +72,7 @@ view=overview输出“库存总览”“说明”；daily输出“月度汇总�
 
 ## BatchCreate 请求
 
-新增可选`impairment_store_ids: list[int]`，最多100项，正ID、去重排序；创建默认[]，沿用创建人店铺推导。PUT遗漏保留，显式[]清空；无效/新选停用店铺422 `batch_impairment_store_invalid`，原有停用对象可保留。响应新增impairment_store_ids、impairment_store_names；ID纳入edit_version，旧表单不能覆盖新归属。仅admin/operator可写，支持已售批次的纯归属更正，无需财务增强开关，不改余量/原FIFO成本，日志保存前后归属。规则见[批次跌价归属](workflow.md#批次跌价归属)。
+`impairment_store_ids: list[int]`最多100项，正ID、去重排序。POST遗漏/[]允许入库，写显式空归属日规则以区别历史绑定兼容；指定ID仍校验存在及启用状态。原PUT遗漏字段保持归属不变，允许未分配批次编辑其他资料；显式[]仍拒绝。归属迁至库存页独立保存，管理时必须至少一家，旧客户端原PUT合法归属仍兼容。仅admin/operator写入，viewer只读；店铺不影响共享库存/FIFO，历史日规则与旧月度版本保留。
 
 PUT另接受`impairment_change_mode: Literal["from_arrival","from_change_date"]`，遗漏默认`from_arrival`兼容旧客户端；仅在请求含impairment_store_ids时处理。响应新增`impairment_store_history: [{effective_date,store_ids,store_names,is_explicit}]`；无日规则为[]。生效日由服务端决定，不接受任意回填日期；相同店铺的按日保存不追加规则，历史更正可重置已有历史。历史也纳入并发版本和日志，旧版本保存请求409；非法模式422。新页面默认按修改日，新前端发现旧响应缺少历史字段则禁用该模式，避免旧后端忽略字段导致意外追溯。
 
@@ -57,7 +82,7 @@ PUT另接受`impairment_change_mode: Literal["from_arrival","from_change_date"]`
 
 必填 product_id、quantity，quantity>0。采购信息优先 total_amount（≥0）；没有该字段时兼容 purchase_price（≥0，默认0）。shipping_cost、last_mile_cost、other_cost 是整批费用，默认0；钉钉单号和三个成本单号可空，最大长度64。shipping_date、arrived_at 可省略。
 
-PUT使用BatchUpdate，要求edit_version；受保护批次改数量/金额还须cost_edit_mode="restate"，否则428（batch_restatement_mode_required），防止旧客户端无意覆盖已确认成本。quantity必填；费用省略仍用默认0，不是PATCH。product_id不会写回，可选单号省略保留/null清空。POST保持原契约。客户端应从edit_values回填有效金额；没有该对象时沿用原字段。
+PUT使用BatchUpdate，要求edit_version；受保护批次改数量/金额还须cost_edit_mode="restate"，否则428（batch_restatement_mode_required），防止旧客户端无意覆盖已确认成本。quantity必填；费用省略仍用默认0，不是PATCH。product_id不会写回，可选单号省略保留/null清空。POST保留原采购价/总金额兼容，归属可遗漏或为空，按上方规则保存为待分配。客户端应从edit_values回填有效金额；没有该对象时沿用原字段。
 
 PUT的quantity范围为1–2147483647，对齐数据库INT；还须满足已售数量下限。
 

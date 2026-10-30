@@ -1,6 +1,6 @@
 # 入库模块代码映射
 
-批次跌价多选由PageInteractions.batchStores及两份页面提供；POST/PUT在批次事务内调用[batch_store_allocations.py](../../../services/batch_store_allocations.py)校验/写入关联，AssignedBatch包含归属、日规则与内容版本。按日生效及基线保存由[batch_impairment_history.py](../../../services/batch_impairment_history.py)负责，准备转移由同一均分服务生成，回归见[test_batch_impairment_history.py](../../../tests/test_batch_impairment_history.py)。均分计算供报表复用，FIFO不调用。测试入口[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)，真实DOM见既有inventory_workspace_browser_checks.cjs；离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)。
+库存内归属管理由[inventory-allocations.js](../../../static/inventory-allocations.js)提供，两份HTML挂载同一模块，总览/盘点按商品ID打开批次分页列表。GET /batches复用活动批次和内容版本；PUT /batches/{id}/impairment-stores通过`_batch_edit_context`复用父批次→成本层→归属/日规则锁序，仅提交归属ID、生效模式和版本，不接受数量/成本字段，成功同事务留BatchChangeLog。新入库无归属由`initialize_unassigned`写显式空基线；分摊及未知传播由batch_store_allocations.py统一处理。测试见[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)、[浏览器回归](../../../tests/inventory_workspace_browser_checks.cjs)。无新增表，沿用两张日规则表。
 
 库存Excel由[services/inventory_export.py](../../../services/inventory_export.py)格式化，只消费页面共用的overview_row/activity_rows，不连接数据库或另算库存。接口测试核对总览/整月/横向格式、全查询范围、指定商品、跨店权限、未知合计空白、文本/公式安全、上限和分组期间一致性；浏览器测试核对下载文件名/参数、忙时重复点击、失败恢复、无效文件和旧会话响应。
 
@@ -13,6 +13,9 @@
 | 入库成本预览/创建 | calcUnitCost、createBatch | create_batch、_resolve_purchase_values、_calc_unit_cost、_next_batch_no | products、inventory_batches |
 | SKU 下拉 | loadBatchSkuOptions、loadProductOptions | list_product_options | products |
 | 库存总览/预警 | InventoryWorkspace.open、refresh、render | inventory.overview；复用products.list_products | 活动批次余量及有效成本 |
+| 盘点/跌价页签、批次及导出 | static/inventory-assessment.js | inventory.assessment/export_assessment；services/inventory_assessment.py | 既有日结/持有期间准备及库存盘点版本；services/inventory_export.py格式化 |
+| 保存/查询盘点历史 | InventoryAssessment内save/history | inventory.save_stock_count/stock_counts；quantity_basis/latest_counts | inventory_stock_counts；按FIFO顺序锁批次重验数量，幂等/乐观版本/唯一约束 |
+| 历史逐批核对/权限入库 | 同一盘点页及Excel | inventory_activity.build_activity(batch_balances)、quantity_basis的入库事件、assessment_rows(include_voided_receipts) | 内部逐批余量和完整数量版本；viewer仅展示可见入库，抵消更正不能确认错误历史金额 |
 | 每日进出/三种视图 | inventory-workspace.js | inventory.daily、product_page、activity_data | inventory_activity.load_activity_sources/build_activity |
 | 顶部联想/按商品输入检索 | searchField、bindProductSearch、searchProducts、chooseProduct、applyKeywordQuery | products.list_products；inventory.overview/daily/export(product_id) | 共用候选20项与键盘逻辑，独立请求状态；精确ID、关键字查询、输入法、取消及会话隔离 |
 | 来源弹窗 | openDetail、loadDetail、closeDetail | inventory.movements | 分页FIFO、到货基数、更正及作废负调整 |
@@ -29,6 +32,14 @@
 | 撤销恢复 | rollbackSalesImport | rollback_sales_import | 原批次、原成本明细 |
 
 来源：[templates/index.html](../../../templates/index.html)、[routers/batches.py](../../../routers/batches.py)、[routers/products.py](../../../routers/products.py)、[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/cost_layers.py](../../../services/cost_layers.py)。契约为 [schemas.py](../../../schemas.py) 的 BatchCreate/BatchUpdate/BatchVoidRequest/BatchResponse/BatchPageResponse。
+
+盘点回归：[test_inventory_assessment.py](../../../tests/test_inventory_assessment.py)用隔离SQLite/ASGI验证字段/批次/准备、0实盘、历史版本/幂等/冲突、正常较晚销售不污染历史盘点、回填日结变更、严格输入/异常回滚、角色/日期及店铺范围、完整Excel/文本安全/未知合计、缺结构503。真实MySQL锁等待仍待验证。无头浏览器测试新增两份页面的录入/差异/重复点击/错误保留输入/历史/转义/下载和返回原库存页。
+
+2026-10-29另在正常登录的本地8010页面完成管理员录入、保存、刷新、三个历史版本及真实Excel下载，后端连接既有MySQL测试库；自建测试数据已清理并核对既有业务记录未变。结构状态、证据与未覆盖范围见[本地盘点核验](../../../PROJECT_RUNBOOK.md#库存盘点与跌价2026-10-29)，不以模拟API浏览器检查代替真实链路结论。
+
+审查回归另覆盖：后续跨批次+20/−20数量更正相互抵消、SKU数量相等但历史金额须置空；更正后日期和无关商品仍可显示已知值；零余量未来/作废批次不误判；admin/operator/viewer页面及Excel入库范围与原日结一致、隐藏异常入库不污染可见统计、盘点版本不因角色改变。两份真实浏览器页面验证保存期间实盘/备注/取消锁定，冲突及网络失败后恢复控件和保留输入、同键重试与退出后新表单隔离。
+
+归属管理审查回归覆盖：待分配批次作废前后历史准备/转销保持未知及警示，创建人以外店铺、入库前/持有期/作废后边界；零成本待分配不污染损益，小额非零成本和未知比例单位保留待核对。两份页面模拟保存期间批次数20→21、末页21→20并回到第一页，分页按钮采用最新结果，失败恢复与旧会话隔离继续验证。
 
 相关测试为 [test_sales_rules.py](../../../tests/test_sales_rules.py)、[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py)；真实验证脚本 [mysql_fifo_concurrency.py](../../../tests/mysql_fifo_concurrency.py) 会写测试库，需要独立运行授权。历史批次字段/创建人转移脚本见 [migrations/](../../../migrations/)，不得默认执行。
 

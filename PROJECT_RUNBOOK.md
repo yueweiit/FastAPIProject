@@ -8,7 +8,11 @@
 
 ### 批次手工跌价归属（新增结构）
 
-新建/编辑批次增加“跌价归属店铺”多选，用于按剩余库存跌价金额均分；A/B可多卖少卖，不设库存配额、不改变共享FIFO。归属更正可选择从入库日重算或从北京时间修改日生效。后者保留原费用并转移剩余准备、单列转入/转出；旧月度版本不覆盖。无历史且未指定沿用原口径。字段、事务及金额尾差见[库存规则](docs/modules/inventory/workflow.md#批次跌价归属)和[报表规则](docs/modules/reports/workflow.md#手工店铺跌价归属)。
+跌价归属在库存总览/盘点页逐批手工维护，可单店或多店均分，不设库存销售配额。入库/批次资料编辑不再要求同时选择；新入库未分配时写显式空日规则，库存跌价照算，店铺分摊待核对，不自动归给创建人店铺。历史无日规则记录读取仍沿用原兼容绑定；不批量重置。管理时至少一家，保留从入库日更正/从北京时间修改日生效两种模式，旧月度版本不覆盖。详见[库存规则](docs/modules/inventory/workflow.md#批次跌价归属)。
+
+2026-10-29最新调整：商品界面/导入模板仅稳健、新品、不跌价三类，安全库存是稳健商品的独立字段；旧safe_stock/旧标签兼容为stable并保留数量，不批量改写规则历史。仅稳健扣安全库存后每日1%，新品全部库存0.5%，不跌价停止新增，90%上限及既有准备保留。归属管理新增`PUT /batches/{id}/impairment-stores`，只写归属与日志，复用行锁/内容版本；新入库允许待分配，不需新表或回填，沿用现有两张归属日规则表。加载routers/batches.py、schemas.py、batch_impairment_history/store_allocations、商品/准备公共服务与报表、inventory工作台/盘点脚本、新inventory-allocations.js静态路由及两份页面；本地8010由用户手动重启并刷新。本轮仅隔离回归/静态预览，未执行目标库DDL、业务写入或服务重启，生产仍须按授权发布。
+
+该归属管理的后续审查修复加载routers/reports.py、services/batch_store_allocations.py及static/inventory-allocations.js：作废待分配批次按历史持有期保留未知；按金额识别零成本和非零/未知准备影响；保存先恢复控件后刷新，避免旧分页状态覆盖新结果。回归覆盖零成本、微小非零成本、未知数量、历史/无关期间和跨店范围，以及两份页面20→21/21→20分页边界。无新API字段、数据库结构或历史回填，沿用已有中文警示；本轮隔离测试不代替真实MySQL并发或生产验收，未重启8010。
 
 新增基础表batch_impairment_stores（batch_id/store_id复合主键、外键、店铺索引），不依赖财务增强开关，不自动回填旧批次。离线生成：`.\.venv\Scripts\python.exe migrations/add_batch_impairment_stores.py --write-sql output/batch_impairment_stores.sql`。脚本不连接数据库；2026-10-28经用户明确授权，仅在本地127.0.0.1:3309 / inventory_fifo_test新建该表，复合主键、外键/索引核验通过，新表0行，9张既有业务表记录数及校验值一致，证据位于output/batch-store-allocation/verification.json。没有回填数据、重启8010或部署生产。其他目标环境应先备份、核验父表INT/InnoDB、外键/字符集、权限及现存表结构，取得相应环境变更授权后建表，再统一加载models/schemas、batch_store_allocations、批次/报表/店铺路由、financial_versions、page-interactions及两份页面。启动会create_all且有其他写入，不能作为结构预检。回退应保留关联表/日志与旧版本，不删除业务数据。
 
@@ -29,6 +33,34 @@
 验证用`python -m unittest tests.test_inventory_workspace -v`（独立SQLite/ASGI）和`node tests/inventory_workspace_browser_checks.cjs`（现有Playwright/已安装浏览器、本地静态服务与模拟API）；详见[代码映射](docs/modules/inventory/code-map.md)。这些验证不运行main生命周期，不等于目标MySQL或生产历史数据验收。完整更新仍遵循本文既有备份、授权和启动副作用边界。
 
 顶部“商品名称 / SKU”和按商品查看均支持输入联想，复用现有`GET /products`分页搜索全部商品，不限当前库存页；候选展示SKU及名称。点选按ID精确筛选和导出，不选则保留关键字查询。总览增量支持可选product_id，不改原响应、权限或数据库结构；这次需加载更新后的Python路由及共享JS/两份页面，手动重启本地后端并强制刷新。交互和导出选择规则见[库存查看流程](docs/modules/inventory/workflow.md#库存查看与每日进出)。
+
+## 库存盘点与跌价（2026-10-29）
+
+该功能的审查修复同步services/inventory_activity.py（内部逐批截止日余量）、services/inventory_assessment.py、routers/inventory.py、services/inventory_export.py和static/inventory-assessment.js：跨批次数量更正抵消时仍标金额待核对；viewer入库统计排除作废；保存期间锁定表单，失败恢复并保留输入。该次修复无API字段/数据库结构变更，不需新DDL或回填；审查阶段仅执行隔离测试，未执行DDL或重启8010。当前本地表结构及真实页面核验结果见下文，不再将该本地库标为待建表。
+
+库存增加同名页签，展示截止日成本、准备、逐批到货/库龄及手工实盘对照；保存仅追加盘点版本，不改库存/FIFO/成本。详细权限、历史对照、版本/幂等/冲突及数量异常见[盘点流程](docs/modules/inventory/workflow.md#人工盘点对照)。新增inventory_stock_counts，ORM现32表（8张财务增强默认关闭）。最初交付仅生成DDL及隔离测试；尚未具备此表的其他环境仍须先按授权准备空表，无历史回填。不要用启动应用代替单表预检：init_db会创建缺表，随后还执行现有迁移/修复/快照流程。
+
+2026-10-29本地实际核验：`127.0.0.1:3309 / inventory_fifo_test`的`inventory_stock_counts`已经存在，11个字段的类型/非空约束、主键、商品/日期/版本联合唯一键、请求键唯一约束及products/users外键与ORM一致，InnoDB/utf8mb4。本次没有执行建表、迁移或重启服务；8010已具备三个盘点接口，提供的盘点脚本与工作区一致。此结论只适用于该本地测试库，不能代表生产已建表或已部署。
+
+正常登录本地8010后，使用独立临时商品（账面20件）完成真实浏览器→FastAPI→MySQL验证：空值/负数不保存，实盘18、0、22依次保存为版本1/2/3，差异−2/−20/+2；刷新后读数和备注保留，历史记录倒序保留三版。实际下载Excel的四个工作表、筛选商品、最新实盘/差异/备注、批次成本及合计均已核对；清理测试数据后取消筛选再导出，得到全部48个商品和72条批次，覆盖当前页20条以外的商品，异常空值与不完整合计仍保留。保存前后测试批次数量20、单位成本10不变；清理自建盘点、归属、批次和商品后，11张相关业务表的既有记录数量/内容摘要与验证前一致，仅自增序列正常推进。证据位于本机忽略目录`output/inventory-count-live/`。52项库存/盘点隔离测试及两份页面362项浏览器检查通过；真实管理员链路已核验，其他角色/日期及异常由回归覆盖，真实MySQL并发锁等待、生产结构与完整历史财务验收仍待验证。
+
+离线生成（不连接数据库）：
+
+```powershell
+.\.venv\Scripts\python.exe migrations/add_inventory_stock_counts.py --write-sql output/inventory_stock_counts.sql
+```
+
+以上离线DDL及以下准备步骤适用于尚未具备此表的环境，已核验的本地测试库无需重复建表。执行DDL前核实获准环境与products/users父表；数据库准备完成后再同步models/schemas、routers/inventory.py、services/inventory_assessment.py、services/inventory_export.py、main.py静态入口、两份HTML及两份库存脚本。缺结构接口返回503和明确提示，不自动迁移。8010仍由用户手动重启；生产DDL/部署需另行授权。记录表一旦有正式盘点数据，不通过删表回滚；可回退页面并保留记录，待兼容版本恢复。
+
+## 销售台账导出（2026-10-29）
+
+同次增量为销售台账及Excel增加四项出库成本、本行订单展示总额及独立跌价参考，业务口径及异常空值见[销售成本流程](docs/modules/sales/workflow.md#出库成本拆分与跌价参考)。使用保存的FIFO明细自动派生，历史正常记录无需重新导入；无新表、迁移或历史回填。后端需同步`routers/sales.py`、`routers/reports.py`、`schemas.py`、`services/cost_layers.py`、`services/inventory_provision_data.py`、`services/sales_costs.py`、`services/sales_export.py`，页面同步两份HTML及`static/page-interactions.js`。按原运行方式重启后端并刷新页面即可加载；8010由用户手动重启，本轮未操作服务或业务数据库。新成本列在台账右侧，横向滚动查看。
+
+销售记录筛选栏增加“导出销售记录”，按点击时月份及商品名称/SKU导出全部匹配记录，不限当前页；清空月份导出全部月份。新增GET /sales/export沿用销售权限及列表口径，包含独立退款/调整/赔付、实际成本追溯和缺失汇率空值。最多20,000条，超限拒绝、不截断；文件含台账、合计、筛选范围说明，文本按Excel字面量写入。规则及接口见[销售流程](docs/modules/sales/workflow.md#销售台账导出)和[API](docs/modules/sales/api.md#销售台账导出)。
+
+无需新增依赖、DDL或历史回填，不能只更新HTML；加载routers/sales.py、services/financial_facts.py、services/sales_export.py、共享page-interactions.js及两份页面，后端新路径需重启进程后生效。服务启动仍有既有写入，按原环境预检与授权流程处理，本轮未重启8010、连接目标库或部署生产。导出请求只SELECT，取数后释放只读事务再生成文件。
+
+验证入口：`python -m unittest tests.test_sales_export tests.test_financial_facts -v`、`node tests/sales_export_page_checks.cjs`及既有`inventory_workspace_browser_checks.cjs`。测试使用隔离SQLite/本地静态页面和模拟API，覆盖全筛选范围、店铺隔离、金额/未知值、源记录不改、文本安全、下载和会话隔离；真实MySQL性能及生产历史完整性仍待验证。
 
 ## 批次跨创建人编辑与修改日志
 

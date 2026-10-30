@@ -152,6 +152,8 @@
 
 sales.quantity 是本地商品出库件数，sale_cost_details.quantity 是从单个批次扣减件数；同一 Sale 的明细数量之和应等于销售数量，成本之和应等于 total_cost。组合一行产生多个 Sale，settlement_entries.product_id/sale_id 可以为空，通过 allocations 关联，不代表必然映射失败。
 
+页面及导出的四项成本、本行订单展示总成本和出库商品跌价为只读派生值，不新增销售列或成本快照，也不回填历史。四项基于保存的FIFO明细、批次原成本/冻结依据及财务追溯层；跌价基于同商品全局历史数量层回放。API字段与空值语义维护于[API](api.md#销售台账导出)，计算、精度及归属边界见[流程](workflow.md#出库成本拆分与跌价参考)。
+
 settlement_entries.quantity 为平台来源数量，可为负数；allocations.quantity 是乘倍数后的组件数量。sales_import_batches.sales_created 是生成的销售记录数，不是源行数，也不是售出件数。
 
 ## 店铺、幂等和审计

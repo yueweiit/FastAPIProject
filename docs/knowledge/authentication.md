@@ -47,13 +47,13 @@ EIMS 采用授权码 + PKCE S256，RS256 ID Token 验签并校验 issuer/audienc
 
 ## 店铺与租户机制
 
-库存工作台`/inventory`不增加写入权限；完整调整日结/来源仅admin，非管理员出库复用既有_sale_store_scope及未绑定拒绝规则，期初/调整/期末为null。不能以共享库存页面泄露其他店铺订单或按本店出库倒推全局日结；详见[库存查看](../modules/inventory/workflow.md#库存查看与每日进出)。
+库存原总览/日结/来源/导出不增加批次写入权限；新增盘点POST仅admin/operator、只写独立盘点表，viewer只读。盘点/跌价页管理员可处理历史日期，非管理员须绑定店铺且仅今日，出库与店铺分摊限本店；原共享总览不变，详见[盘点流程](../modules/inventory/workflow.md#人工盘点对照)。完整调整日结/来源仅admin，非管理员出库复用既有_sale_store_scope及未绑定拒绝规则，期初/调整/期末为null。不能以共享库存页面泄露其他店铺订单或按本店出库倒推全局日结；详见[库存查看](../modules/inventory/workflow.md#库存查看与每日进出)。
 
 不存在统一 Tenant 模型、tenant_id、按租户建库或统一查询拦截。当前实现是“共享商品/库存 + 具体接口按店铺限制敏感数据”。
 
 管理员不能绑定店铺；非管理员可以绑定一个有效店铺，也能由管理员解绑。提升为 admin 会清空绑定。新手工销售保存所选/绑定店铺，运营导入同时固化 sales、settlement_entries、sales_import_batches 的 store_id；随后改绑不改变这些新记录的店铺。
 
-旧销售 store_id 为空时，权限查询会通过销售创建人当前 store_id 兼容判断，展示还可能通过有效店铺 SKU 映射推断；创建人改绑可能影响旧记录。批次没有独占店铺字段；新增batch_impairment_stores仅用于手工指定跌价均分归属，未指定时沿用创建人绑定。修改仅admin/operator，viewer只读；已关联店铺不可删除。FIFO仍不按店铺锁定库存。平台映射也不包含 store_id。依据：[销售范围辅助函数](../../routers/sales.py) 的 _sale_store_scope、_sale_import_context，[快照服务](../../services/accounting_periods.py)。
+旧销售 store_id 为空时，权限查询会通过销售创建人当前 store_id 兼容判断，展示还可能通过有效店铺 SKU 映射推断；创建人改绑可能影响旧记录。批次没有独占店铺字段；batch_impairment_stores仅用于手工指定跌价均分归属，归属在库存页按批次维护，管理保存至少一家；新入库及其他资料编辑允许待分配，显式空日规则不沿用创建人绑定。只有历史无日规则的未指定记录保留原绑定兼容。修改仅admin/operator，viewer只读；已关联店铺不可删除。FIFO仍不按店铺锁定库存。平台映射也不包含 store_id。依据：[销售范围辅助函数](../../routers/sales.py) 的 _sale_store_scope、_sale_import_context，[快照服务](../../services/accounting_periods.py)。
 
 ## 必须明确的安全边界
 
@@ -70,3 +70,5 @@ EIMS 采用授权码 + PKCE S256，RS256 ID Token 验签并校验 issuer/audienc
 ## 财务增强权限增量
 
 `/financial-control`除config外须显式启用。读取财务按店铺；admin可选店铺，operator/viewer只能绑定店铺；成本调整列表沿用共享库存例外。写入admin/operator，成本operator仅自己的批次，费用确认/反向仅admin，审计查询仅admin。其余版本保存、分类、回款/反向及来源选择允许绑定店铺operator；viewer只读。版本获取/比较/导出也逐次检查当前店铺权限。详见[财务API](../modules/financial-control/api.md)。
+
+盘点页及其Excel的本月入库同样保留viewer排除已作废批次的限制，管理员/运营范围不变；完整数量事实仅用于内部账面及版本核验，不作为viewer的可见入库统计。

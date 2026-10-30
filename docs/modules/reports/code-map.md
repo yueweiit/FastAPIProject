@@ -9,7 +9,7 @@
 | 财务附件 | exportFinancialAttachments | export_financial_attachments、_build_inventory_impairment_workbook、_build_store_profit_loss_sheet、_build_store_profit_loss_summary_sheet、_build_product_line_profit_sheet | 存货+店铺损益+产品线 |
 | 月度销量/当前库存 | 当前主要报表导航未发现独立月度页，保留 API | monthly_report | 销售、商品、当前全局库存 |
 | 月末快照 | 无人工页面/公开 API | main.lifespan、_monthly_snapshot_worker、ensure_period_snapshot、create_period_snapshot | accounting_periods、inventory_period_snapshots |
-| 持有期间计提/转销 | 07/09/10/12共用 | _load_inventory_provision_data → replay_inventory_provisions | 批次、逐笔FIFO、规则历史、日内先计提后转销 |
+| 持有期间计提/转销 | 07/09/10/12共用；销售只复用实物转销参考 | _load_inventory_provision_data → services/inventory_provision_data.py load_inventory_provision_data → replay_inventory_provisions | 批次、逐笔FIFO、规则历史、日内先计提后转销 |
 | 作废批次历史持有费用待核对 | 店铺损益/API及财务附件 | _voided_inventory_holding_counts、_store_provision_financial_values | 作废时间、创建人当前店铺、入库数量/日期、累计出库数量及最后销售日；受影响费用留空 |
 | 独立结算/人工期间 | 销售月度、损益/产品线/附件 | unlinked_settlement_events、manual_period_values、derive_manual_periods | services/financial_facts.py；结算、分摊、人工月记录 |
 | 原静态准备余额 | 自动快照及历史辅助 | batch_impairments | 不替代当前持有期间变动服务 |

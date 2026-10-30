@@ -47,7 +47,17 @@
 
 ## 财务工作台增量
 
+盘点逐批数量不一致的警示使用稳定码`inventory_assessment_quantity_mismatch`，在inventory-assessment.js与inventory_export.py集中映射中文，页面/导出空值均显示或说明待核对；没有新增语言或依赖。保存锁定复用现有加载和错误文案。
+
+库存盘点与跌价的新页签、字段、录入校验、记录/版本/冲突/日期限制、状态及帮助集中于[static/inventory-assessment.js](../../static/inventory-assessment.js)的zh-CN字典，缺语言回退中文；主库存字典仅追加页签名，旧提示复用其text入口。API以inventory_count_*等稳定错误码映射；用户SKU/名称/备注/店铺名全部转义。Excel文案集中于inventory_export.py；界面金额按语言格式化，盘点日为自然日日末，保存时间明确UTC。无新语言、翻译依赖或业务名称迁移。
+
+销售四项成本、本行订单总额、出库商品跌价参考、待核对及口径说明集中在PageInteractions的`salesCost*`字典；两份页面用`data-sales-cost-text`初始化标签/帮助，动态空值复用字典。新增API字段为中立英文编码；后端拆分/跌价核对说明沿用现有中文响应约定，Excel新增列名与口径集中在sales_export.py。四项成本与总额以Decimal平衡分位尾差，原成本/毛利精度保持不变；仍只有zh-CN，不增加语言或依赖。
+
+销售台账导出按钮、正在导出/成功/失败/空结果/超限/旧接口和无效文件提示集中在PageInteractions的`salesExport*`字典，两份页面通过`data-sales-export-text`取词。服务端以`sales_export_empty/sales_export_too_large`稳定错误码返回，前端映射文案；Excel表头和类型/状态标签集中于[services/sales_export.py](../../services/sales_export.py)，沿用中文导出契约。用户商品、SKU、店铺和筛选文本按字面量写入，不翻译业务数据；没有新增语言或依赖。
+
 批次跌价归属的字段/帮助/加载/失败/停用/已选数量及错误键集中在PageInteractions的batchImpairment*字典，两份页面共用；店铺名转义，批次Excel追加列强制文本。API字段impairment_store_ids为中立ID，错误batch_impairment_store_invalid通过局部字典映射。财务均分说明沿用后端中文报表契约，无新增语言或依赖。
+
+库存归属管理的新按钮、加载/失败/待分配/只读/保存/生效模式说明集中在[static/inventory-allocations.js](../../static/inventory-allocations.js)局部zh-CN字典，按页面语言回退；入库和数量编辑不再挂载旧归属选择。店铺名称/批次号转义，模式和ID沿用中立编码。保存管理归属仍要求非空；旧错误码映射保留以兼容原批次接口。没有新增语言依赖。
 
 归属生效范围、两种模式及影响说明、历史记录标签集中在同一字典`batchImpairment*`；准备转入/转出表头及勾稽式为`provision*`键，两份页面通过`data-provision-text`初始化，直接打开报表也能显示。模式码`from_arrival/from_change_date`与显示文字分离；日志的生效历史按日期/店铺名展示并转义。仍仅支持zh-CN，无新增翻译依赖；Excel新增表头复用reports.py现有集中列定义，沿用中文导出契约。
 
@@ -69,4 +79,4 @@
 
 已售批次编辑的追溯说明、数量下限/明细不一致、入库晚于销售、财务开关前提、编辑模式和差额越界提示，同样集中在该字典batch*键中；已售数量通过参数占位替换。移除整批禁用提示，不新增用户确认流程。
 
-商品四种类型的下拉、列表、编辑、导入预览及规则说明集中在两份首页的`productTypeText`局部zh-CN字典，按document.documentElement.lang取词并回退中文；旧商品类型由`productTypeValue`按稳定编码及安全库存识别。后端`services/inventory_impairment.py`的`PRODUCT_TYPE_NAMES`集中类型标签，商品导出、导入别名/模板/校验和结果复用，`IMPAIRMENT_STATUS_NAMES`集中新增报表状态。仍仅支持zh-CN；没有新增语言依赖、全站切换或导出语言参数。
+商品三种类型的下拉、列表、编辑、导入预览及规则说明集中在两份首页的`productTypeText`局部zh-CN字典，按document.documentElement.lang取词并回退中文；旧商品类型由`productTypeValue`将旧safe_stock编码兼容为stable，安全库存不再派生第四种类型。后端`services/inventory_impairment.py`的`PRODUCT_TYPE_NAMES`集中类型标签，商品导出、导入别名/模板/校验和结果复用，`IMPAIRMENT_STATUS_NAMES`集中新增报表状态。仍仅支持zh-CN；没有新增语言依赖、全站切换或导出语言参数。

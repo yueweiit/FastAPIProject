@@ -40,3 +40,5 @@
 认证信息响应设置 `Cache-Control: no-store`；授权跳转另设 `Referrer-Policy: no-referrer`。config 的 sso_available 表示配置完整，不代表 EIMS 实时健康或客户端已注册成功。回调不回显提供方错误、code/state/Token，失败跳首页固定 auth_error 分类。
 
 401 表示认证/绑定失效，403 为角色/模式/CSRF 拒绝，503 为提供方、配置或网络暂不可用；其他账号校验常见 400/404、参数校验 422。503 时已收到的轮换结果保留为待复核状态，恢复后复核成功才放行。前端 API 401 仅清本地状态，不自动全局退出 EIMS。退出回调不删除后来建立的登录 Cookie，错误/重放回调也不清除新的浏览器流程。登录/退出回调会写认证事务，不能视为只读 GET。流程见 [workflow.md](workflow.md)。
+
+用户有盘点操作记录时删除返回409 `inventory_count_user_referenced`，可用停用保留审计；并发外键引用冲突回滚并返回409 user_referenced。依据：routers/auth.py的delete_user。

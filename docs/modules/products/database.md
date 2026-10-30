@@ -12,7 +12,7 @@
 | `sku` | `String(64)` | 否 | 本地商品 SKU | 唯一；索引 |
 | `name` | `String(255)` | 否 | 名称 | — |
 | `image` | `String(500)` | 是 | 图片访问路径 | — |
-| `product_type` | `String(16)` | 否 | stable / new / safe_stock / no_impairment，详见[业务规则](overview.md#业务规则) | Python 默认：'stable' |
+| `product_type` | `String(16)` | 否 | stable / new / no_impairment（旧safe_stock兼容为stable），详见[业务规则](overview.md#业务规则) | Python 默认：'stable' |
 | `safe_stock_quantity` | `Integer` | 否 | 安全库存数量 | Python 默认：0 |
 | `created_at` | `DateTime` | 否 | 创建时间 | 数据库默认：func.now() |
 
@@ -24,7 +24,7 @@
 | --- | --- | --- | --- | --- |
 | `id` | `Integer` | 否 | 自增主键 | 主键 |
 | `product_id` | `Integer` | 否 | 本地商品关联 | 索引；ForeignKey('products.id', ondelete='CASCADE') |
-| `product_type` | `String(16)` | 否 | stable / new / safe_stock / no_impairment | Python 默认：'stable' |
+| `product_type` | `String(16)` | 否 | stable / new / no_impairment（旧safe_stock兼容为stable） | Python 默认：'stable' |
 | `safe_stock_quantity` | `Integer` | 否 | 安全库存数量 | Python 默认：0 |
 | `effective_date` | `Date` | 否 | 规则生效日 | — |
 | `created_at` | `DateTime` | 否 | 创建时间 | 数据库默认：func.now() |

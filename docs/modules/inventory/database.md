@@ -1,6 +1,28 @@
 # 入库模块数据表
 
-本模块维护 inventory_batches、batch_change_logs、batch_impairment_stores及两张按日归属历史表；历史消耗记录的字段见[销售数据库](../sales/database.md)，月末引用见[报表数据库](../reports/database.md)。
+本模块维护 inventory_batches、batch_change_logs、batch_impairment_stores、两张按日归属历史表及inventory_stock_counts；历史消耗记录的字段见[销售数据库](../sales/database.md)，月末引用见[报表数据库](../reports/database.md)。
+
+## inventory_stock_counts
+
+来源：[models.py](../../../models.py)的InventoryStockCount。盘点按共享商品和日期记录，不代表店铺库存额度，也不修改批次或成本；同日修改追加版本。字段含义及权限见[盘点流程](workflow.md#人工盘点对照)。
+
+| 字段 | 类型/约束 | 含义 |
+| --- | --- | --- |
+| id | Integer主键自增 | 不可覆盖记录ID |
+| product_id | Integer非空，索引/FK products.id | 本地商品 |
+| count_date | Date非空/索引 | 自然日日末对照日期 |
+| revision | Integer非空 | 商品/日期内从1递增，与product_id/count_date唯一 |
+| system_quantity | BigInteger非空 | 保存时可信的账面数量 |
+| actual_quantity | BigInteger非空 | 人工实盘数；应用校验0–2147483647 |
+| ledger_version | String(64)非空 | 截至盘点日数量日结与警示的SHA256，不含凭据 |
+| request_key | String(64)非空唯一 | 请求幂等标识 |
+| note | String(1000)非空，ORM默认空串 | 盘点备注 |
+| created_by | Integer非空/FK users.id | 操作人 |
+| created_at | DateTime非空，应用默认UTC | 保存时间，刷新后读取数据库实际精度 |
+
+difference为actual_quantity−system_quantity的只读派生字段，不另存；查询库存变化时保留原记录。InnoDB/utf8mb4，商品/日期/版本唯一及请求键唯一兜底。无历史回填；[离线DDL脚本](../../../migrations/add_inventory_stock_counts.py)仅生成SQL，不连库。普通查询/保存发现缺表返回503；应用启动init_db也有建表及其他迁移/快照副作用，不作为只读预检，不自动执行生产DDL。
+
+本地状态（2026-10-29核验）：`127.0.0.1:3309 / inventory_fifo_test`已存在此表，11个字段的类型/非空约束、主键、两个唯一约束、products/users外键及InnoDB/utf8mb4均与模型一致，无需重复建表。真实录入/保存/历史/导出及临时数据清理的核验结果统一见[运行说明](../../../PROJECT_RUNBOOK.md#库存盘点与跌价2026-10-29)。此状态不代表生产或其他数据库已准备。
 
 ## inventory_batches
 
@@ -48,7 +70,7 @@ user_id保存创建人，可为空；批次没有独占store_id、仓库ID、关
 
 ## batch_impairment_stores
 
-`BatchImpairmentStore`保存批次跌价金额的手工均分对象。batch_id和store_id组成主键，均为非空Integer，分别外键引用inventory_batches.id、stores.id；另有(store_id,batch_id)索引，InnoDB/utf8mb4。不存固定店铺数量、比例或金额，不参与FIFO。创建/编辑校验有效店铺，已有停用店铺可保留，但不允许新增停用对象；被引用店铺拒绝删除。
+`BatchImpairmentStore`保存批次跌价金额的手工均分对象。batch_id和store_id组成主键，均为非空Integer，分别外键引用inventory_batches.id、stores.id；另有(store_id,batch_id)索引，InnoDB/utf8mb4。不存固定店铺数量、比例或金额，不参与FIFO。入库可待分配，库存页管理保存须至少一家；不新增表或回填旧记录；已有停用店铺可保留，但不允许新增停用对象。被引用店铺拒绝删除。
 
 AssignedBatch.edit_version包含排序后店铺ID及归属日规则；修改/作废先锁批次、成本层、当前关联、历史规则及其关联行，店铺校验按ID共享锁当前读。变更与日志同事务，日志记录前后ID/名称和完整生效历史。范围见[流程](workflow.md#批次跌价归属)，旧版本/快照不重写。当前关联离线DDL见[add_batch_impairment_stores.py](../../../migrations/add_batch_impairment_stores.py)，仅生成SQL，不执行或回填。新表为默认基础结构，不依赖财务增强开关，目标库部署需先核验。
 
@@ -63,7 +85,7 @@ AssignedBatch.edit_version包含排序后店铺ID及归属日规则；修改/作
 | batch_impairment_rule_stores.rule_id | Integer外键batch_impairment_rules.id，复合主键 | 所属规则 |
 | store_id | Integer外键stores.id，复合主键；(store_id,rule_id)反向索引 | 当日开始均分店铺，名称取主数据 |
 
-规则无关联行表示当时无法确定店铺，不能推为0准备。按日修改保留基线和后续段；历史更正替换时间线，旧时间线保留在batch_change_logs前值中，不另建准备金额凭证。转移金额按全局回放及归属边界确定，不落同名金额列。首次编辑才建立历史，不推造旧归属；旧批次无日规则时走当前关联/创建人绑定。离线DDL见[add_batch_impairment_history.py](../../../migrations/add_batch_impairment_history.py)，仅生成两表SQL。本轮未执行目标库建表；发布准备见[运行说明](../../../PROJECT_RUNBOOK.md#批次手工跌价归属新增结构)。
+规则无关联行表示当时无法确定店铺，不能推为0准备。按日修改保留基线和后续段；历史更正替换时间线，旧时间线保留在batch_change_logs前值中，不另建准备金额凭证。转移金额按全局回放及归属边界确定，不落同名金额列。新入库未分配写is_explicit=True但无店铺关联的基线，明确不沿用创建人绑定；旧批次首次编辑才建历史，无日规则时走当前关联/创建人绑定，不推造旧归属。离线DDL见[add_batch_impairment_history.py](../../../migrations/add_batch_impairment_history.py)，仅生成两表SQL。本轮未执行目标库建表；发布准备见[运行说明](../../../PROJECT_RUNBOOK.md#批次手工跌价归属新增结构)。
 
 sale_cost_details、inventory_period_snapshots 引用批次，不能随意改历史成本、删除批次或通过直接 UPDATE 修复库存。库存主数量与按历史销售重建的数量需勾稽，撤销会删除相关明细。依据：[batches.py](../../../routers/batches.py)、[models.py](../../../models.py)、[sales.py](../../../routers/sales.py)。
 
@@ -89,3 +111,5 @@ InventoryBatch.edit_version是原持久化字段的基础摘要；AdjustedBatch�
 | created_at | DateTime | 否 | 应用写入UTC无时区值；API明确标注UTC偏移 |
 
 复合索引 `ix_batch_change_logs_batch_id_id(batch_id,id)` 服务按批次倒序分页。保存原创建人字段但不包含密码、Token或用户敏感配置；批次/账号删除后日志保留。上线前只审核/增加此表，不回填历史修改、不更新既有批次数据；离线DDL见 [add_batch_change_logs.py](../../../migrations/add_batch_change_logs.py)。
+
+盘点记录外键引用的商品/操作人不能删除，接口返回409；账号可停用，历史版本继续保留。并发外键冲突由数据库兜底。

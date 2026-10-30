@@ -2,9 +2,9 @@
 
 ## 存储边界
 
-主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的31张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
+主业务及认证数据由 [database.py](../../database.py) 的 mysql+aiomysql 异步引擎存储于 MySQL，默认库名 inventory_fifo。以下为 [models.py](../../models.py) 中的32张ORM表（8张财务增强表默认关闭）；2026-10-13 在独立本地测试库核验两张新增认证表为 InnoDB、一次性事务及并发刷新，既有业务记录比较一致。生产表、字段、外键、索引、引擎及数据量仍需单独核验。
 
-OA PostgreSQL 是外部只读数据源，不属于这31张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
+OA PostgreSQL 是外部只读数据源，不属于这32张表；实际表名为 SQL 中未加 schema 限定的 ding_approval_instance，解析依赖数据库 search_path。EIMS 通过 HTTPS 提供认证，不共享其数据库。图片在 uploads/，数据库保存路径。依据：[OA 服务](../../services/oa_office_expenses.py)、[商品路由](../../routers/products.py)、[EIMS 服务](../../services/eims_sso.py)。
 
 ## 表清单与唯一维护入口
 
@@ -18,6 +18,7 @@ OA PostgreSQL 是外部只读数据源，不属于这31张表；实际表名为 
 | products | Product | 共享商品、类型、安全库存 | [商品数据库](../modules/products/database.md) |
 | product_impairment_rules | ProductImpairmentRule | 商品跌价规则生效历史 | [商品数据库](../modules/products/database.md) |
 | inventory_batches | InventoryBatch | 数量、剩余数、成本、创建人 | [库存数据库](../modules/inventory/database.md) |
+| inventory_stock_counts | InventoryStockCount | 按商品/日期追加盘点对照版本，不自动调库存 | [盘点字典](../modules/inventory/database.md#inventory_stock_counts) |
 | batch_impairment_stores | BatchImpairmentStore | 手工指定批次跌价均分店铺，复合主键/外键 | [库存数据库](../modules/inventory/database.md#batch_impairment_stores) |
 | batch_impairment_rules | BatchImpairmentRule | 批次归属生效日及显式/隐式来源，批次/日期唯一 | [库存数据库](../modules/inventory/database.md#batch_impairment_rules与batch_impairment_rule_stores) |
 | batch_impairment_rule_stores | BatchImpairmentRuleStore | 每段归属的均分店铺，复合主键/外键 | [库存数据库](../modules/inventory/database.md#batch_impairment_rules与batch_impairment_rule_stores) |
@@ -46,6 +47,8 @@ erDiagram
     users ||--o{ auth_sessions : 登录会话
     users |o--o{ inventory_batches : 创建
     products ||--o{ inventory_batches : 入库
+    products ||--o{ inventory_stock_counts : 盘点对照
+    users ||--o{ inventory_stock_counts : 保存盘点
     products ||--o{ product_impairment_rules : 规则历史
     products ||--o{ sales : 出库
     stores |o--o{ sales : 销售归属
