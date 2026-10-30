@@ -96,7 +96,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(exported[18:22]),exported[8])
         total=list(book['销售记录'].values)[-1]
         self.assertEqual(total[18:23],exported[18:23])
-        self.assertEqual(book['销售记录'].auto_filter.ref,'A1:AA4')
+        self.assertEqual(book['销售记录'].auto_filter.ref,'A1:AC4')
         for event in (r for r in await self.listed() if r['id']<0):
             self.assert_parts(event,(0,0,0,0))
             self.assertEqual(D(event['impairment_cny']),0)
@@ -250,7 +250,8 @@ class ImportedSalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.session.add(InventoryBatch(id=4,product_id=2,batch_no='COMP',quantity=10,remaining_quantity=10,
             purchase_price=5,unit_cost=5,arrived_at=datetime(2026,9,1)))
         self.session.commit()
-        response=await self.upload(7,detail=True)
+        response=await self.request('POST','/sales/import',data={'store_id':'7'},
+            files={'file':('orders.csv',imports.order_file('商品*2+组合第二件'),'text/csv')})
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['sales_created'],2)
         self.db.info.clear()

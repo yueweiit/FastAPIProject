@@ -213,6 +213,7 @@ async function main() {
         let calculationGate=null,calculationStatus=200;
         let fieldHelpStatus=200;
         let pendingStatus=200;
+        const manualSettlementCalls=[];let manualStatus=200;
         let countGate=null,countStatus=200,countNetworkError=false,countRecords=[],countCalls=[];
         const assignmentStores = [{id: 7, name: '店铺A', is_active: true}, {id: 8, name: '<店铺B>', is_active: true}];
         const batchFixture = {id: 1, product_id: 1, batch_no: 'IN-TEST-1', user_id: 10, quantity: 100, remaining_quantity: 70,
@@ -274,6 +275,11 @@ async function main() {
                     body: Buffer.from('PK\x03\x04sales-download-transport-fixture')});
             }
             if (url.pathname === '/sales/monthly-summary' || url.pathname === '/sales/imports') return fulfill([]);
+            if(url.pathname==='/sales/manual-settlements'){
+                const payload=route.request().postDataJSON();manualSettlementCalls.push(payload);
+                if(manualStatus!==200)return route.fulfill({status:manualStatus,contentType:'application/json',body:JSON.stringify({detail:'补录失败测试'})});
+                return fulfill({id:-100,quantity:0,source_quantity:payload.quantity,total_cost:0});
+            }
             if (/^\/sales\/\d+\/cost-breakdown$/.test(url.pathname)) {
                 const status=calculationStatus;
                 if(calculationGate){const held=calculationGate;calculationGate=null;await held.promise;}
@@ -849,6 +855,8 @@ async function main() {
         check(await page.getByText('当前账号只读，管理员和运营可维护归属。',{exact:true}).isVisible(),true);
         await page.locator('[data-ial-action="close"]').click();role='admin';await page.reload();await page.waitForFunction(()=>CURRENT_ROLE==='admin');
         salesRows = [{id: 1, product_id: 1, order_no: 'ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
+            display_sku:'00123456789012345678',display_name:'商品*2+组合 '+ 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(10),
+            source_sku_id:'00123456789012345678',source_product_name:'商品*2+组合 '+ 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(10),transaction_type:'订单',source_quantity:2,
             selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '60', platform_fee_cny: '5',
             profit_cny: '35', total_cost: '20', order_total_cost_cny: '20', cost_status: 'unverified',
             unit_purchase_cost_cny:'4',unit_head_shipping_cost_cny:'2',unit_last_mile_cost_cny:'1',unit_other_cost_cny:'3',unit_total_cost_cny:'10',
@@ -881,10 +889,14 @@ async function main() {
             await page.evaluate(()=>loadSales());
             check(await page.locator('#pending-confirmations-tbody').innerText(),'暂无待确认记录');
             check(await page.locator('#sales-tbody tr').count(),3);
-            check(await page.locator('[data-sales-field]').count(),22);
+            check(await page.locator('[data-sales-field]').count(),24);
             check(await page.locator('.sales-column-groups th').count(),6);
             const firstSale=page.locator('#sales-tbody tr').first();
             const saleValue=key=>firstSale.locator(`[data-sales-value="${key}"]`);
+            check(await saleValue('sku').innerText(),'00123456789012345678');
+            check(await saleValue('transaction_type').innerText(),'订单');
+            check(await saleValue('source_quantity').innerText(),'2');
+            check(await saleValue('product_name').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
             check(await saleValue('unit_purchase_cost_cny').innerText(),'¥4.0000');
             check(await saleValue('unit_total_cost_cny').innerText(),'¥10.0000');
             check(await saleValue('order_total_cost_cny').innerText(),'¥20.00');
@@ -904,6 +916,7 @@ async function main() {
             await page.locator('#sales-calc-body .sales-order-totals').waitFor();
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('COST-BATCH')&&v.includes('COMPONENT-OFF-PAGE')&&v.includes('25.00')),true);
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('¥4.0000')),true);
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('来源产品名：商品*2+组合')),true);
             check(await page.locator('#sales-calc-body script, #sales-calc-body img').count(),0);
             // 浏览器旧close事件晚到时，不得取消同一事件循环内新打开的计算明细。
             await page.evaluate(()=>{document.getElementById('sales-calc-dialog').close();document.querySelector('[data-sale-calculation]').click();});
@@ -916,6 +929,29 @@ async function main() {
             if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-cost-calculation-mobile.png'),fullPage:true});
             await page.locator('[data-sales-calc-close]').click();
             await page.setViewportSize({width:1440,height:1000});
+            // 手工结算补录使用来源字段，不选择本地商品，失败后重试复用请求标识。
+            await page.locator('#s-store').selectOption('7');
+            await page.locator('#s-date').fill('2026-09-03');
+            await page.locator('#s-sku').fill('00123456789012345678');
+            await page.locator('#s-product-name').fill('商品*4');
+            await page.locator('#s-transaction-type').fill('物流赔付');
+            await page.locator('#s-qty').fill('0');
+            await page.locator('#s-net-sales').fill('0');
+            await page.locator('#s-settlement-total').fill('117.5000');
+            await page.locator('#s-order-no').fill('MANUAL-CLAIM');
+            manualStatus=503;
+            await page.locator('#s-submit').click();
+            await page.waitForFunction(()=>document.getElementById('s-manual-status').textContent.includes('补录失败测试'));
+            const retryKey=manualSettlementCalls.at(-1).request_key;
+            check(await page.locator('#s-order-no').inputValue(),'MANUAL-CLAIM');
+            manualStatus=200;await page.locator('#s-submit').click();
+            await page.waitForFunction(()=>document.getElementById('s-manual-status').textContent.includes('结算补录已保存'));
+            check(manualSettlementCalls.at(-1).request_key,retryKey);
+            check(manualSettlementCalls.at(-1).settlement_total,'117.5000');
+            check('product_id' in manualSettlementCalls.at(-1),false);
+            check(await page.locator('#s-order-no').inputValue(),'');
+            await page.waitForFunction(()=>!document.getElementById('s-manual-fields').disabled);
+            check(await page.locator('#s-submit').isEnabled(),true);
             calculationStatus=503;
             await firstSale.locator('[data-sale-calculation]').click();
             await page.waitForFunction(()=>document.getElementById('sales-calc-status').textContent.includes('读取失败测试'));

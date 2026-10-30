@@ -12,7 +12,7 @@ from models import (
 )
 
 
-COMPENSATION_TYPES = {"物流赔付", "平台赔付"}
+COMPENSATION_TYPES = {"物流赔付", "平台赔付", "物料赔付"}
 ZERO = Decimal("0")
 
 
@@ -25,10 +25,15 @@ def valid_rate(currency, rate):
     return value if value.is_finite() and value > 0 else None
 
 
+def settlement_amounts(net_sales, settlement_total, transaction_type=None):
+    """赔付按实际结算额计入收入；负数赔付冲减收入，不重复生成费用。"""
+    if transaction_type in COMPENSATION_TYPES:
+        return settlement_total, ZERO
+    return net_sales, net_sales - settlement_total
+
+
 def settlement_expense(net_sales, settlement_total, transaction_type=None):
-    difference = net_sales - settlement_total
-    # 沿用既有赔付费用方向；不可在修复漏记时悄悄改变已确认口径。
-    return abs(difference) if transaction_type in COMPENSATION_TYPES else difference
+    return settlement_amounts(net_sales, settlement_total, transaction_type)[1]
 
 
 @dataclass(frozen=True)
@@ -51,9 +56,12 @@ class FinancialEvent:
     rate_date: date | None = None
     rate_source: str | None = None
     created_at: datetime | None = None
+    product_name: str = ""
+    quantity: int = 0
+    source_type: str = ""
 
 
-def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword=None):
+def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword=None, entry_ids=None):
     linked_sale = exists(select(SettlementEntryAllocation.id).where(
         SettlementEntryAllocation.settlement_entry_id == SettlementEntry.id,
         SettlementEntryAllocation.sale_id.is_not(None),
@@ -66,9 +74,12 @@ def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword
             .outerjoin(User, User.id == SalesImportBatch.user_id)
             .where(SettlementEntry.sale_id.is_(None), ~linked_sale,
                    or_(func.coalesce(SettlementEntry.transaction_type, "订单") != "订单",
-                       SettlementEntry.quantity <= 0, SettlementEntry.net_product_sales < 0)))
+                       SettlementEntry.quantity <= 0, SettlementEntry.net_product_sales < 0,
+                       SalesImportBatch.file_type == "manual_settlement")))
     if store_ids is not None:
         stmt = stmt.where(owner.in_(store_ids))
+    if entry_ids is not None:
+        stmt = stmt.where(SettlementEntry.id.in_(entry_ids))
     if start is not None:
         stmt = stmt.where(occurred >= datetime.combine(start, time.min))
     if end is not None:
@@ -80,6 +91,8 @@ def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword
         matching_products = select(Product.id).where(or_(Product.sku.ilike(f"%{keyword}%"),
                                                         Product.name.ilike(f"%{keyword}%")))
         stmt = stmt.where(or_(SettlementEntry.product_id.in_(matching_products),
+                              SettlementEntry.platform_sku_id.ilike(f"%{keyword}%"),
+                              SettlementEntry.product_name.ilike(f"%{keyword}%"),
                               SettlementEntry.transaction_type.ilike(f"%{keyword}%")))
     return stmt.order_by(occurred, SettlementEntry.id)
 
@@ -89,15 +102,15 @@ async def count_unlinked_settlement_events(db, store_ids, start, end, *, product
     return await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
 
 
-async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=None, keyword=None):
+async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=None, keyword=None, entry_ids=None):
     """仅取没有出库销售关联的财务事件，避免与销售收入重复计入。"""
-    stmt = _unlinked_settlement_stmt(store_ids, start, end, product_id=product_id, keyword=keyword)
+    stmt = _unlinked_settlement_stmt(store_ids, start, end, product_id=product_id, keyword=keyword, entry_ids=entry_ids)
     rows = (await db.execute(stmt)).all()
     result = []
     for entry, store_id in rows:
         rate = valid_rate(entry.currency, entry.exchange_rate_to_cny)
-        net = entry.net_product_sales or ZERO
-        expense = settlement_expense(net, entry.settlement_total or ZERO, entry.transaction_type)
+        net, expense = settlement_amounts(entry.net_product_sales or ZERO,
+            entry.settlement_total or ZERO, entry.transaction_type)
         result.append(FinancialEvent(
             entry.id, store_id, entry.settlement_date or entry.order_created_at or entry.imported_at,
             net * rate if rate is not None else None,
@@ -107,6 +120,8 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
             entry.settlement_date is None and entry.order_created_at is None,
             entry.transaction_type or "结算调整", entry.order_id or "",
             net, expense, rate, entry.exchange_rate_date, entry.exchange_rate_source, entry.imported_at,
+            product_name=entry.product_name or "", quantity=entry.quantity,
+            source_type=("manual_settlement" if (entry.raw_data or {}).get("_manual_settlement") else "import"),
         ))
     return result
 

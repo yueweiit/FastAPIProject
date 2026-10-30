@@ -20,7 +20,7 @@ async function main(){
   vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
   vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
   check(translated.every(n=>n.textContent?.length>0),true);
-  check(resource.fields.length,22);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
+  check(resource.fields.length,24);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
   check(html.includes('/sales-ledger.js'),true);
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="SKU",salesTotal=0,allProducts=[];',c);
   const source=html.match(/^async function loadSales\(\) \{[\s\S]*?^\}/m);assert(source);vm.runInContext(source[0],c);
@@ -32,7 +32,7 @@ async function main(){
   const body=k=>values(element('sales-tbody').innerHTML,'data-sales-value',k);
   const total=k=>values(element('sales-total-summary-body').innerHTML,'data-sales-total',k)[0];
   await c.loadSales();
-  check((element('sales-ledger-head').innerHTML.match(/data-sales-field=/g)||[]).length,22);
+  check((element('sales-ledger-head').innerHTML.match(/data-sales-field=/g)||[]).length,24);
   check(element('sales-ledger-head').innerHTML.includes('单件成本'),true);
   check(element('sales-ledger-head').innerHTML.includes('本行销售成本'),true);
   check(body('unit_purchase_cost_cny'),['¥4.0001']);check(body('unit_total_cost_cny'),['¥10.0020']);
@@ -81,7 +81,7 @@ async function main(){
   c.window.SalesLedger.fail(new Error('<失败>'),failedLoad);
   check(element('sales-total-summary-body').innerHTML,'');
   check(element('sales-tbody').innerHTML.includes('&lt;失败&gt;'),true);
-  rows=[];await c.loadSales();check(element('sales-tbody').innerHTML.includes('colspan="22"'),true);
+  rows=[];await c.loadSales();check(element('sales-tbody').innerHTML.includes('colspan="24"'),true);
   check(total('purchase_cost_cny'),'¥0.00');check(total('unit_total_cost_cny'),'');
   delete c.window.SalesLedger;await c.loadSales();
   check(element('sales-tbody').innerHTML.includes('销售明细模块尚未加载'),true);

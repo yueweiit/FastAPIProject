@@ -33,13 +33,13 @@ class Facade:
     async def rollback(self): self.session.rollback()
 
 
-def order_file():
+def order_file(product_expression="商品"):
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(['结算日期','结算单 ID','付款 ID','状态','货币','交易类型','订单ID/调整单ID',
-                     'SKU ID','数量','订单创建日期','净商品销售额','结算总金额'])
+                     'SKU ID','数量','订单创建日期','净商品销售额','结算总金额','产品名'])
     for suffix, sku in [('OK','PLAT'),('PENDING','UNKNOWN')]:
-        writer.writerow(['2026-09-02','BILL','PAY','已结算','CNY','订单',suffix,sku,1,'2026-09-01',20,18])
+        writer.writerow(['2026-09-02','BILL','PAY','已结算','CNY','订单',suffix,sku,1,'2026-09-01',20,18,product_expression if suffix=='OK' else '未识别商品'])
     return out.getvalue().encode('utf-8-sig')
 
 

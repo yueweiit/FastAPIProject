@@ -329,6 +329,27 @@ class SaleCreate(BaseModel):
     sold_at: datetime | None = None
 
 
+class ManualSettlementCreate(BaseModel):
+    store_id: int | None = Field(default=None, gt=0)
+    request_key: str = Field(min_length=16, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
+    occurred_on: date
+    order_no: str = Field(min_length=1, max_length=128)
+    sku_id: str = Field(default="", max_length=128)
+    product_name: str = Field(default="", max_length=500)
+    transaction_type: str = Field(default="订单", min_length=1, max_length=32)
+    quantity: int = Field(default=0, ge=-2147483648, le=2147483647)
+    net_product_sales: Decimal = Field(max_digits=16, decimal_places=4)
+    settlement_total: Decimal = Field(max_digits=16, decimal_places=4)
+
+    @field_validator("order_no", "sku_id", "product_name", "transaction_type")
+    @classmethod
+    def trim_text(cls, value, info):
+        value = value.strip()
+        if info.field_name in {"order_no", "transaction_type"} and not value:
+            raise ValueError("内容不能为空")
+        return value
+
+
 class CostDetailResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -383,6 +404,11 @@ class SaleResponse(BaseModel):
     record_type: str = "sale"
     display_sku: str | None = None
     display_name: str | None = None
+    transaction_type: str = "订单"
+    source_sku_id: str | None = None
+    source_product_name: str | None = None
+    source_quantity: int | None = None
+    source_type: str | None = None
 
 
 class SalesOrderCostSummary(BaseModel):

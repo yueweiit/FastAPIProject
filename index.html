@@ -131,7 +131,8 @@
         .sales-ledger-table .sales-column-groups .sales-group-3 { background:#e8f5ef; color:#17634e; }
         .sales-ledger-table .sales-column-groups .sales-group-4 { background:#fff4dd; color:#875b12; }
         .sales-ledger-table td:nth-child(5) { text-align:left; }
-        .sales-ledger-table td:nth-child(n+6) { text-align:right; font-variant-numeric:tabular-nums; }
+        .sales-ledger-table td[data-sales-value="sku"], .sales-ledger-table td[data-sales-value="product_name"], .sales-ledger-table td[data-sales-value="order_no"], .sales-ledger-table td[data-sales-value="transaction_type"] { white-space:normal; overflow-wrap:anywhere; }
+        .sales-ledger-table td:nth-child(n+8) { text-align:right; font-variant-numeric:tabular-nums; }
         .sales-ledger-table td[data-sales-value="order_total_cost_cny"] { font-weight:700; }
         .sales-ledger-table .sales-stick-0, .sales-ledger-table .sales-stick-1, .sales-ledger-table .sales-stick-2, .sales-ledger-table .sales-stick-3 { position:sticky; z-index:2; }
         .sales-ledger-table td.sales-stick-0, .sales-ledger-table td.sales-stick-1, .sales-ledger-table td.sales-stick-2, .sales-ledger-table td.sales-stick-3 { background:#fff; }
@@ -645,22 +646,24 @@
         <div class="card sales-entry-card" id="sales-manual-entry-card">
             <div class="flex-between" style="margin-bottom:14px">
                 <div>
-                    <h3>手工录入销售</h3>
+                    <h3 id="s-manual-title" data-sales-manual-text="title"></h3>
                 </div>
             </div>
-            <div class="sales-entry-grid">
-                <div class="form-group"><label>产品SKU</label>
-                    <select id="s-sku" onchange="refreshManualSaleOrderNo()"><option value="">选择产品</option></select>
-                </div>
-                <div class="form-group"><label>店铺</label><select id="s-store"><option value="">选择店铺</option></select></div>
-                <div class="form-group"><label>日期</label><input id="s-date" type="date" onchange="refreshManualSaleOrderNo()"></div>
-                <div class="form-group"><label>数量</label><input id="s-qty" type="number" min="1" step="1" placeholder="10" oninput="updateManualSaleSummary()"></div>
-                <div class="form-group"><label>销售单价（元）</label><input id="s-price" type="number" min="0" step="0.01" placeholder="0.00" oninput="updateManualSaleSummary()"></div>
-                <div class="form-group"><label>其他费用（元）</label><input id="s-fee" type="number" min="0" step="0.01" value="0.00" oninput="updateManualSaleSummary()"></div>
-                <div class="form-group"><label>订单号</label><input id="s-order-no" maxlength="64" placeholder="自动生成或手工填写" oninput="this.dataset.auto='false'"></div>
-                <div class="sales-entry-summary"><span>预计净收入</span><strong id="s-estimated-revenue">¥0.00</strong></div>
-                <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createSale()">录入</button></div>
-            </div>
+            <fieldset id="s-manual-fields" class="sales-entry-grid" style="border:0;padding:0;margin:0">
+                <div class="form-group"><label for="s-sku" data-sales-manual-text="sku"></label><input id="s-sku" maxlength="128" oninput="refreshManualSaleOrderNo()"></div>
+                <div class="form-group"><label for="s-product-name" data-sales-manual-text="product"></label><input id="s-product-name" maxlength="500"></div>
+                <div class="form-group"><label for="s-store" data-sales-manual-text="store"></label><select id="s-store"></select></div>
+                <div class="form-group"><label for="s-date" data-sales-manual-text="date"></label><input id="s-date" type="date" onchange="refreshManualSaleOrderNo()"></div>
+                <div class="form-group"><label for="s-transaction-type" data-sales-manual-text="transaction"></label><input id="s-transaction-type" value="订单" maxlength="32" list="s-transaction-types" oninput="updateManualSaleSummary()"><datalist id="s-transaction-types"><option value="订单"><option value="物流赔付"><option value="平台赔付"><option value="物料赔付"><option value="退款"><option value="结算调整"></datalist></div>
+                <div class="form-group"><label for="s-qty" data-sales-manual-text="quantity"></label><input id="s-qty" type="number" step="1" value="1"></div>
+                <div class="form-group"><label for="s-net-sales" data-sales-manual-text="net"></label><input id="s-net-sales" type="number" step="0.0001" oninput="updateManualSaleSummary()"></div>
+                <div class="form-group"><label for="s-settlement-total" data-sales-manual-text="settled"></label><input id="s-settlement-total" type="number" step="0.0001" oninput="updateManualSaleSummary()"></div>
+                <div class="form-group"><label for="s-order-no" data-sales-manual-text="order"></label><input id="s-order-no" maxlength="128" oninput="this.dataset.auto='false'"></div>
+                <div class="sales-entry-summary"><span data-sales-manual-text="summary"></span><strong id="s-estimated-revenue">¥0.00</strong></div>
+                <div class="form-group" style="justify-content:flex-end"><button id="s-submit" type="button" class="btn btn-primary" onclick="createSale()" data-sales-manual-text="submit"></button></div>
+            </fieldset>
+            <p id="s-manual-help" data-help-tip data-help-anchor="#s-manual-title" data-sales-manual-text="help"></p>
+            <p id="s-manual-status" role="status" aria-live="polite"></p>
         </div>
         <div class="card">
             <div class="flex-between">
@@ -860,16 +863,22 @@ function formatApiError(detail, fallback) {
     return detail || fallback;
 }
 
-async function api(method, url, body) {
+async function api(method, url, body, requestOptions = {}) {
+    const ensureCurrent = () => {
+        if (requestOptions.isCurrent && !requestOptions.isCurrent()) throw Object.assign(new Error(), {name:'AbortError'});
+    };
+    ensureCurrent();
     const opts = {method, headers: authHeaders(), credentials: 'same-origin'};
     if (body) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(body);
     }
     const res = await fetch(API + url, opts);
+    ensureCurrent();
     if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
     if (res.status === 403) throw new Error('权限不足');
     const raw = await res.text();
+    ensureCurrent();
     let data = null;
     if (raw) {
         try {
@@ -1512,7 +1521,7 @@ function renderProductPage() {
 async function loadProducts() {
     document.querySelector('#sec-products .card:first-child').style.display = '';
     document.getElementById('edit-product-modal').style.display = 'none';
-    document.getElementById('platform-sku-mappings-card').style.display = '';
+    document.getElementById('platform-sku-mappings-card').style.display = 'none';
     const params = new URLSearchParams({page: productPage, page_size: productPageSize});
     if (productKeyword) params.set('keyword', productKeyword);
     const result = await api('GET', `/products?${params.toString()}`);
@@ -2347,8 +2356,14 @@ function exportAllBatches() {
 // ========== 销售 ==========
 let allProducts = [];
 let allProductsPromise = null;
-async function loadProductOptions() {
+async function loadProductOptions(requestOptions) {
     if (allProducts.length) return allProducts;
+    if (requestOptions?.isCurrent) {
+        // 会话受限的读取不能复用其他会话发出的未受限请求。
+        const list = await api('GET', '/products/options', undefined, requestOptions);
+        if (requestOptions.isCurrent()) allProducts = list;
+        return list;
+    }
     if (!allProductsPromise) {
         allProductsPromise = api('GET', '/products/options')
             .then(list => { allProducts = list; return list; })
@@ -2360,9 +2375,6 @@ function invalidateProductOptions() {
     allProducts = [];
 }
 async function loadSkuOptions() {
-    await loadProductOptions();
-    const sel = document.getElementById('s-sku');
-    sel.innerHTML = '<option value="">选择产品</option>' + allProducts.map(p => `<option value="${escapeHtml(p.sku)}">${escapeHtml(p.sku)} - ${escapeHtml(p.name)}</option>`).join('');
     await loadManualSaleStores();
 }
 
@@ -2427,16 +2439,13 @@ function refreshManualSaleOrderNo() {
     const date = document.getElementById('s-date').value;
     const input = document.getElementById('s-order-no');
     if (sku && date && (!input.value || input.dataset.auto === 'true')) {
-        input.value = `MANUAL-${date.replaceAll('-', '')}-${sku}-${Date.now().toString().slice(-6)}`;
+        input.value = `MANUAL-${date.replaceAll('-', '')}-${sku.slice(0,80)}-${Date.now().toString().slice(-6)}`;
         input.dataset.auto = 'true';
     }
 }
 
 function updateManualSaleSummary() {
-    const quantity = Number(document.getElementById('s-qty').value) || 0;
-    const price = Number(document.getElementById('s-price').value) || 0;
-    const fee = Number(document.getElementById('s-fee').value) || 0;
-    document.getElementById('s-estimated-revenue').textContent = `¥${Math.max(0, quantity * price - fee).toFixed(2)}`;
+    window.SalesLedger?.updateManualSummary();
 }
 
 function getProductIdBySku(sku) {
@@ -2445,40 +2454,7 @@ function getProductIdBySku(sku) {
 }
 
 async function createSale() {
-    try {
-        const sku = document.getElementById('s-sku').value;
-        const dateStr = document.getElementById('s-date').value;
-        const storeId = Number(document.getElementById('s-store').value);
-        const quantity = Number(document.getElementById('s-qty').value);
-        const sellingPrice = Number(document.getElementById('s-price').value);
-        const platformFee = Number(document.getElementById('s-fee').value || 0);
-        const orderNo = document.getElementById('s-order-no').value.trim();
-        const pid = getProductIdBySku(sku);
-        if (!sku || !pid) { showMsg('请选择产品', false); return; }
-        if (!storeId) { showMsg('请选择店铺', false); return; }
-        if (!dateStr) { showMsg('请选择日期', false); return; }
-        if (!Number.isInteger(quantity) || quantity <= 0) { showMsg('销售数量必须是大于 0 的整数', false); return; }
-        if (!Number.isFinite(sellingPrice) || sellingPrice < 0) { showMsg('请输入正确的销售单价', false); return; }
-        if (!Number.isFinite(platformFee) || platformFee < 0) { showMsg('请输入正确的其他费用', false); return; }
-        if (!orderNo) { showMsg('请填写订单号', false); return; }
-        const s = await api('POST', '/sales', {
-            product_id: pid,
-            store_id: storeId,
-            order_no: orderNo,
-            quantity,
-            selling_price: sellingPrice,
-            platform_fee: platformFee,
-            sold_at: `${dateStr}T23:59:59`,
-        });
-        const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}件@¥${d.unit_cost}`).join(' + ') || '';
-        showMsg(`销售成功: ${dateStr} ${sku} | 收入 ¥${(sellingPrice * quantity).toFixed(2)} | 成本 ¥${Number(s.total_cost).toFixed(2)} | 毛利 ¥${Number(s.profit).toFixed(2)} | ${details}`);
-        document.getElementById('s-qty').value = '';
-        document.getElementById('s-order-no').value = '';
-        document.getElementById('s-order-no').dataset.auto = 'true';
-        updateManualSaleSummary();
-        loadSales();
-        loadBatches();
-    } catch (e) { showMsg(e.message, false); }
+    return window.SalesLedger?.createManualSettlement();
 }
 
 async function importSalesFile(input) {
@@ -2521,15 +2497,17 @@ async function importSalesFile(input) {
 
 async function loadSales() {
     if (!window.SalesLedger) {
-        document.getElementById('sales-tbody').innerHTML = `<tr><td colspan="22" class="msg msg-err" role="alert">${escapeHtml(window.PageInteractions.text('salesCostUnavailable'))}</td></tr>`;
-        return;
+        document.getElementById('sales-tbody').innerHTML = `<tr><td colspan="24" class="msg msg-err" role="alert">${escapeHtml(window.PageInteractions.text('salesCostUnavailable'))}</td></tr>`;
+        return false;
     }
     const token = window.SalesLedger.beginLoad();
+    const requestOptions = {isCurrent:()=>window.SalesLedger.currentLoad(token)};
     document.getElementById('sales-manual-entry-card').style.display = isOperator() ? '' : 'none';
     document.getElementById('sales-import-controls').style.display = isOperator() ? '' : 'none';
     try {
         await window.SalesLedger.ready();
-        await loadProductOptions();
+        if (!window.SalesLedger.currentLoad(token)) return;
+        await loadProductOptions(requestOptions);
         if (!window.SalesLedger.currentLoad(token)) return;
         const productMap = {};
         allProducts.forEach(p => productMap[p.id] = p);
@@ -2538,23 +2516,29 @@ async function loadSales() {
         if (salesMonth) {params.set('month',salesMonth); summaryParams.set('month',salesMonth);}
         if (salesProductKeyword) {params.set('keyword',salesProductKeyword); summaryParams.set('keyword',salesProductKeyword);}
         const [result, monthlySummary] = await Promise.all([
-            api('GET', `/sales?${params}`), api('GET', `/sales/monthly-summary?${summaryParams}`),
+            api('GET', `/sales?${params}`, undefined, requestOptions), api('GET', `/sales/monthly-summary?${summaryParams}`, undefined, requestOptions),
         ]);
         if (!window.SalesLedger.currentLoad(token)) return;
         renderMonthlySalesSummary(monthlySummary);
         salesPage=result.page; salesPageSize=result.page_size; salesTotal=result.total;
         window.SalesLedger.render(result.items,productMap);
         renderPagination('sales-pagination',salesPage,Math.max(1,Math.ceil(salesTotal/salesPageSize)),salesTotal,salesPageSize);
-    } catch (error) {window.SalesLedger.fail(error,token); return;}
+    } catch (error) {
+        if (!window.SalesLedger.currentLoad(token)) return;
+        window.SalesLedger.fail(error,token);
+        return false;
+    }
     try {
-        await loadPendingConfirmations();
+        await loadPendingConfirmations(requestOptions);
     } catch (error) {
         if (!window.SalesLedger.currentLoad(token)) return;
         const message = window.PageInteractions.text('salesPendingLoadFailed');
         document.getElementById('pending-confirmations-summary').textContent = message;
         document.getElementById('pending-confirmations-tbody').innerHTML = `<tr><td colspan="11" class="msg msg-err" role="alert">${escapeHtml(error.message || message)}</td></tr>`;
         document.getElementById('pending-confirmations-pagination').replaceChildren();
+        return false;
     }
+    return true;
 }
 
 function renderMonthlySalesSummary(summary) {
@@ -2570,7 +2554,7 @@ function renderMonthlySalesSummary(summary) {
     const costReview = summary.reduce((count, item) => count + Number(item.cost_review_count || 0), 0);
     tbody.innerHTML = summary.map(item => `<tr>
         <td><strong>${escapeHtml(item.month)}</strong></td>
-        <td>${Number(item.sales_count).toLocaleString('zh-CN')}</td>
+        <td>${Number(Number(item.sales_count || 0) + Number(item.settlement_event_count || 0)).toLocaleString('zh-CN')}</td>
         <td>${Number(item.sold_quantity).toLocaleString('zh-CN')}</td>
         <td class="${item.sales_revenue_cny == null ? 'fx-missing' : ''}">${money(item.sales_revenue_cny)}</td>
         <td>¥${Number(item.sales_cost_cny || 0).toFixed(2)}</td>
@@ -2587,17 +2571,19 @@ function refreshSalesWorkspace() {
 }
 
 async function loadSalesImports() {
+    const requestOptions = window.SalesLedger?.requestOptions() || {};
     const tbody = document.getElementById('sales-imports-tbody');
     try {
-        const list = await api('GET', '/sales/imports?limit=30');
+        const list = await api('GET', '/sales/imports?limit=30', undefined, requestOptions);
+        if (requestOptions.isCurrent && !requestOptions.isCurrent()) return;
         if (!list.length) {
             tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无导入记录</td></tr>';
-            return;
+            return true;
         }
         tbody.innerHTML = list.map(item => {
             const statusClass = item.status === 'completed' ? 'status-completed' : 'status-rolled-back';
             const statusText = item.status === 'completed' ? '已完成' : '已撤销';
-            const fileType = item.file_type === 'order_detail' ? '订单详情 Excel' : '销售 CSV';
+            const fileType = item.file_type === 'manual_settlement' ? window.PageInteractions.text('salesManualEntry') : item.file_type === 'order_detail' ? '订单详情 Excel' : '销售 CSV';
             return `<tr>
                 <td><div class="file-primary" title="${escapeHtml(item.file_name)}">${escapeHtml(item.file_name)}</div><div class="file-secondary">${fileType}${item.sheet_name ? ` · ${escapeHtml(item.sheet_name)}` : ''}</div></td>
                 <td>${escapeHtml(item.store_name || '未关联店铺')}</td>
@@ -2610,8 +2596,11 @@ async function loadSalesImports() {
                 <td>${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
             </tr>`;
         }).join('');
+        return true;
     } catch (e) {
+        if (requestOptions.isCurrent && !requestOptions.isCurrent()) return;
         tbody.innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(e.message)}</td></tr>`;
+        return false;
     }
 }
 
@@ -2733,8 +2722,15 @@ function escapeHtml(value) {
     }[character]));
 }
 
-async function loadPendingConfirmations() {
-    const result = await api('GET', `/sales/pending-confirmations?page=${pendingConfirmationsPage}&page_size=${pendingConfirmationsPageSize}`);
+async function loadPendingConfirmations(requestOptions = window.SalesLedger?.requestOptions() || {}) {
+    let result;
+    try {
+        result = await api('GET', `/sales/pending-confirmations?page=${pendingConfirmationsPage}&page_size=${pendingConfirmationsPageSize}`, undefined, requestOptions);
+    } catch (error) {
+        if (requestOptions.isCurrent && !requestOptions.isCurrent()) return;
+        throw error;
+    }
+    if (requestOptions.isCurrent && !requestOptions.isCurrent()) return;
     pendingConfirmationsPage = result.page;
     pendingConfirmationsPageSize = result.page_size;
     pendingConfirmationsTotal = result.total;

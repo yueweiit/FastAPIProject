@@ -15,7 +15,7 @@ from sqlalchemy import event, select
 from auth import get_current_user
 from database import get_db
 from models import (InventoryBatch, InventoryCostAdjustment, InventoryCostAdjustmentLine,
-                    Product, Sale, SaleCostDetail, Store)
+                    Product, Sale, SaleCostDetail, Store, SettlementEntry)
 from routers import sales
 from tests import test_financial_facts as facts
 from tests.test_sales_import_store import Facade
@@ -153,12 +153,14 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         self.session.get(Store, 7).name = '=HYPERLINK("https://unit.invalid","S")'
         product = self.session.get(Product, 10)
         product.sku, product.name = "0000123", "=1+2"
+        entry = self.session.get(SettlementEntry, 1)
+        entry.platform_sku_id, entry.product_name, entry.transaction_type = "0000123", "=1+2", "=SUM(1,1)"
         self.session.get(Sale, 1).order_no = "=SUM(1,2)"
         self.session.commit()
         book = await self.exported(keyword="=1+2")
         sheet = book["销售记录"]
         row = next(row for row in sheet if row[11].value == "=SUM(1,2)")
-        for col in (0, 2, 3, 11): self.assertEqual(row[col].data_type, "s")
+        for col in (0, 2, 3, 11, 27): self.assertEqual(row[col].data_type, "s")
         self.assertEqual(row[2].value, "0000123")
         self.assertEqual(book["说明"]["B3"].value, "=1+2")
         self.assertEqual(book["说明"]["B3"].data_type, "s")

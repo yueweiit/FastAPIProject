@@ -347,7 +347,7 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         manual = await manual_period_values(self.db, 7, date(2026, 9, 1), STORE_PROFIT_LOSS_MANUAL_KEYS)
         self.assertEqual(Decimal(manual["advertising"]["current"]), Decimal(0))
         values = _build_store_profit_loss_values(await self.auto_values(), manual)
-        self.assertEqual(values["net_profit"]["current"], Decimal(27))
+        self.assertEqual(values["net_profit"]["current"], Decimal(37))
 
     async def test_cross_store_excel_keeps_unconfirmed_ledger_blank_until_posted(self):
         expense = await controls.create_expense(self.db, self.user, self.expense())

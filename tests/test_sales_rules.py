@@ -153,13 +153,13 @@ class ExchangeRateTests(unittest.TestCase):
             Decimal("45.18"),
         )
 
-    def test_compensation_is_a_positive_expense_deduction(self):
-        for transaction_type in ("物流赔付", "平台赔付"):
+    def test_compensation_does_not_generate_an_expense(self):
+        for transaction_type in ("物流赔付", "平台赔付", "物料赔付"):
             self.assertEqual(
                 _other_expense_from_row(
                     Decimal("0"), Decimal("159.98"), transaction_type
                 ),
-                Decimal("159.98"),
+                Decimal("0"),
             )
 
     def test_weekend_uses_latest_available_business_day(self):

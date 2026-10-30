@@ -79,7 +79,7 @@ class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(orders[1][1:4],('SALE',2,46))
         values=list(book['销售记录'].values)
         self.assertTrue(all(row[2]=='P10' or row[2]=='-' for row in values[1:-1]))
-        self.assertEqual(book['销售记录'].max_column,27)
+        self.assertEqual(book['销售记录'].max_column,29)
         self.assertEqual(next(row for row in values[1:-1] if row[11]=='SALE')[23:27],(10,0,0,0))
         self.assertTrue(all(value is None for value in values[-1][23:27]))
         self.assertTrue(set(self.queries)<={'SELECT'})
@@ -199,4 +199,4 @@ class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
         for meta in [*resource['fields'],*resource['extra_fields']]:
             if meta['kind']!='action':
                 self.assertEqual(fields[meta['key']][1:6],tuple(meta[key] for key in ('label','group','formula','source','note')))
-        self.assertEqual(len(resource['fields']),22)
+        self.assertEqual(len(resource['fields']),24)

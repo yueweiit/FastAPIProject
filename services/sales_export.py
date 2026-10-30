@@ -11,12 +11,12 @@ from services.sales_fields import sales_field_help
 
 MAX_EXPORT_ROWS = 20_000
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-HEADERS = ("店铺", "日期", "SKU", "产品名称", "销售数量", "销售单价（元）", "FIFO成本单价（元）",
-           "净商品收入（元）", "订单总成本（元，本行）", "其他费用（元）", "毛利（元）", "订单号", "记录类型",
+HEADERS = ("店铺", "日期", "SKU ID", "产品名", "实际出库数量", "销售单价（元）", "FIFO成本单价（元）",
+           "店铺收入（元）", "订单总成本（元，本行）", "其他费用（元）", "毛利（元）", "订单号", "记录类型",
            "原币", "汇率", "汇率日期", "成本状态", "说明", "采购成本（元）", "头程成本（元）",
            "尾程成本（元）", "其他入库成本（元）", "出库商品跌价（元，参考）",
-           "单件采购（元/件）", "单件头程（元/件）", "单件尾程（元/件）", "单件其他入库成本（元/件）")
-RECORD_NAMES = {"sale": "销售", "other_expense": "赔付费用", "settlement_adjustment": "退款/结算调整"}
+           "单件采购（元/件）", "单件头程（元/件）", "单件尾程（元/件）", "单件其他入库成本（元/件）", "交易类型", "来源数量")
+RECORD_NAMES = {"sale": "销售", "other_expense": "赔付费用", "compensation_income": "赔付收入", "manual_settlement": "手工结算补录", "settlement_adjustment": "退款/结算调整"}
 COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": "待核对"}
 
 
@@ -54,6 +54,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
             row.get("purchase_cost_cny"), row.get("head_shipping_cost_cny"),
             row.get("last_mile_cost_cny"), row.get("other_cost_cny"), row.get("impairment_cny"),
             *(row.get("unit_" + key + "_cost_cny") for key in ("purchase", "head_shipping", "last_mile", "other")),
+            row.get("transaction_type"), row.get("source_quantity"),
         ])
         _append(sheet, values[-1], number)
     totals = [None] * len(HEADERS)
@@ -63,12 +64,13 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
         totals[col - 1] = None if None in parts else sum(parts, Decimal(0))
     _append(sheet, totals, len(rows) + 2)
     _style_header(sheet)
-    widths = (22, 14, 20, 30, 14, 20, 22, 23, 26, 20, 20, 30, 22, 12, 18, 14, 16, 70, 20, 20, 20, 22, 30, 23, 23, 23, 25)
+    widths = (22, 14, 24, 36, 14, 20, 22, 23, 26, 20, 20, 30, 22, 12, 18, 14, 16, 70, 20, 20, 20, 22, 30, 23, 23, 23, 25, 18, 16)
     for col, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(col)].width = width
     for cells in sheet.iter_rows(min_row=2):
         cells[1].number_format = cells[15].number_format = "yyyy-mm-dd"
         cells[4].number_format = '#,##0'
+        cells[28].number_format = '#,##0'
         for col in (6, 8, 9, 10, 11, 19, 20, 21, 22, 23):
             cells[col - 1].number_format = '¥#,##0.00'
         cells[6].number_format = '¥#,##0.0000'

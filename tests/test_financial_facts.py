@@ -101,8 +101,8 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
     async def test_unlinked_events_exclude_linked_sale_pending_orders_and_other_stores(self):
         events = await unlinked_settlement_events(self.db, {7}, date(2026, 9, 1), date(2026, 10, 1))
         self.assertEqual([e.entry_id for e in events], [3, 2])
-        self.assertEqual(sum(e.revenue for e in events), Decimal(-20))
-        self.assertEqual(sum(e.expense for e in events), Decimal(3))
+        self.assertEqual(sum(e.revenue for e in events), Decimal(-15))
+        self.assertEqual(sum(e.expense for e in events), Decimal(-2))
         self.assertEqual(await unlinked_settlement_events(self.db, {7}, date(2026, 8, 1), date(2026, 9, 1)), [])
         product_events = await unlinked_settlement_events(self.db, {7}, None, None, product_id=10)
         self.assertEqual([e.entry_id for e in product_events], [2])
@@ -114,9 +114,9 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.sales_count, 1)
         self.assertEqual(row.sold_quantity, 4)
         self.assertEqual(row.settlement_event_count, 2)
-        self.assertEqual(row.sales_revenue_cny, Decimal(80))
-        self.assertEqual(row.platform_fee_cny, Decimal(13))
-        self.assertEqual(row.gross_profit_cny, Decimal(27))
+        self.assertEqual(row.sales_revenue_cny, Decimal(85))
+        self.assertEqual(row.platform_fee_cny, Decimal(8))
+        self.assertEqual(row.gross_profit_cny, Decimal(37))
         values = _build_store_profit_loss_values(await self.auto_values(), {})
         self.assertEqual(values["net_profit"]["current"], row.gross_profit_cny)
         # 报表查询没有恢复退款库存、删除订单或重写保存成本。
@@ -131,7 +131,32 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(p.total == 3 for p in pages))
         original = next(x for x in full if x.id == 1)
         self.assertEqual(original.cost_details[0].batch_no, "TEST")
-        self.assertEqual(sum(x.profit_cny for x in full), Decimal(27))
+        self.assertEqual(sum(x.profit_cny for x in full), Decimal(37))
+
+    async def test_compensation_income_uses_signed_settlement_and_saved_fx_without_stock_changes(self):
+        self.entry(6,net=999,total='117.50',quantity=0,kind='物流赔付',product=None,currency='MXN',rate='0.4')
+        self.entry(7,net=0,total=-2,quantity=0,kind='物料赔付',product=None,currency='MXN',rate='0.4')
+        self.entry(8,net=0,total=100,quantity=0,kind='平台赔付',product=None,store=8)
+        self.session.commit()
+        events=await unlinked_settlement_events(self.db,{7},date(2026,9,1),date(2026,10,1))
+        amounts={row.entry_id:(row.revenue,row.expense) for row in events}
+        self.assertEqual(amounts[6],(Decimal('47.000'),Decimal(0)))
+        self.assertEqual(amounts[7],(Decimal('-.8'),Decimal(0)))
+        self.assertNotIn(8,amounts)
+        user=SimpleNamespace(role='operator',store_id=7)
+        summary=(await monthly_sales_summary(None,None,'2026-09',self.db,user))[0]
+        self.assertEqual(summary.sales_revenue_cny,Decimal('131.2'))
+        self.assertEqual(summary.platform_fee_cny,Decimal(8))
+        self.assertEqual(summary.gross_profit_cny,Decimal('83.2'))
+        values=_build_store_profit_loss_values(await self.auto_values(),{})
+        self.assertEqual(values['net_profit']['current'],summary.gross_profit_cny)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)
+        self.assertEqual(self.session.get(Sale,1).total_cost,Decimal(40))
+        self.entry(9,net=0,total=1,quantity=0,kind='物流赔付',product=None,currency='USD',rate=None)
+        self.session.commit()
+        missing=next(row for row in await unlinked_settlement_events(self.db,{7},None,None) if row.entry_id==9)
+        self.assertIsNone(missing.revenue)
+        self.assertIsNone(missing.expense)
 
     async def test_missing_fx_masks_income_cost_profit_and_cross_store_excel_totals(self):
         self.entry(6, net=-5, total=-4, quantity=-1, currency="USD", rate=None)
@@ -168,8 +193,8 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
     async def test_product_line_adjustments_match_store_profit_without_inventory_returns(self):
         with patch("routers.reports._sale_provision_adjustments", new=AsyncMock(return_value={1: (Decimal(0), "")})):
             rows = await _product_line_profit_data(self.db, {7}, date(2026, 9, 1), date(2026, 9, 30))
-        self.assertEqual(sum(r["current"]["revenue"] for r in rows), Decimal(80))
-        self.assertEqual(sum(r["current"]["cost"] for r in rows), Decimal(53))
+        self.assertEqual(sum(r["current"]["revenue"] for r in rows), Decimal(85))
+        self.assertEqual(sum(r["current"]["cost"] for r in rows), Decimal(48))
 
     async def test_actual_month_rows_derive_previous_and_ytd_without_overwriting_legacy(self):
         self.session.add_all([
