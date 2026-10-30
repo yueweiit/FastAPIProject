@@ -9,6 +9,17 @@
         importSelectHelp: '请选择这次文件所属店铺', importBoundHelp: '文件将归入账号绑定的店铺',
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
+        salesExport: '导出销售记录', salesExportLoading: '正在导出全部匹配的销售记录，请稍候…',
+        salesExportReady: '销售记录已导出，请检查浏览器下载列表。',
+        salesExportFailed: '销售记录导出失败，请稍后重试。',
+        salesExportEmpty: '没有符合条件的销售记录可导出。',
+        salesExportTooLarge: '单次最多导出{limit}条记录，请缩小月份或商品范围。',
+        salesExportUnavailable: '当前服务尚未加载销售导出接口，请更新并重启后端后刷新页面。',
+        salesExportInvalidFile: '服务器未返回有效的Excel文件，请稍后重试。',
+        salesCostTotal: '订单总成本（元，本行）', salesCostPurchase: '采购成本（元）',
+        salesCostHead: '头程成本（元）', salesCostLast: '尾程成本（元）', salesCostOther: '其他入库成本（元）',
+        salesCostImpairment: '出库商品跌价（元，参考）', salesCostPending: '待核对',
+        salesCostHelp: '导入后按实际FIFO出库批次自动拆分采购、头程、尾程和其他入库成本，四项合计为本行订单总成本；组合商品同一订单号各行相加为整单成本。展示按分舍入，尾差按科目金额由大到小分配。出库商品跌价单列，不加到订单成本或重复扣减毛利；店铺损益仍按批次归属分摊，本列不代表销售店铺承担额。横向滚动可查看全部成本列。',
         batchExport: '导出', batchEdit: '编辑',
         batchImpairmentStores: '跌价归属店铺', batchImpairmentDefault: '未指定（沿用原归属）',
         batchImpairmentHelp: '可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
@@ -74,6 +85,12 @@
         node.textContent = text(node.dataset.provisionText);
     });
     translateProvisionLabels();
+    document.querySelectorAll?.('[data-sales-export-text]')?.forEach(node => {
+        node.textContent = text(node.dataset.salesExportText);
+    });
+    document.querySelectorAll?.('[data-sales-cost-text]')?.forEach(node => {
+        node.textContent = text(node.dataset.salesCostText);
+    });
 
     // MySQL DateTime/API 是无时区的业务时间；不能经过 Date/UTC 转换。
     const batchDateTimeInput = value => String(value || '').slice(0, 16);

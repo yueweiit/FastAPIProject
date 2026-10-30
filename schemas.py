@@ -338,6 +338,14 @@ class SaleResponse(BaseModel):
     cost_adjustment_cny: Decimal = Decimal(0)
     cost_status: str = "unverified"
     cost_review_reason: str | None = None
+    purchase_cost_cny: Decimal | None = None
+    head_shipping_cost_cny: Decimal | None = None
+    last_mile_cost_cny: Decimal | None = None
+    other_cost_cny: Decimal | None = None
+    order_total_cost_cny: Decimal | None = None
+    cost_breakdown_review_reason: str | None = None
+    impairment_cny: Decimal | None = None
+    impairment_review_reason: str | None = None
     platform_fee: Decimal
     profit: Decimal
     currency: str = "CNY"

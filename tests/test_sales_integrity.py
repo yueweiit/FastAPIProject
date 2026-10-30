@@ -115,6 +115,7 @@ class SalesIntegrityTests(unittest.IsolatedAsyncioTestCase):
                 return error.status_code
 
         with (patch("routers.sales._build_sale_response",side_effect=lambda sale, details, **kwargs: sale),
+              patch("routers.sales.attach_sale_impairment", new=AsyncMock()),
               patch("routers.sales.sale_cost_context", new=AsyncMock(return_value={}))):
             outcomes = await asyncio.gather(submit(),submit())
         self.assertEqual(sorted(outcomes), [200,409])

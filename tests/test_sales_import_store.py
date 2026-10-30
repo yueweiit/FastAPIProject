@@ -28,6 +28,7 @@ class Facade:
     async def scalar(self, statement): return self.session.scalar(statement)
     def add(self, row): self.session.add(row)
     async def flush(self): self.session.flush()
+    async def refresh(self, row): self.session.refresh(row)
     async def commit(self): self.session.commit()
     async def rollback(self): self.session.rollback()
 

@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import and_, delete, func, or_, select
@@ -47,8 +48,11 @@ from schemas import (
 )
 from services.fifo import fifo_sell, lock_fifo_batches, InsufficientStockError
 from services.exchange_rates import ExchangeRateError, get_cny_rates
-from services.financial_facts import unlinked_settlement_events, valid_rate, settlement_expense
-from services.cost_layers import sale_cost_context
+from services.financial_facts import (unlinked_settlement_events, count_unlinked_settlement_events,
+                                      valid_rate, settlement_expense)
+from services.cost_layers import sale_cost_context, rounded_cost_components
+from services.sales_costs import attach_sale_impairment
+from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
 from auth import RequireOperator, RequireAnyRole
 
 router = APIRouter(prefix="/sales", tags=["销售管理"])
@@ -1232,6 +1236,8 @@ def _build_sale_response(
 ) -> SaleResponse:
     cost_context = cost_context or {}
     adjusted_cost = sale.total_cost + cost_context.get("adjustment", Decimal(0))
+    parts = cost_context.get("components")
+    parts = rounded_cost_components(parts, adjusted_cost) if parts is not None else {}
     currency = currency.upper()
     if currency == "CNY":
         exchange_rate_to_cny = exchange_rate_to_cny or Decimal("1")
@@ -1270,6 +1276,12 @@ def _build_sale_response(
         cost_adjustment_cny=cost_context.get("adjustment", Decimal(0)),
         cost_status=cost_context.get("cost_status", "unverified"),
         cost_review_reason=cost_context.get("cost_review_reason"),
+        purchase_cost_cny=parts.get("purchase"),
+        head_shipping_cost_cny=parts.get("head_shipping"),
+        last_mile_cost_cny=parts.get("last_mile"),
+        other_cost_cny=parts.get("other"),
+        order_total_cost_cny=sum(parts.values(), Decimal(0)) if parts else None,
+        cost_breakdown_review_reason=cost_context.get("breakdown_review_reason"),
         platform_fee=sale.platform_fee,
         profit=sale.profit,
         currency=currency,
@@ -1493,7 +1505,9 @@ async def create_sale(
         await db.rollback()
         raise HTTPException(status_code=409, detail="订单已存在或销售数据冲突，请刷新后重试")
 
-    return _build_sale_response(sale, cost_details, cost_context=(await sale_cost_context(db, [sale])).get(sale.id))
+    response = _build_sale_response(sale, cost_details, cost_context=(await sale_cost_context(db, [sale])).get(sale.id))
+    await attach_sale_impairment(db, [response])
+    return response
 
 
 @router.get("/pending-confirmations", response_model=PendingConfirmationPageResponse)
@@ -1883,6 +1897,9 @@ async def list_sales(
         event_responses = [SaleResponse(
             id=-event.entry_id, product_id=event.product_id, order_no=event.order_no,
             quantity=0, selling_price=event.original_revenue, total_cost=Decimal(0),
+            purchase_cost_cny=Decimal(0), head_shipping_cost_cny=Decimal(0),
+            last_mile_cost_cny=Decimal(0), other_cost_cny=Decimal(0),
+            order_total_cost_cny=Decimal(0), impairment_cny=Decimal(0),
             platform_fee=event.original_expense, profit=event.original_revenue-event.original_expense,
             currency=event.currency, exchange_rate_to_cny=event.rate,
             exchange_rate_date=event.rate_date, exchange_rate_source=event.rate_source,
@@ -1923,9 +1940,59 @@ async def list_sales(
             total = len(combined)
             page = min(requested_page, max(1, (total + page_size - 1) // page_size))
             response = combined[(page-1)*page_size:page*page_size]
+    await attach_sale_impairment(db, response)
     if page is None:
         return response
     return SalePageResponse(items=response, total=total, page=page, page_size=page_size)
+
+
+@router.get("/export")
+async def export_sales_records(
+    product_id: int | None = Query(default=None, gt=0),
+    keyword: str | None = Query(default=None, max_length=255),
+    month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
+    count_stmt = select(func.count()).select_from(Sale)
+    if normalized_keyword:
+        count_stmt = count_stmt.join(Product)
+    sales_count = await db.scalar(count_stmt.where(*conditions))
+    start = datetime.strptime(month, "%Y-%m").date() if month else None
+    end = (start.replace(year=start.year + 1, month=1) if start.month == 12
+           else start.replace(month=start.month + 1)) if start else None
+    event_count = await count_unlinked_settlement_events(
+        db, None if user.role == "admin" else {_require_bound_store(user)}, start, end,
+        product_id=product_id, keyword=normalized_keyword,
+    )
+    total = sales_count + event_count
+    if total > MAX_EXPORT_ROWS:
+        raise HTTPException(422, detail={"code": "sales_export_too_large", "max_rows": MAX_EXPORT_ROWS,
+            "message": f"单次最多导出{MAX_EXPORT_ROWS}条记录，请缩小月份或商品范围。"})
+    if not total:
+        raise HTTPException(404, detail={"code": "sales_export_empty", "message": "没有符合条件的销售记录可导出。"})
+    # 直接复用列表的完整响应，包含成本追溯、汇率空值及独立财务事件。
+    items = await list_sales(product_id, normalized_keyword, month, None, 100, db, user)
+    if not items:
+        raise HTTPException(404, detail={"code": "sales_export_empty", "message": "没有符合条件的销售记录可导出。"})
+    if len(items) > MAX_EXPORT_ROWS:
+        raise HTTPException(422, detail={"code": "sales_export_too_large", "max_rows": MAX_EXPORT_ROWS,
+            "message": f"单次最多导出{MAX_EXPORT_ROWS}条记录，请缩小月份或商品范围。"})
+    ids = {item.product_id for item in items if item.product_id is not None}
+    products = {p.id: p for p in (await db.execute(select(Product).where(Product.id.in_(ids)))).scalars().all()} if ids else {}
+    rows = []
+    for item in items:
+        product = products.get(item.product_id)
+        rows.append({**item.model_dump(exclude={"cost_details"}), "sku": item.display_sku or (product.sku if product else "-"),
+                     "product_name": item.display_name or (product.name if product else "-")})
+    scope = "全部店铺" if user.role == "admin" else "账号绑定店铺"
+    await db.rollback()
+    output = await run_in_threadpool(build_sales_workbook, rows, month=month, keyword=normalized_keyword,
+                                    scope=scope, product_id=product_id)
+    suffix = month.replace("-", "") if month else "all"
+    return StreamingResponse(output, media_type=SALES_EXPORT_MIME,
+        headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"'})
 
 
 @router.get("/{sale_id}", response_model=SaleResponse)
@@ -1960,7 +2027,7 @@ async def get_sale(
         })
     import_context_by_sale, store_by_sale = await _sale_import_context(db, [sale])
     import_context = import_context_by_sale.get(sale.id, {})
-    return _build_sale_response(
+    response = _build_sale_response(
         sale,
         details,
         currency=import_context.get("currency", "CNY"),
@@ -1972,3 +2039,5 @@ async def get_sale(
         source_other_expense=import_context.get("source_other_expense"),
         cost_context=(await sale_cost_context(db, [sale])).get(sale.id),
     )
+    await attach_sale_impairment(db, [response])
+    return response

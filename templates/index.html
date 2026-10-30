@@ -118,11 +118,12 @@
         .sales-monthly-table th:nth-child(n+2), .sales-monthly-table td:nth-child(n+2) { text-align:right; }
         .sales-monthly-table td { text-align:center; }
         .sales-monthly-table .empty, .sales-ledger-table .empty { padding:34px 20px !important; background:#fbfcfd; color:#8b97a8; }
+        .sales-cost-help { color:#687386; font-size:13px; line-height:1.7; margin:12px 0; }
         .sales-total-summary { margin-bottom:12px; overflow-x:auto; border:1px solid #aac9dd; border-radius:8px; box-shadow:0 2px 6px rgba(15,59,93,.06); }
-        .sales-total-summary table { width:100%; min-width:1390px; table-layout:fixed; background:#d9eaf5; }
+        .sales-total-summary table { width:100%; min-width:2580px; table-layout:fixed; background:#d9eaf5; }
         .sales-total-summary td { font-weight:800; color:#152238; border-bottom:0; }
         .sales-total-summary td:first-child { text-align:left; }
-        .table-scroll .sales-ledger-table { width:100%; min-width:1390px !important; table-layout:fixed; }
+        .table-scroll .sales-ledger-table { width:100%; min-width:2580px !important; table-layout:fixed; }
         .sales-ledger-scroll { box-shadow:0 2px 8px rgba(21,34,56,.04); }
         .sales-ledger-table .fx-missing { color:#a06108; font-weight:700; }
         .import-history-table { min-width:1120px !important; }
@@ -628,10 +629,12 @@
                 <div class="sales-filter-toolbar">
                     <div class="form-group"><label for="sales-month">月份</label><input id="sales-month" type="month"></div>
                     <div class="form-group"><label for="sales-product-keyword">商品名称或 SKU</label><input id="sales-product-keyword" type="search" placeholder="输入名称或 SKU"></div>
-                    <button class="btn btn-primary" type="button" onclick="searchSales()">搜索</button>
-                    <button class="btn btn-secondary" type="button" onclick="clearSalesSearch()">清空</button>
+                    <button id="sales-search-button" class="btn btn-primary" type="button" onclick="searchSales()">搜索</button>
+                    <button id="sales-clear-button" class="btn btn-secondary" type="button" onclick="clearSalesSearch()">清空</button>
+                    <button id="sales-export-button" class="btn btn-secondary" type="button" onclick="exportSalesRecords()" data-sales-export-text="salesExport"></button>
                 </div>
             </div>
+            <p id="sales-export-status" class="msg" role="status" aria-live="polite" style="display:none"></p>
             <div class="sales-monthly-summary">
                 <div class="sales-monthly-summary-title"><span>月度统计</span><span id="sales-monthly-summary-note">金额均为人民币</span></div>
                 <div class="table-scroll sales-monthly-scroll">
@@ -641,16 +644,17 @@
                     </table>
                 </div>
             </div>
+            <p class="sales-cost-help" data-sales-cost-text="salesCostHelp"></p>
             <div class="sales-total-summary">
                 <table>
-                    <colgroup><col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:17%"><col style="width:7%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:7%"></colgroup>
+                    <colgroup><col style="width:120px"><col style="width:110px"><col style="width:140px"><col style="width:260px"><col style="width:100px"><col style="width:150px"><col style="width:160px"><col style="width:170px"><col style="width:170px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:200px"></colgroup>
                     <tbody id="sales-total-summary-body"></tbody>
                 </table>
             </div>
             <div class="table-scroll sales-ledger-scroll">
             <table class="sales-ledger-table">
-                <colgroup><col style="width:7%"><col style="width:7%"><col style="width:7%"><col style="width:17%"><col style="width:7%"><col style="width:10%"><col style="width:11%"><col style="width:10%"><col style="width:9%"><col style="width:8%"><col style="width:7%"></colgroup>
-                <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>净商品收入（元）</th><th>销售成本（元）</th><th>其他费用（元）</th><th>毛利（元）</th></tr></thead>
+                <colgroup><col style="width:120px"><col style="width:110px"><col style="width:140px"><col style="width:260px"><col style="width:100px"><col style="width:150px"><col style="width:160px"><col style="width:170px"><col style="width:170px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:150px"><col style="width:200px"></colgroup>
+                <thead><tr><th>店铺</th><th>日期</th><th>SKU</th><th>产品名称</th><th>销售数量</th><th>销售单价（元）</th><th>FIFO成本单价（元）</th><th>净商品收入（元）</th><th data-sales-cost-text="salesCostTotal"></th><th>其他费用（元）</th><th>毛利（元）</th><th data-sales-cost-text="salesCostPurchase"></th><th data-sales-cost-text="salesCostHead"></th><th data-sales-cost-text="salesCostLast"></th><th data-sales-cost-text="salesCostOther"></th><th data-sales-cost-text="salesCostImpairment"></th></tr></thead>
                 <tbody id="sales-tbody"></tbody>
             </table>
             </div>
@@ -958,6 +962,7 @@ function handleSessionExpired() {
     if (typeof window !== 'undefined') {
         window.FinanceControl?.reset();
         window.InventoryWorkspace?.reset();
+        window.SalesExport?.reset();
     }
     document.querySelectorAll('#sec-sales tbody, #sec-reports tbody, #sec-reports tfoot, #users-tbody').forEach(node => node.innerHTML = '');
     document.getElementById('login-overlay').style.display = 'flex';
@@ -2520,20 +2525,22 @@ async function loadSales() {
     salesTotal = result.total;
     const tbody = document.getElementById('sales-tbody');
     const totalSummary = document.getElementById('sales-total-summary-body');
+    const costFields = ['purchase_cost_cny', 'head_shipping_cost_cny', 'last_mile_cost_cny', 'other_cost_cny', 'impairment_cny'];
+    const pendingCost = window.PageInteractions.text('salesCostPending');
     if (!list.length) {
-        tbody.innerHTML = '<tr><td colspan="11" class="empty">暂无销售记录</td></tr>';
-        totalSummary.innerHTML = '<tr><td colspan="4">本页合计</td><td>0</td><td></td><td></td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="16" class="empty">暂无销售记录</td></tr>';
+        totalSummary.innerHTML = '<tr><td colspan="4">本页合计</td><td>0</td><td></td><td></td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td><td>¥0.00</td>' + '<td>¥0.00</td>'.repeat(costFields.length) + '</tr>';
         renderPagination('sales-pagination', 1, 1, 0, salesPageSize);
     } else {
-        const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true, costReviewCount: 0};
+        const totals = {quantity: 0, revenue: 0, cost: 0, platformFee: 0, grossProfit: 0, fxReady: true, costReviewCount: 0, parts: costFields.map(() => 0)};
         tbody.innerHTML = list.map(s => {
             const p = productMap[s.product_id] || {};
             const details = s.cost_details?.map(d => `${d.batch_no}×${d.quantity}@¥${Number(d.unit_cost).toFixed(2)}`).join('；') || '无批次明细';
             const dateStr = s.sold_at?.slice(0,10) || s.order_no?.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || '-';
             const quantity = Number(s.quantity) || 0;
             const originalPrice = Number(s.selling_price) || 0;
-            const totalCost = Number(s.total_cost) || 0;
-            const fifoUnitCost = quantity ? totalCost / quantity : 0;
+            const totalCost = Number(s.order_total_cost_cny ?? s.total_cost) || 0;
+            const fifoUnitCost = quantity ? Number(s.total_cost) / quantity : 0;
             const currency = String(s.currency || 'CNY').toUpperCase();
             const rate = s.exchange_rate_to_cny == null ? null : Number(s.exchange_rate_to_cny);
             const sellingPriceCny = s.selling_price_cny == null ? null : Number(s.selling_price_cny);
@@ -2554,6 +2561,13 @@ async function loadSales() {
                 totals.platformFee += platformFeeCny;
                 totals.grossProfit += grossProfitCny;
             }
+            const costCells = costFields.map((field, index) => {
+                const value = s[field] == null ? null : Number(s[field]);
+                const known = value !== null && Number.isFinite(value);
+                totals.parts[index] = !known || totals.parts[index] === null ? null : totals.parts[index] + value;
+                const reason = index === 4 ? s.impairment_review_reason : s.cost_breakdown_review_reason;
+                return `<td class="${known ? '' : 'fx-missing'}" title="${escapeHtml(reason || '')}">${known ? `¥${value.toFixed(2)}` : pendingCost}</td>`;
+            }).join('');
             const money = (value, pending = '汇率缺失') => value === null ? pending : `¥${value.toFixed(2)}`;
             return `<tr>
                 <td class="${s.store_name ? '' : 'unlinked-store'}">${escapeHtml(s.store_name || '未关联店铺')}</td>
@@ -2567,6 +2581,7 @@ async function loadSales() {
                 <td>¥${totalCost.toFixed(2)}</td>
                 <td class="${fxReady ? '' : 'fx-missing'}">${money(platformFeeCny)}</td>
                 <td class="${fxReady ? '' : 'fx-missing'}" title="${escapeHtml(s.cost_review_reason || '')}">${money(grossProfitCny, costNeedsReview ? window.PageInteractions.text('batchVoidProfitPending') : '汇率缺失')}</td>
+                ${costCells}
             </tr>`;
         }).join('');
         const totalMoney = value => totals.fxReady ? `¥${value.toFixed(2)}` : totals.costReviewCount ? window.PageInteractions.text('batchVoidProfitPending') : '存在汇率缺失';
@@ -2578,6 +2593,7 @@ async function loadSales() {
             <td>¥${totals.cost.toFixed(2)}</td>
             <td>${totalMoney(totals.platformFee)}</td>
             <td class="${totals.fxReady ? '' : 'fx-missing'}">${totalMoney(totals.grossProfit)}</td>
+            ${totals.parts.map(value => `<td>${value === null ? pendingCost : `¥${value.toFixed(2)}`}</td>`).join('')}
         </tr>`;
         renderPagination('sales-pagination', salesPage, Math.max(1, Math.ceil(salesTotal / salesPageSize)), salesTotal, salesPageSize);
     }
@@ -2658,6 +2674,79 @@ async function rollbackSalesImport(importBatchId) {
     finally { salesRollbackBusy = false; }
 }
 let salesPage = 1;
+let salesExportBusy = false;
+let salesExportSessionEpoch = 0;
+let salesExportController = null;
+function setSalesExportStatus(message, error = false) {
+    const status = document.getElementById('sales-export-status');
+    status.textContent = message;
+    status.className = `msg${error ? ' msg-err' : ' msg-ok'}`;
+    status.style.display = message ? 'block' : 'none';
+}
+function setSalesExportBusy(busy) {
+    salesExportBusy = busy;
+    for (const id of ['sales-export-button', 'sales-month', 'sales-product-keyword', 'sales-search-button', 'sales-clear-button']) {
+        document.getElementById(id).disabled = busy;
+    }
+}
+function resetSalesExportSession() {
+    salesExportSessionEpoch++;
+    salesExportController?.abort();
+    salesExportController = null;
+    setSalesExportBusy(false);
+    setSalesExportStatus('');
+}
+window.SalesExport = {reset: resetSalesExportSession};
+async function exportSalesRecords() {
+    if (salesExportBusy) return;
+    const epoch = salesExportSessionEpoch;
+    const month = document.getElementById('sales-month').value;
+    const keyword = document.getElementById('sales-product-keyword').value.trim();
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    if (keyword) params.set('keyword', keyword);
+    const text = window.PageInteractions.text;
+    const controller = new AbortController();
+    salesExportController = controller;
+    setSalesExportBusy(true);
+    setSalesExportStatus(text('salesExportLoading'));
+    try {
+        const response = await fetch(`/sales/export?${params.toString()}`, {
+            headers: authHeaders(), credentials: 'same-origin', signal: controller.signal,
+        });
+        if (epoch !== salesExportSessionEpoch) return;
+        if (response.status === 401) {handleSessionExpired(); return;}
+        if (!response.ok) {
+            const raw = await response.text();
+            if (epoch !== salesExportSessionEpoch) return;
+            let detail;
+            try {detail = JSON.parse(raw).detail;} catch {}
+            if (detail?.code === 'sales_export_empty') throw new Error(text('salesExportEmpty'));
+            if (detail?.code === 'sales_export_too_large') throw new Error(text('salesExportTooLarge').replace('{limit}', detail.max_rows));
+            if (response.status === 404) throw new Error(text('salesExportUnavailable'));
+            throw new Error(response.status >= 500 ? text('salesExportFailed') : formatApiError(detail, text('salesExportFailed')));
+        }
+        if (!response.headers.get('content-type')?.includes('spreadsheetml.sheet')) throw new Error(text('salesExportInvalidFile'));
+        const blob = await response.blob();
+        if (epoch !== salesExportSessionEpoch) return;
+        if (!blob.size) throw new Error(text('salesExportInvalidFile'));
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `sales_${month ? month.replace('-', '') : 'all'}.xlsx`;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        try {
+            link.click();
+            setTimeout(() => {link.remove(); URL.revokeObjectURL(url);}, 60000);
+        } catch (error) {link.remove(); URL.revokeObjectURL(url); throw error;}
+        setSalesExportStatus(text('salesExportReady'));
+    } catch (error) {
+        if (epoch === salesExportSessionEpoch) setSalesExportStatus(error.message, true);
+    } finally {
+        if (epoch === salesExportSessionEpoch) {salesExportController = null; setSalesExportBusy(false);}
+    }
+}
 let salesPageSize = 20;
 let salesTotal = 0;
 let salesMonth = '';

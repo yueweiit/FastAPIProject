@@ -53,8 +53,7 @@ class FinancialEvent:
     created_at: datetime | None = None
 
 
-async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=None, keyword=None):
-    """仅取没有出库销售关联的财务事件，避免与销售收入重复计入。"""
+def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword=None):
     linked_sale = exists(select(SettlementEntryAllocation.id).where(
         SettlementEntryAllocation.settlement_entry_id == SettlementEntry.id,
         SettlementEntryAllocation.sale_id.is_not(None),
@@ -82,7 +81,18 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
                                                         Product.name.ilike(f"%{keyword}%")))
         stmt = stmt.where(or_(SettlementEntry.product_id.in_(matching_products),
                               SettlementEntry.transaction_type.ilike(f"%{keyword}%")))
-    rows = (await db.execute(stmt.order_by(occurred, SettlementEntry.id))).all()
+    return stmt.order_by(occurred, SettlementEntry.id)
+
+
+async def count_unlinked_settlement_events(db, store_ids, start, end, *, product_id=None, keyword=None):
+    stmt = _unlinked_settlement_stmt(store_ids, start, end, product_id=product_id, keyword=keyword)
+    return await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery()))
+
+
+async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=None, keyword=None):
+    """仅取没有出库销售关联的财务事件，避免与销售收入重复计入。"""
+    stmt = _unlinked_settlement_stmt(store_ids, start, end, product_id=product_id, keyword=keyword)
+    rows = (await db.execute(stmt)).all()
     result = []
     for entry, store_id in rows:
         rate = valid_rate(entry.currency, entry.exchange_rate_to_cny)
