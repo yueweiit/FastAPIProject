@@ -49,7 +49,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123'} =
     return {element, calls, rendered, notices, run, queries, writes, load, save};
 }
 
-function renderManualCell(file, manualValue) {
+function renderManualCell(file, manualValue, inputSource = 'manual') {
     const source = fs.readFileSync(file, 'utf8');
     const elements = new Map();
     const element = id => {
@@ -57,8 +57,12 @@ function renderManualCell(file, manualValue) {
         return elements.get(id);
     };
     const context = vm.createContext({
+        window: {PageInteractions: {text: key => {equal(key, 'profitLossLedger'); return '使用明细';}}},
         document: {getElementById: element},
-        formatProfitLossAmount: () => { throw new Error('unexpected non-manual row'); },
+        formatProfitLossAmount: value => {
+            if (inputSource !== 'ledger') throw new Error('unexpected non-manual row');
+            return String(value);
+        },
     });
     for (const name of ['escapeHtml', 'renderStoreProfitLoss']) {
         const match = source.match(new RegExp('^function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
@@ -67,7 +71,7 @@ function renderManualCell(file, manualValue) {
     }
     context.report = {
         store_name: '测试店铺', period_label: '2026年9月', can_edit: true,
-        rows: [{key: 'salary', label: '人员薪资', kind: 'manual',
+        rows: [{key: 'salary', label: '人员薪资', kind: 'manual', input_source: inputSource,
             value: {current: 100}, manual_value: manualValue, remark: ''}],
     };
     vm.runInContext('renderStoreProfitLoss(report)', context);
@@ -80,6 +84,9 @@ async function verify(file) {
         equal(/data-profit-key="salary"[^>]*value="" placeholder="100"/.test(defaultCell), true);
         const overrideCell = renderManualCell(file, {current: 120});
         equal(/data-profit-key="salary"[^>]*value="120" placeholder=""/.test(overrideCell), true);
+        const ledgerCell = renderManualCell(file, {current: 120}, 'ledger');
+        equal(ledgerCell.includes('title="使用明细">100</td>'), true);
+        equal(ledgerCell.includes('data-profit-key="salary"'), false);
         const ui = setup(file, {manualInput: ''});
         const loading = ui.load(); await flush(); ui.queries()[0].resolve(report()); await loading;
         const saving = ui.save();
