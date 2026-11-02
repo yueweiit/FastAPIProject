@@ -1,23 +1,53 @@
 # 销售、导入及待确认 API
 
-前缀 /sales，共 12 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
+前缀 /sales，共 14 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `POST /sales/import` | [import_sales_file](../../../routers/sales.py) | admin/operator | file、store_id | SalesImportResponse |
+| `POST /sales/import-stream` | import_sales_stream → _import_sales_file | admin/operator | 同上；不接收导入月份 | NDJSON阶段进度与最终结果 |
 | `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit | list[SalesImportBatchResponse] |
 | `POST /sales/imports/{import_batch_id}/rollback` | [rollback_sales_import](../../../routers/sales.py) | admin/operator | import_batch_id | SalesImportRollbackResponse |
 | `POST /sales/manual-settlements` | create_manual_settlement | admin/operator | 店铺、来源字段、人民币金额、request_key | 不扣库存的结算补录SaleResponse |
 | `POST /sales` | [create_sale](../../../routers/sales.py) | admin/operator | SaleCreate | SaleResponse |
-| `GET /sales/pending-confirmations` | [list_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | page、page_size | PendingConfirmationPageResponse |
-| `GET /sales/pending-confirmations/export` | [export_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | 无 | Excel 文件 |
+| `GET /sales/pending-confirmations` | [list_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | page、page_size、reason、keyword | PendingConfirmationPageResponse |
+| `GET /sales/pending-confirmations/export` | [export_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | reason、keyword | 筛选后的Excel文件 |
+| `POST /sales/pending-confirmations/retry` | [retry_pending_confirmations](../../../routers/sales.py) | admin/operator | PendingRetryRequest | PendingRetryResponse |
 | `GET /sales/monthly-summary` | [monthly_sales_summary](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | list[MonthlySalesSummaryResponse] |
 | `GET /sales` | [list_sales](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month、page、page_size | list[SaleResponse] \| SalePageResponse |
 | `GET /sales/export` | [export_sales_records](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | 全部匹配台账的Excel文件 |
 | `GET /sales/{sale_id}/cost-breakdown` | [sale_cost_breakdown](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleCostExplanationResponse：本行代入、FIFO批次及完整订单汇总 |
 | `GET /sales/{sale_id}` | [get_sale](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleResponse |
 
-## 手工销售与查询
+## 订单号展示兼容
+
+`SaleResponse`及`SalesOrderCostSummary`追加可空只读`display_order_no`，页面与Excel优先使用该字段，缺少时回退原`order_no`。导入来源明确保留`raw_data["订单ID/调整单ID"]`时返回原编号；手工/旧CSV或缺少来源时返回保存编号，不按连字符拆分。列表、单条、计算明细（含order_lines/order_summary）与导出一致。原`order_no`继续返回内部标识，读写接口、订单+SKU防重、店铺权限和汇总范围不变，不迁移/改写历史数据；不同来源SKU显示同一原订单号时仍是独立分组。
+
+销售只读响应追加可空Decimal字段`source_row_net_product_sales`、`source_row_settlement_total`，直接读取关联原始结算行的原币净商品销售额与结算总金额。组合各组件重复展示完整来源行金额，不得跨组件累加；人民币金额仍按原有组件份额计算。无原始结算行时为null；缺失汇率不影响原币展示。独立退款、赔付及手工结算保留实际来源值；币种、保存汇率、实际汇率日期及来源复用既有字段。GET /sales（数组/分页）、GET /sales/{id}、计算明细及导出一致；无写接口、数据库、权限或汇率获取策略变更。
+
+## 待确认筛选与原记录处理
+
+GET及导出新增可选`reason`稳定码：stock_shortage/product_missing/product_ambiguous/expression_invalid/mapping_invalid/order_conflict/source_invalid/other；未知参数422。keyword最长255，匹配订单、SKU ID、产品名、SKU名称、文件名及原因文本。原page/page_size和店铺范围保持不变。列表追加reason_counts（权限/关键字范围的各分类数量），每项追加reason_code、confirmed_components（此前人工确认的product_id/multiplier）。旧字段仍保留；分类为动态字段，无DDL或历史回填。
+
+POST请求可以传`entry_ids`（正ID、去重、1–200项），或省略ID并传reason/keyword处理当前可见筛选全部记录；后一种超过200条422 `pending_retry_too_large`，不会只处理前200条。显式ID不叠加筛选，任一不存在/无权访问404 `pending_not_found`，不部分越权执行。可选`components: [{product_id>0,multiplier:1..2147483647}]`最多50项，只允许恰好一个entry_id，表示确认该行本地组件；非法或已删除商品422。重复组件按商品ID合并，件数超过Integer范围仍待确认。
+
+响应含confirmed_rows/pending_rows/skipped_rows/sales_created及逐行results（id、status=confirmed/pending/skipped、reason_code、message）。HTTP200不等于全部完成，需检查pending_rows；未解决业务原因保留原行并更新原因，已确认行重复请求只跳过。已撤销来源409 `pending_import_rolled_back`，来源并发变化409 `pending_source_changed`，唯一键/完整性竞态409 `pending_retry_conflict`且整次回滚。人工确认仅影响该来源行，不更改原source_key和金额/日期/汇率。原导入统计随成功结果更新，原文件撤销仍能恢复此次生成的销售库存；已有财务引用时按原保护拒绝物理撤销。事务、审计及不可变版本边界见[流程](workflow.md#待确认与文件撤销)。
+
+新增静态`/sales-pending.js`供两份首页共用，先于后续销售加载使用；源脚本未加载时保留旧只读待确认展示。需要加载新增后端与脚本后才能使用筛选/处理功能，不通过启动服务执行预检。
+
+## 导入进度流
+
+页面调用`POST /sales/import-stream`，原`POST /sales/import`的JSON契约不变，两者共用`_import_sales_file`，无新增业务表。Cookie/CSRF及admin/operator权限沿用原依赖；管理员必须指定有效店铺，运营只能导入绑定店铺。认证/请求校验失败可直接返回HTTP错误；开始流后HTTP状态为200，必须读取最后一行`type=result`的`status/data`判断业务结果，不能凭HTTP 200判断导入成功。
+
+响应为`application/x-ndjson`，每行一个JSON：`type=progress`含稳定阶段码`parsing/validating/exchange_rates/inventory/writing/committing`及可空`processed/total`；行数表示本阶段真实处理行数，不是预计耗时或已提交数量。`keepalive`仅保活。最终`result`包含业务HTTP状态和原SalesImportResponse或错误体；仅事务提交成功后产生成功结果。失败不发送成功结果，校验/权限/冲突/汇率失败沿用400/403/409/502。系统异常返回500 `sales_import_failed`，不返回异常内部数据。
+
+上传字节在请求结束前读完；独立任务自持数据库会话，沿用原行锁顺序、幂等及整批事务。慢客户端的旧进度合并，不阻塞库存事务。浏览器断线/退出只失去实时进度，已受理任务可继续；无后台任务列表/断点续传接口，须在导入历史核对结果后决定是否重试，前端不会自动重传。进度不是持久化作业队列，服务重启后以实际数据库结果及导入历史为准。
+
+文件按原日期自动归月：库存销售以订单创建日期、缺少时结算日期；独立结算以结算日期、缺少时订单创建日期、均缺少时导入时间。页面month只用于查询/导出，不覆盖文件日期。同一文件可跨月，不能根据当前查询月份过滤上传行。
+
+## 手工销售与查询口径
+
+统一搜索框“商品名称 / SKU / 订单号”继续使用原`keyword≤255`，支持完整或部分原始订单号，不新增参数。商品销售同时匹配本地名称/SKU、来源SKU/产品名及来源订单号（order_id和raw_data明确保存的编号），并保留内部Sale.order_no/手工旧编号查询；独立退款、调整、赔付及手工结算也按原订单号匹配。列表（数组/分页）、月度统计、Excel记录及导出计数复用筛选，month/product_id和服务端店铺范围继续共同生效；不因搜索订单号放宽权限或改变内部成本分组。
 
 已作废批次的原销售仍出现在列表与详情，cost_details和total_cost保留原始追溯金额；SaleResponse.cost_status=`needs_review`、cost_review_reason列出批次号，profit_cny留空。monthly-summary新增cost_review_count，受影响月份保留原销售成本展示但gross_profit_cny留空；不能将显示的历史成本当作已核准金额。原Sale.profit、成本明细和旧月度版本均不改写。依据：[sale_cost_context](../../../services/cost_layers.py)、[sales.py](../../../routers/sales.py)。
 
@@ -56,7 +86,7 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 
 ## 单件成本与计算明细
 
-SaleResponse增加`transaction_type`、`source_sku_id`、`source_product_name`、`source_quantity`及`source_type`，从保存的结算来源读取，原product_id仍为本地成本组件。列表display_sku/display_name展示来源SKU ID及产品名；没有来源的旧手工库存销售保留本地商品展示兼容。SKU ID按文本保留前导零及长编号；keyword同时匹配来源SKU ID、产品名、交易类型和本地商品，列表/月度/导出采用同一筛选。计算明细展示本地组件，并附来源表达式与数量。旧版只有直接sale_id的来源也可读取，不补写关联。
+SaleResponse增加`transaction_type`、`source_sku_id`、`source_product_name`、`source_quantity`及`source_type`，从保存的结算来源读取，原product_id仍为本地成本组件。display_sku保留来源SKU ID；display_name优先取raw_data的中文“产品名”表达式，历史缺列时取已经关联的本地商品名称，否则保留保存名称。手工结算补录显示填写值；没有来源的旧手工库存销售仍兼容本地商品展示。source_product_name保留原保存名称，不覆盖历史平台标题。SKU ID按文本保留前导零及长编号；keyword同时匹配来源SKU ID、保存名称、原始“产品名”、交易类型和本地商品，列表/月度/导出采用同一筛选。计算明细展示本地组件，并附来源表达式与数量。旧版只有直接sale_id的来源也可读取，不补写关联，不重新扣库或计算历史成本。
 
 `POST /sales/manual-settlements`为人民币独立结算补录：接收store_id、request_key（16至64位字母/数字/下划线/连字符）、occurred_on日期、order_no≤128、sku_id≤128、product_name≤500、transaction_type≤32、整数quantity、net_product_sales及settlement_total（16位/4位小数，允许负数）。管理员须指定有效店铺，运营只能写绑定店铺，viewer禁止。响应quantity固定0、source_quantity为录入值，成本/跌价为0且单件成本不适用。普通补录record_type=manual_settlement，赔付为compensation_income；两者source_type=manual_settlement。
 
@@ -75,6 +105,8 @@ SaleResponse追加可空只读字段`unit_purchase_cost_cny`、`unit_head_shippi
 页面脚本`/sales-ledger.js`和公开静态资源`/sales-fields.json`由main提供，后者仅包含字段标签/分组/公式/来源/口径，无业务数据、无写入。资源来自[局部zh-CN文件](../../../static/sales-fields.zh-CN.json)，Excel通过[sales_fields.py](../../../services/sales_fields.py)读取相同文件。主业务API仍在登录/店铺权限下读取；静态资源不授予业务访问权限。
 
 ## 文件导入
+
+纯运费调整、全额退款冲账即使来源交易类型为“订单”且数量大于0，也可按金额证据仅保存结算，不创建销售/扣库存；不改原交易类型和来源数量。台账响应为既有settlement_adjustment，quantity=0、成本为0，费用仍为净商品销售额减结算总金额。按结算日期优先归月，列表/月度/计数/导出和店铺损益共用公共财务查询；详细识别条件见[文件导入](workflow.md#文件导入)，未增加公开字段。正常货品销售的订单/SKU在同一文件重复时，返回400及errors中的具体行号，尚未写入业务数据；已有数据库订单及并发冲突保护不变。未根据零收入或金额正负推断退货入库。
 
 multipart/form-data 的 file 支持 .csv、.xlsx、.xlsm。Excel 必须含“订单详情”，必要列为：结算日期、结算单 ID、付款 ID、状态、货币、交易类型、订单ID/调整单ID、SKU ID、数量，允许规定表头空白归一化。
 

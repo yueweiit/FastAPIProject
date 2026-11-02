@@ -1,5 +1,8 @@
 # 报表 API
 
+2026-11-02：损益响应新增calculation_policy（month_end_fx_mxn8_v1）、exchange_rates及fulfillment_order_counts；每行新增is_reserved。旧字段和三个期间保留，新增字段均有默认值，旧月度版本可读取。查询/保存及Excel使用[现行月度规则](workflow.md)；无需DDL或历史回填。
+
+
 前缀 /reports，共8个端点。读取允许三种角色，但范围不同；保存损益只允许 admin/operator。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
@@ -57,7 +60,7 @@ StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks
 
 remarks在两种scope下均为完整替换，只接受已定义科目、去空白后最多500字符。权限、店铺、月份校验不变；非法update_scope返回422。字段定义见[schemas.py](../../../schemas.py)，保存实现为[update_store_profit_loss](../../../routers/reports.py)。
 
-响应StoreProfitLossResponse含warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。inventory_writeoff自动科目抵减营业成本，inventory_impairment取期间总计提，不用净余额差。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/manual_value/remark。value为最终计算金额；人工行的manual_value只含实际保存的人工覆盖，未保存时为null；自动/公式行为null。两者不能混作保存输入。没有单独的审批/结账状态，公式由后端生成。UI 当前仅展示/编辑本月金额，API 和单店 Excel 仍提供三个期间。
+响应StoreProfitLossResponse含warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。inventory_writeoff自动科目抵减营业成本，inventory_impairment取期间总计提，不用净余额差。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/manual_value/remark。value为最终计算金额；人工行的manual_value只含实际保存的人工覆盖，未保存时为null；自动/公式行为null。两者不能混作保存输入。没有单独的审批/结账状态，公式由后端生成。UI 展示本月与只读本年累计，只有本月人工项目可编辑；API和单店Excel仍提供三个期间。每行追加is_reserved，响应追加exchange_rates（币种/月/请求月末日/实际日期/人民币汇率/来源/状态）与fulfillment_order_counts（各期间去重履约订单数）；新字段可缺省，旧版本仍可读取。
 
 ## 导出与副作用
 

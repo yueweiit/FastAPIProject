@@ -4,6 +4,26 @@
 
 > 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
 
+## 销售导入进度与自动归月（2026-11-02）
+
+销售明细取消上层分组标题行，只保留字段名及问号说明，原配色、多列固定、隐藏偏好、滚动对齐和Excel分组保持。更新static/sales-ledger.js及两份HTML后刷新页面即可，无需重启或修改数据库。
+
+销售台账新增“显示字段”：取消勾选可同步隐藏表头、明细和本页合计，至少保留一列；“全部显示”恢复。按账号记住当前站点浏览器的隐藏字段，隐藏保留原固定选择，重新显示恢复；不会修改查询、计算、权限、导出或业务库。此项只涉及页面及static/sales-ledger.js，刷新加载，无需重启后端。相关规则和测试见[销售台账说明](docs/modules/sales/workflow.md#分组台账与字段计算说明)及[回归映射](docs/modules/sales/code-map.md)。
+
+销售台账“固定字段”支持勾选多列，默认订单号，按原字段顺序前置并累计固定表头/数据/合计，清空还原；账号浏览器偏好升级v2数组并兼容v1单选。固定区在桌面最多70%视区、小屏55%，过宽会明确显示实际数/已选数并临时减少，窗口加宽恢复且不改变已选偏好。只修改static/sales-ledger.js与两份HTML及说明，无接口/表/数据变化，导出和金额不变；刷新加载，本轮未重启8010。若同时加载其他Python变更，仍需用户手动重启后端。存储不可用仍能当前页勾选，规则见[销售台账说明](docs/modules/sales/workflow.md#分组台账与字段计算说明)，回归node tests/sales_pinned_column_checks.cjs和现有本地模拟浏览器脚本，不写业务库。
+
+待确认区新增原因/关键字筛选及原记录处理，支持所选或当前筛选（最多200条）重试、单行指定商品ID/倍数组合；原日期/金额/汇率与事件键保留，成功后更新原导入计数，旧月度版本不改。无需新表、迁移、依赖或重做Excel。获准更新时统一加载schemas.py、routers/sales.py、services/sales_pending.py、main.py新增静态路由、static/sales-pending.js及两份首页，再按原流程重载后端和刷新页面；本轮未启动main、重启服务或操作业务库。步骤与范围见[待确认流程](docs/modules/sales/workflow.md#待确认与文件撤销)及[API](docs/modules/sales/api.md#待确认筛选与原记录处理)，真实MySQL并发和实际账单勾稽待验证。
+
+台账统一搜索新增原始订单号匹配，与商品名称/SKU共用原keyword，支持部分编号及回车查询，列表/统计/导出及导出计数同条件；月份、商品ID和店铺范围不变。更新routers/sales.py、services/financial_facts.py、services/sales_export.py、static/page-interactions.js及两份HTML后手动重启本机8010并刷新，无新增表/字段、回填或重新导入。详见[查询API](docs/modules/sales/api.md#手工销售与查询口径)。
+
+订单号展示调整：台账、计算标题及销售Excel优先显示来源原订单ID，不再显示拼接的SKU；内部order_no/order_claim、防重、库存成本和分组不变。新增只读响应字段display_order_no，无DDL或历史数据修复；已有原始来源可直接显示，无来源保留原编号。同步加载schemas.py、routers/sales.py、services/sales_export.py、static/sales-ledger.js与sales-fields.zh-CN.json，再由用户手动重启8010并刷新；本轮未重启服务或重新导入。规则与验证入口见[销售流程](docs/modules/sales/workflow.md#分组台账与字段计算说明)及[代码映射](docs/modules/sales/code-map.md)。
+
+销售页增加文件/店铺、阶段、真实行数及百分比进度，保留原JSON导入接口；新增`POST /sales/import-stream`与`/sales-import-progress.js`，两接口复用原FIFO/整体事务。校验和写入展示本阶段进度，文件读取/汇率/预检/提交显示处理中，提交成功才显示完成100%，待确认与失败单独显示。无需新增表、依赖或历史回填。日期和查询月份规则见[销售流程](docs/modules/sales/workflow.md#文件导入)，流协议/断线边界见[API](docs/modules/sales/api.md#导入进度流)。
+
+更新时需同时加载`main.py`、`routers/sales.py`、`services/import_progress.py`、`static/sales-import-progress.js`、`static/page-interactions.js`及两份HTML；本机8010仍由用户手动重启后强制刷新，本轮未重启服务或重新导入业务数据。反向代理需允许响应逐块转发（接口发送`X-Accel-Buffering: no`/`Cache-Control: no-cache`），若代理仍缓冲只能末尾一次显示，目标部署链路待验证；不要把超时重试配置成自动重复POST。
+
+导入任务自持数据库会话，关闭页面/断线不自动撤销已受理任务；进度不跨刷新恢复，应先查看导入历史核对，再决定是否重试或撤销。程序重启不是撤销；未提交事务按数据库事务规则处理，提交结果以业务库/历史为准。回归入口为`python -m unittest tests.test_sales_import_progress -q`、`node tests/sales_import_progress_checks.cjs`、`node tests/sales_import_page_checks.cjs`及现有浏览器脚本，均使用隔离/模拟数据，不替代真实MySQL并发或生产验收。
+
 ## 库存查看工作台（2026-10-28）
 
 ### 批次手工跌价归属（新增结构）
@@ -53,6 +73,10 @@
 以上离线DDL及以下准备步骤适用于尚未具备此表的环境，已核验的本地测试库无需重复建表。执行DDL前核实获准环境与products/users父表；数据库准备完成后再同步models/schemas、routers/inventory.py、services/inventory_assessment.py、services/inventory_export.py、main.py静态入口、两份HTML及两份库存脚本。缺结构接口返回503和明确提示，不自动迁移。8010仍由用户手动重启；生产DDL/部署需另行授权。记录表一旦有正式盘点数据，不通过删表回滚；可回退页面并保留记录，待兼容版本恢复。
 
 ## 销售台账导出（2026-10-29）
+
+2026-11-02导入冲突修复：同订单/SKU的纯运费调整或净商品额为0的退款冲账只保存结算，正常商品销售才FIFO出库；使用既有raw_data的应用元字段区分，公共财务查询统一纳入金额。真实重复货品销售在写入前返回行号，原order_claim唯一约束与事务回滚保留。识别条件及日期口径见[销售导入](docs/modules/sales/workflow.md#文件导入)。无DDL或历史改写；需加载routers/sales.py、services/financial_facts.py及字段说明JSON，由用户手动重启8010并刷新。本次验证使用隔离SQLite/ASGI，真实文件只在内存副本试导入，汇率使用测试值校验流程，不代表实际财务金额验收；没有在业务库重新导入。
+
+2026-10-30产品名兼容：台账/详情/导出优先显示原始行的中文“产品名”，缺列的历史记录显示已经关联的本地商品名称，保存的平台标题仍可追溯；不回填名称、重建组合或重算库存/成本。中文BE列按表头读取，导入文件必须实际携带该列和值才能按其识别倍数及组合。加载routers/sales.py、services/financial_facts.py及sales-fields.zh-CN.json后，由用户手动重启8010并刷新。无需DDL；本轮仅对已核实的本地测试库做SELECT诊断，不启动服务或修改业务数据。详细规则见[销售流程](docs/modules/sales/workflow.md#分组台账与字段计算说明)。
 
 同次增量为销售台账及Excel增加四项出库成本、本行订单展示总额及独立跌价参考，业务口径及异常空值见[销售成本流程](docs/modules/sales/workflow.md#出库成本拆分与跌价参考)。使用保存的FIFO明细自动派生，历史正常记录无需重新导入；无新表、迁移或历史回填。后端需同步`routers/sales.py`、`routers/reports.py`、`schemas.py`、`services/cost_layers.py`、`services/inventory_provision_data.py`、`services/sales_costs.py`、`services/sales_export.py`，页面同步两份HTML及`static/page-interactions.js`。按原运行方式重启后端并刷新页面即可加载；8010由用户手动重启，本轮未操作服务或业务数据库。新成本列在台账右侧，横向滚动查看。
 

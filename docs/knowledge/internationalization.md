@@ -1,5 +1,7 @@
 # 国际化现状与渐进扩展约定
 
+待确认分类、筛选/清空/所选及筛选重试、单条商品/组合确认、倍数换算、结果/错误、只读降级等文案集中在[static/sales-pending.js](../../static/sales-pending.js)的局部zh-CN字典，复用ProductSearch的候选状态，按页面lang回退中文。API以reason_code及稳定错误码表达状态，组件按product_id/multiplier传递，前端不解析中文做业务判断；原始名称、文件及原因文本转义展示。分类兼容旧自由文本由[services/sales_pending.py](../../services/sales_pending.py)统一识别，Excel分类中文标签集中于同文件REASON_LABELS，沿用现有中文导出契约；无新增支持语言或依赖。
+
 ## 当前能力
 
 截至 2026-10-19 静态核对，项目是简体中文界面，尚未建立通用国际化框架、翻译资源目录、统一翻译函数、语言选择器或用户语言偏好。不能将跨境店铺、多币种或 OA 中西文表单名描述为已支持多语言界面。
@@ -67,11 +69,15 @@
 
 库存工作台新文案、状态、视图、空态、来源类型、导出反馈及待核对提示集中在[static/inventory-workspace.js](../../static/inventory-workspace.js)的zh-CN字典，按document.documentElement.lang取词并回退中文，菜单以data-inventory-nav绑定。API以中立kind/scope/stock_status/warning码表达状态；业务SKU、名称、单号保持原文并转义。数字/金额按当前界面语言格式化；业务日期仍按原无时区值，UTC日志转上海业务日期。新增Excel表头、状态/警示及范围说明集中在[services/inventory_export.py](../../services/inventory_export.py)，复用商品类型标签与文本安全写入；文件沿用中文契约，权限/未知值留空。本次无新语言、依赖、导入契约变更或全站切换。
 
-[static/financial-control.js](../../static/financial-control.js)集中zh-CN文案，通过document.documentElement.lang选择并回退中文；未增加依赖或全站语言切换。稳定状态/科目编码与展示标签分开，服务端新错误用code/message；后端配置标签/Excel继续现有中文契约。当前没有已支持的第二种语言，不能声称完整多语言已经实现。
+财务工作台前端已移除；店铺损益的“使用明细”标签改由[static/page-interactions.js](../../static/page-interactions.js)局部zh-CN字典的profitLossLedger维护，继续中文回退，不依赖原工作台脚本。后台稳定状态/科目编码、错误code/message及中文配置/Excel契约保留，没有新增支持语言或依赖。
 
 [static/page-interactions.js](../../static/page-interactions.js) 的更正原因、校验、确认/取消及撤销说明也采用局部zh-CN字典和中文回退。批次业务日期按无时区填写值提交，保持自然日，不按浏览器区域或UTC偏移换日；这不表示其他模块已统一时区。
 
 销售文件导入的店铺标签、选择/绑定/加载提示和导入按钮通过同一字典的text入口维护，两份首页使用data-sales-import-text及salesImportText。新增API错误以稳定code/message返回；Excel新增店铺列沿用当前中文导出契约，未来多语言导出仍待明确语言参数。
+
+销售统一搜索的标签/占位采用PageInteractions的`salesSearch/salesSearchPlaceholder`键，两份页面分别通过data-sales-export-text及data-sales-search-placeholder初始化；覆盖商品名称、SKU、订单号，不翻译或转换输入编号。Excel筛选说明标签沿用sales_export.py中文输出契约，增加订单号口径；参数继续为keyword，无新语言/依赖。
+
+导入进度、阶段、真实行数/百分比、文件/店铺、完成/待核对/断线及自动归月说明使用PageInteractions的`import*`局部zh-CN键，两份页面共用[sales-import-progress.js](../../static/sales-import-progress.js)，新结果摘要也由该字典生成。文件名、店铺和错误以textContent展示；阶段为parsing等中立码，未知时不猜测。服务端系统错误以sales_import_failed为稳定码，中文兼容message集中在IMPORT_MESSAGES；原行级错误契约保留。当前没有第二种已支持语言，不增加翻译依赖。
 
 批次操作列新增的编辑/强制删除标签、受限原因、编辑说明和保存反馈也通过 `PageInteractions.text` 的 `batch*` 键维护，语言缺失时回退 zh-CN。旧普通删除按钮及其标签已移除，停用接口的稳定码`batch_delete_retired`映射到`batchDeleteRetired`提示刷新后使用作废入口。沿用已有表单标签；没有新增支持语言或变更导入/导出契约。
 
@@ -87,12 +93,28 @@
 
 ## 销售字段公式资源
 
+“显示字段”复用sales-ledger.js的局部zh-CN字典：`visibleFields/allFieldsVisible/showAllFields/hiddenFieldCount/visibleFieldsHelp/keepVisibleField/hiddenFieldPin`，两份页面通过data-sales-pin-text初始化。选项与分组仍读取共享字段资源，隐藏数量使用中立count占位；隐藏偏好仅保存字段key数组，不能保存标签。至少一列校验有可读提示；已隐藏的固定选项有本地化说明。仅支持现有中文并回退zh-CN，不引入依赖或改变导出语言。
+
+固定字段多选面板复用sales-ledger.js局部zh-CN字典的`fixedField/noFixedField/clearFixedFields/fixedFieldHelp/pinnedCount/pinLimitedSummary/pinLimited`及既有pageTotal/pageTotalHelp，通过data-sales-pin-text和中立参数占位初始化两份页面。字段/分组标签读取共享JSON，不另维护名称；v2本地偏好仅存字段key数组，兼容v1，不保存翻译文案或业务数据。窗口限制属于当前状态，按钮和面板明确显示实际固定数及原因。仍仅中文并回退zh-CN，无新语言/依赖；页面重排不改字段资源或Excel顺序。
+
+订单号展示说明复用`sales-fields.zh-CN.json`的订单号来源/口径，完整分组汇总说明在sales-ledger.js局部字典`wholeHelp`。来源编号属于业务数据，保留前导零/连字符并转义显示，不翻译、拼接SKU或用文本拆分猜测；Excel强制文本写入。API以中立`display_order_no`区分展示编号，原`order_no`接口及分组标识保留。没有新增支持语言或翻译依赖。
+
 销售台账新增局部[JSON资源](../../static/sales-fields.zh-CN.json)，字段编码与显示标签分离，包含分组、类型、公式、来源及口径；main公开资源仅提供静态文字，无业务数据。页面与Excel“字段口径说明”读取同一文件，当前zh-CN、未知语言回退中文，不引入全局翻译框架/依赖。新增计算弹窗、错误和单位文案集中在[sales-ledger.js](../../static/sales-ledger.js)的局部字典；旧服务未加载模块的提示在PageInteractions字典。用户订单号、SKU、商品/批次名及错误文本全部转义；Excel文本沿用字面量写入。
 
 待确认区域独立加载失败的文案使用PageInteractions的salesPendingLoadFailed键；服务器错误通过textContent或escapeHtml显示，保留行内错误而不收进问号说明。
 
-来源SKU ID、产品名、交易类型及来源数量的表头/说明集中在同一JSON资源；手工补录表单和状态在sales-ledger.js的manualMessages局部字典中，当前zh-CN并回退中文。交易类型是导入业务原文，保留原值，不作为界面翻译改写。新增手工补录历史标签使用PageInteractions.salesManualEntry；输入字段与服务器错误按原值安全显示。
+本页合计与月度统计的区别、横向联动及明细独立滚动说明使用sales-ledger.js局部字典的pageTotalHelp，复用HelpTips问号；合计和明细区域通过现有标签/台账标题命名，明细区域可键盘聚焦。合计不显示独立滚动条，随明细横向移动，问号仍可键盘访问。没有新增语言或改变金额口径。
+
+来源SKU ID、产品名、交易类型及来源数量的表头/说明集中在同一JSON资源；产品名说明区分中文“产品名”来源列与历史已关联本地名称回退，属于业务数据选择，不自动翻译平台标题。手工补录表单和状态在sales-ledger.js的manualMessages局部字典中，当前zh-CN并回退中文。交易类型是导入业务原文，保留原值，不作为界面翻译改写。新增手工补录历史标签使用PageInteractions.salesManualEntry；输入字段与服务器错误按原值安全显示。
+
+纯运费/退款冲账的实际出库数量0说明同步到同一JSON的交易类型、实际出库数量口径。原交易类型业务原文不改写，raw_data._settlement_only_reason采用shipping_adjustment/goods_refund/amount_adjustment稳定内部编码。文件内重复货品订单的行级提示集中于routers/sales.py的IMPORT_MESSAGES.zh-CN，沿用既有SalesImportError.message和转义展示；当前仅中文，未引入新语言或翻译依赖。
 
 库存/销售/图册共用的商品联想状态集中在[product-search.js](../../static/product-search.js)局部zh-CN字典；库存传入原有翻译键以保留既有提示，销售输入占位和隐藏帮助在manualMessages。候选SKU/名称按业务原值转义，组件不翻译或改写平台SKU。没有新增语言、依赖或业务状态。
 
 图册标题、商品名称/SKU标签、查询/刷新/清空、占位/帮助、空态/加载/失败、图片下载及库存数量文案集中在[page-interactions.js](../../static/page-interactions.js)的gallery*键。两份首页通过data-gallery-text及galleryText读取，按页面lang回退zh-CN，候选名称/SKU和错误文本安全展示，库存数量沿用当前界面语言格式化。
+
+原币核对组的币种、来源净销售额/结算总金额、汇率/日期/来源及问号说明复用sales-fields.zh-CN.json；组合重复展示且不合计的行提示在sales-ledger.js局部字典，页面说明在PageInteractions.salesCostHelp。原币数字按页面语言保留2至4位，不附人民币符号；保存汇率显示8位，币种代码及数据来源保留原值。Excel追加两项原币金额与汇率来源，沿用中文导出标签及纯数字格式，不与人民币合计混算。没有新增支持语言或依赖。
+
+原币响应字段缺失的兼容提示集中在sales-ledger.js的sourceBackendUnavailable/sourceBackendUpdate局部zh-CN字典，复用页面语言回退。以中立字段键是否存在识别旧接口，明确null继续显示无来源；不根据中文提示做业务判断，不反推原币。
+
+店铺损益新增累计列、暂未接入状态、月度汇率说明和代发8 MXN规则使用PageInteractions局部zh-CN字典的profitLossYtd/profitLossReserved/profitLossPolicy/profitLossYtdHelp/profitLossRatePending；样品及自动代发行继续通过STORE_PROFIT_LOSS_ROWS的稳定字段码输出标签。币种、月份、实际汇率日期及来源为业务数据，文本转义/文本节点展示，不引入翻译依赖。

@@ -13,7 +13,7 @@
 
 ## 范围和限制
 
-后台：[financial_control.py](../../../routers/financial_control.py)；页面为报表导航“成本、费用与核对”，实现于[financial-control.js](../../../static/financial-control.js)。使用既有角色、Cookie/CSRF和店铺绑定；不接入新的外部财务系统。
+后台：[financial_control.py](../../../routers/financial_control.py)；“成本、费用与核对”前端工作台已删除，包括页面容器、脚本、静态入口及打开/退出调用。报表页面仅保留存货跌价明细、店铺损益表和产品线毛利。后台接口、共享成本/费用/版本核算及已有数据保留，开关与权限不变；店铺损益中的ledger来源继续只读展示，文案由[page-interactions.js](../../../static/page-interactions.js)维护。不接入新的外部财务系统。
 
 批次仍共享，库存店铺仍从创建人当前绑定推导；本次没有引入仓库/调拨/真实退货流水，也不自动判断CN运费应属于哪个科目。凭证号应含供应商和单号，操作者按实际业务选择分类。实际账单与OA费用仍需人工勾稽，不能把“已保存版本”当作外部财务验收。
 

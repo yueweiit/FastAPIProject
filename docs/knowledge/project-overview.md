@@ -33,7 +33,6 @@ migrate.py              启动兼容迁移和历史记录修复
 routers/                九组HTTP路由，认证含本地与 EIMS 两组，库存查看独立于批次写入
 services/               认证会话、EIMS、商品导入、FIFO、汇率、跌价、快照和 OA
 templates/index.html    实际运行首页，内嵌 CSS/JavaScript
-static/financial-control.js 财务工作台脚本与集中zh-CN文案
 index.html              页面副本；前端修改需核对两份文件
 tests/                  单元测试和本地 MySQL 并发验证脚本
 migrations/             历史字段迁移、批次创建人转移脚本

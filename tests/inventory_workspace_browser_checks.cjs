@@ -42,6 +42,238 @@ function daily(url, role) {
     warnings: ['inventory_current_documents', ...(role === 'admin' ? [] : ['inventory_scope_restricted'])]};
 }
 
+async function checkSalesHeaders(page,suffix) {
+    const scroll=page.locator('#sales-ledger-scroll'),picker=page.locator('#sales-pin-picker'),toggle=page.locator('#sales-pin-toggle');
+    const definitions=JSON.parse(fs.readFileSync('static/sales-fields.zh-CN.json','utf8')).fields;
+    const themes=[...new Set(definitions.map(field=>field.group))];
+    const open=async()=>{if(await picker.getAttribute('open')===null)await toggle.click();};
+    const choose=async keys=>{
+        await open();await page.locator('#sales-pin-clear').click();
+        for(const key of keys)await page.locator('[data-sales-pin-key="'+key+'"]').check();
+        await toggle.click();
+    };
+    const setScroll=async value=>page.evaluate(async value=>{
+        document.getElementById('sales-ledger-scroll').scrollLeft=value;await new Promise(requestAnimationFrame);
+    },value);
+    const geometry=key=>page.evaluate(key=>{
+        const fieldNode=document.querySelector('[data-sales-field="'+key+'"]');
+        const field=fieldNode?.getBoundingClientRect();
+        const cell=document.querySelector('#sales-tbody tr [data-sales-value="'+key+'"]')?.getBoundingClientRect();
+        const total=document.querySelector('[data-sales-total="'+key+'"]')?.getBoundingClientRect();
+        const other=document.querySelector('[data-sales-field="'+(key==='store_name'?'sold_at':'store_name')+'"]').getBoundingClientRect();
+        const hit=field&&document.elementFromPoint(field.left+3,field.top+3)?.closest('th');
+        return {fieldLeft:field?.left,fieldWidth:field?.width,cellLeft:cell?.left,totalLeft:total?.left,
+            otherLeft:other.left,theme:fieldNode?.className.match(/sales-group-(\d+)/)?.[1],hit:hit?.dataset.salesField};
+    },key);
+    check(await page.locator('#sales-pin-summary').innerText(),'订单号');
+    await open();check(await picker.getByRole('checkbox').count(),definitions.length-1);
+    check(await picker.locator('[data-sales-pin-key="calculation_action"]').count(),0);
+    await page.keyboard.press('Escape');check(await picker.getAttribute('open'),null);
+    check(await toggle.evaluate(n=>document.activeElement===n),true);
+    check(await page.locator('#sales-ledger-head tr').count(),1);
+    check(await page.locator('#sales-ledger-head [scope="colgroup"]').count(),0);
+    check(await page.evaluate(()=>[...document.querySelectorAll('#sales-ledger-head th')].every(field=>{
+        const expected=getComputedStyle(field),theme=field.className.match(/sales-group-\d+/)?.[0];
+        return [...document.querySelectorAll('#sales-ledger-head th.'+theme)].every(other=>{
+            const actual=getComputedStyle(other);return actual.backgroundColor===expected.backgroundColor&&actual.color===expected.color;
+        });
+    })),true);
+    check(await page.locator('[data-sales-field="unit_purchase_cost_cny"]').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(233, 242, 251)');
+    check(await page.locator('[data-sales-field="purchase_cost_cny"]').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(232, 245, 239)');
+    check(await page.locator('[data-sales-field="impairment_cny"]').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 244, 221)');
+    for(const key of ['order_no','sku','product_name','purchase_cost_cny','unit_purchase_cost_cny','impairment_cny','quantity']){
+        await choose([key]);
+        await scroll.scrollIntoViewIfNeeded();await setScroll(0);const before=await geometry(key);
+        await setScroll(1800);const after=await geometry(key);
+        check(after.hit,key);
+        check(Math.abs(after.cellLeft-before.cellLeft)<1,true);check(Math.abs(after.fieldLeft-before.fieldLeft)<1,true);
+        check(Math.abs(after.totalLeft-after.cellLeft)<1,true);check(after.otherLeft<before.otherLeft-100,true);
+        check(after.theme,String(themes.indexOf(definitions.find(f=>f.key===key).group)));
+        check(await page.evaluate(()=>document.querySelector('#sales-tbody tr td')?.dataset.salesValue),key);
+        check(await page.evaluate(()=>[...document.querySelectorAll('#sales-ledger-head [id]')].map(n=>n.id).every((id,index,ids)=>ids.indexOf(id)===index)),true);
+    }
+    await choose(['purchase_cost_cny','order_no','store_name']);
+    const multi=()=>page.evaluate(()=>[...document.querySelectorAll('#sales-ledger-head th.sales-pinned')].map(field=>{
+        const key=field.dataset.salesField,head=field.getBoundingClientRect(),body=document.querySelector('#sales-tbody [data-sales-value="'+key+'"]').getBoundingClientRect(),
+            total=document.querySelector('[data-sales-total="'+key+'"]').getBoundingClientRect();
+        return {key,left:head.left,right:head.right,bodyLeft:body.left,totalLeft:total.left};
+    }));
+    await scroll.scrollIntoViewIfNeeded();await setScroll(0);const before=await multi();await setScroll(1800);const after=await multi();
+    check(after.map(f=>f.key),['store_name','order_no','purchase_cost_cny']);
+    check(after.every((f,i)=>Math.abs(f.left-before[i].left)<1&&Math.abs(f.left-f.bodyLeft)<1&&Math.abs(f.left-f.totalLeft)<1),true);
+    check(after.slice(1).every((f,i)=>Math.abs(f.left-after[i].right)<1),true);
+    check(await page.locator('#sales-pin-summary').innerText(),'已固定 3 列');
+    if(process.env.INVENTORY_QA_DIR&&suffix==='/'){
+        await scroll.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-pin-multiple-desktop.png')});
+        await open();await page.locator('.sales-view-toolbar').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-pin-multiple-controls.png')});await toggle.click();
+    }
+    await open();await page.locator('#sales-page-total-label').click();check(await picker.getAttribute('open'),null);
+    await choose([]);check(await page.locator('#sales-ledger-head tr').count(),1);
+    check(await page.locator('#sales-ledger-table .sales-pinned').count(),0);
+    check(await page.locator('#sales-ledger-head [data-sales-field]').first().getAttribute('data-sales-field'),'store_name');
+    await choose(['store_name','order_no','sku','product_name']);
+    const saved=await page.evaluate(()=>localStorage.getItem('fifo.sales.ledger.pin.v2.user:'+CURRENT_USER_ID));
+    await page.setViewportSize({width:390,height:844});await scroll.scrollIntoViewIfNeeded();
+    await page.waitForFunction(()=>document.querySelectorAll('#sales-ledger-head th.sales-pinned').length===1);
+    check(await page.locator('#sales-pin-summary').innerText(),'固定 1 / 4 列');
+    check(await page.evaluate(()=>localStorage.getItem('fifo.sales.ledger.pin.v2.user:'+CURRENT_USER_ID)),saved);
+    await open();check(await page.locator('#sales-pin-limit').isVisible(),true);
+    const box=await picker.locator('.sales-pin-panel').boundingBox();check(box.x>=0&&box.x+box.width<=391,true);
+    await toggle.click();await setScroll(1800);
+    const mobile=await geometry('store_name');check(mobile.fieldWidth<=161,true);check(Math.abs(mobile.fieldLeft-mobile.cellLeft)<1,true);
+    check(Math.abs(mobile.totalLeft-mobile.cellLeft)<1,true);
+    if(process.env.INVENTORY_QA_DIR&&suffix==='/')await scroll.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-pin-multiple-mobile.png')});
+    await page.setViewportSize({width:1440,height:1000});
+    await page.waitForFunction(()=>document.querySelectorAll('#sales-ledger-head th.sales-pinned').length===4);
+    await page.reload();await page.waitForFunction(()=>CURRENT_USER_ID===10);
+    await page.getByRole('button',{name:'销售记录',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelectorAll('#sales-ledger-head th.sales-pinned').length===4);
+    check(await page.locator('#sales-pin-summary').innerText(),'已固定 4 列');
+    await choose(['order_no']);
+    await page.evaluate(()=>window.SalesLedger.render([],{}));await scroll.scrollIntoViewIfNeeded();await setScroll(1800);
+    check(await page.locator('#sales-tbody .empty').getAttribute('colspan'),String(definitions.length));check((await geometry('order_no')).theme,'0');
+    await setScroll(0);await page.evaluate(()=>loadSales());
+}
+
+async function checkSalesScrolling(page,suffix,rows) {
+    const detail=page.locator('#sales-ledger-scroll'),summary=page.locator('#sales-total-scroll');
+    const longRows=Array.from({length:20},(_,i)=>({...rows[0],id:i+1,order_no:`SCROLL-${i+1}`,display_name:'Long product name for scrolling '.repeat(8)}));
+    const metrics=()=>page.evaluate(()=>{
+        const detail=document.getElementById('sales-ledger-scroll'),summary=document.getElementById('sales-total-scroll');
+        const box=detail.getBoundingClientRect(),head=detail.querySelector('thead').getBoundingClientRect();
+        const field=detail.querySelector('[data-sales-field="store_name"]').getBoundingClientRect();
+        const last=detail.querySelector('[data-sales-field="calculation_action"]').getBoundingClientRect();
+        const button=detail.querySelector('[data-sales-value="calculation_action"] button').getBoundingClientRect();
+        return {height:box.height,bottom:box.bottom,viewport:innerHeight,pageY:scrollY,top:detail.scrollTop,
+            left:detail.scrollLeft,summaryLeft:summary.scrollLeft,headTop:head.top,headerRows:detail.querySelectorAll('thead tr').length,fieldTop:field.top,
+            scrollHeight:detail.scrollHeight,clientHeight:detail.clientHeight,detailWidth:detail.clientWidth,summaryWidth:summary.clientWidth,
+            contentRight:box.left+detail.clientLeft+detail.clientWidth,lastRight:last.right,buttonRight:button.right};
+    });
+    for(const width of [1440,390]){
+        await page.setViewportSize({width,height:width===390?844:1000});
+        await page.evaluate(rows=>window.SalesLedger.render(rows,{}),longRows);
+        await detail.evaluate(node=>node.scrollIntoView({block:'center',inline:'nearest'}));await detail.hover();const before=await metrics();
+        check(await summary.evaluate(node=>getComputedStyle(node).overflowX),'hidden');
+        check(await summary.evaluate(node=>node.offsetHeight-node.clientHeight-node.clientTop*2),0);
+        check(await summary.getAttribute('tabindex'),null);
+        check(before.height<=before.viewport*.7+1,true);check(before.scrollHeight>before.clientHeight,true);
+        assert(before.bottom<=before.viewport+1,JSON.stringify({width,before}));checks++;check(Math.abs(before.detailWidth-before.summaryWidth)<1,true);
+        await page.mouse.wheel(0,900);
+        await page.waitForFunction(top=>Math.abs(document.getElementById('sales-ledger-scroll').scrollTop-top-900)<1,before.top);
+        const vertical=await metrics();
+        check(Math.abs(vertical.pageY-before.pageY)<1,true);
+        check(Math.abs(vertical.headTop-before.headTop)<1,true);
+        check(vertical.headerRows,1);check(Math.abs(vertical.fieldTop-before.fieldTop)<1,true);
+        const keptTop=vertical.top;
+        await summary.evaluate(node=>{node.scrollLeft=800;});
+        await page.waitForFunction(()=>Math.abs(document.getElementById('sales-ledger-scroll').scrollLeft-800)<1);
+        check(Math.abs((await metrics()).top-keptTop)<1,true);
+        await detail.evaluate(node=>{node.scrollLeft=1800;});
+        await page.waitForFunction(()=>Math.abs(document.getElementById('sales-total-scroll').scrollLeft-1800)<1);
+        // 经典竖滚动条也不能让两边横向范围不同，最右列须完整可达。
+        await detail.evaluate(node=>{node.scrollLeft=node.scrollWidth;});
+        await page.waitForFunction(()=>{const a=document.getElementById('sales-ledger-scroll'),b=document.getElementById('sales-total-scroll');return Math.abs(a.scrollLeft-b.scrollLeft)<1;});
+        const right=await metrics();
+        // 稳定滚动槽会计入scrollWidth，按末列/按钮的实际边界验证完整可见。
+        check(right.lastRight<=right.contentRight+1,true);check(right.buttonRight<=right.contentRight+1,true);
+        check(await detail.locator('[data-sales-value="calculation_action"]').first().evaluate(cell=>cell.querySelector('button').getBoundingClientRect().right<=cell.getBoundingClientRect().right),true);
+        await detail.focus();
+        const keyScrollEnded=page.evaluate(()=>new Promise(resolve=>document.getElementById('sales-ledger-scroll').addEventListener('scrollend',resolve,{once:true})));
+        await detail.press('PageDown');await keyScrollEnded;
+        await page.waitForFunction(top=>document.getElementById('sales-ledger-scroll').scrollTop>top,keptTop);
+        check(Math.abs((await metrics()).pageY-before.pageY)<1,true);
+        if(process.env.INVENTORY_QA_DIR&&suffix==='/')await detail.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`sales-scroll-${width===390?'mobile':'desktop'}.png`)});
+        await page.evaluate(rows=>window.SalesLedger.render(rows,{}),rows);
+        check((await metrics()).top,0);check(Math.abs((await metrics()).left-right.left)<1,true);
+    }
+    await page.setViewportSize({width:1440,height:1000});
+    await page.waitForFunction(()=>document.querySelector('[data-sales-field="order_no"]').getBoundingClientRect().width===200);
+    await page.waitForFunction(()=>Math.abs(document.getElementById('sales-ledger-scroll').scrollLeft-document.getElementById('sales-total-scroll').scrollLeft)<1);
+    await summary.evaluate(node=>{node.scrollLeft=0;});
+    await page.waitForFunction(()=>document.getElementById('sales-ledger-scroll').scrollLeft===0);
+    await page.evaluate(()=>loadSales());
+    await page.locator('#sales-page-total-label .help-tip-trigger').hover();
+    const help=page.locator('.sales-view-toolbar [data-sales-pin-text="pageTotalHelp"]');await help.waitFor({state:'visible'});
+    check(await help.innerText().then(value=>value.includes('只合计当前页')&&value.includes('全部筛选记录')),true);
+    await page.keyboard.press('Escape');
+    await detail.evaluate(node=>{node.scrollLeft=1800;});
+    await page.waitForFunction(()=>document.getElementById('sales-total-scroll').scrollLeft===1800);
+    // The caption now stays outside the scrolling cells: focus must not move either table.
+    await page.locator('#sales-page-total-label .help-tip-trigger').focus();
+    await page.waitForFunction(()=>{const a=document.getElementById('sales-ledger-scroll'),b=document.getElementById('sales-total-scroll');return Math.abs(a.scrollLeft-1800)<1&&Math.abs(a.scrollLeft-b.scrollLeft)<1;});
+    check(await page.locator('#sales-page-total-label .help-tip-trigger').evaluate(node=>document.activeElement===node),true);
+    await help.waitFor({state:'visible'});
+    check(await help.innerText().then(value=>value.includes('本页合计会同步移动')&&!value.includes('拖动合计')),true);
+    await page.keyboard.press('Escape');await detail.focus();
+    if(process.env.INVENTORY_QA_DIR&&suffix==='/'){
+        await summary.scrollIntoViewIfNeeded();
+        const box=await summary.boundingBox();
+        await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-summary-no-scrollbar.png'),clip:{x:box.x,y:box.y,width:box.width,height:Math.min(250,page.viewportSize().height-box.y)}});
+    }
+}
+
+async function checkSalesColumnVisibility(page,suffix) {
+    const definitions=JSON.parse(fs.readFileSync('static/sales-fields.zh-CN.json','utf8')).fields;
+    const picker=page.locator('#sales-visible-picker'),toggle=page.locator('#sales-visible-toggle');
+    const open=async()=>{if(await picker.getAttribute('open')===null)await toggle.click();};
+    const show=async(key,visible)=>{await open();await picker.locator('[data-sales-visible-key="'+key+'"]').setChecked(visible);};
+    const fieldKeys=()=>page.locator('#sales-ledger-head [data-sales-field]').evaluateAll(nodes=>nodes.map(node=>node.dataset.salesField));
+    await open();check(await picker.getByRole('checkbox').count(),definitions.length);
+    check(await picker.getByRole('checkbox',{checked:true}).count(),definitions.length);
+    const pinned=await page.evaluate(()=>localStorage.getItem('fifo.sales.ledger.pin.v2.user:'+CURRENT_USER_ID));
+    const total=await page.locator('[data-sales-total="order_total_cost_cny"]').innerText();
+    await show('order_no',false);
+    check(await page.locator('[data-sales-field="order_no"]').count(),0);
+    check(await page.locator('[data-sales-value="order_no"]').count(),0);
+    check(await page.locator('[data-sales-total="order_no"]').count(),0);
+    check(await page.locator('#sales-pin-summary').innerText(),'不固定');
+    check(await page.evaluate(()=>localStorage.getItem('fifo.sales.ledger.pin.v2.user:'+CURRENT_USER_ID)),pinned);
+    await toggle.click();await page.locator('#sales-pin-toggle').click();
+    check(await page.locator('[data-sales-pin-key="order_no"]').isChecked(),true);
+    check(await page.locator('[data-sales-pin-key="order_no"]').isDisabled(),true);
+    await page.keyboard.press('Escape');await show('order_no',true);
+    check(await page.locator('[data-sales-field="order_no"]').getAttribute('class').then(value=>value.includes('sales-pinned')),true);
+    for(const field of definitions.filter(field=>field.group==='原币核对'))await show(field.key,false);
+    await show('calculation_action',false);await show('purchase_cost_cny',false);
+    check(await page.locator('#sales-ledger-head .sales-group-1').count(),0);
+    check(await page.locator('#sales-ledger-head tr').count(),1);
+    const keys=await fieldKeys(),hidden=definitions.length-keys.length;
+    check(await page.locator('#sales-visible-summary').innerText(),`已隐藏 ${hidden} 列`);
+    check(await page.locator('#sales-ledger-cols col').count(),keys.length);
+    check(await page.locator('#sales-total-cols col').count(),keys.length);
+    check(await page.locator('#sales-tbody tr').first().locator('[data-sales-value]').count(),keys.length);
+    check(await page.locator('[data-sales-total]').count(),keys.length);
+    check(await page.locator('[data-sales-total="order_total_cost_cny"]').innerText(),total);
+    await toggle.click();await page.reload();await page.waitForFunction(()=>CURRENT_USER_ID===10);
+    await page.getByRole('button',{name:'销售记录',exact:true}).click();
+    await page.waitForFunction(count=>document.querySelectorAll('#sales-ledger-head [data-sales-field]').length===count,keys.length);
+    check(await fieldKeys(),keys);
+    await page.setViewportSize({width:390,height:844});await open();
+    const box=await picker.locator('.sales-pin-panel').boundingBox();check(box.x>=0&&box.x+box.width<=391,true);
+    check(await toggle.getAttribute('aria-labelledby'),'sales-visible-label-text sales-visible-summary');
+    if(process.env.INVENTORY_QA_DIR&&suffix==='/')await picker.locator('.sales-pin-panel').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-visible-fields-mobile.png')});
+    await page.keyboard.press('Escape');check(await picker.getAttribute('open'),null);
+    check(await toggle.evaluate(node=>document.activeElement===node),true);
+    await page.setViewportSize({width:1440,height:1000});await open();await page.locator('#sales-visible-all').click();
+    for(const meta of definitions.slice(0,-1))await show(meta.key,false);
+    check(await fieldKeys(),['calculation_action']);
+    // 原生checkbox会立刻被恢复，单独点击验证拒绝隐藏最后一列。
+    await picker.locator('[data-sales-visible-key="calculation_action"]').click();
+    check(await picker.locator('[data-sales-visible-key="calculation_action"]').isChecked(),true);
+    check(await page.locator('#sales-visible-status').innerText(),'请至少保留一个显示字段。');
+    await page.locator('#sales-visible-all').click();check((await fieldKeys()).length,definitions.length);
+    await page.evaluate(()=>{const token=window.SalesLedger.beginLoad();window.SalesLedger.fail(new Error('visibility failure'),token);});
+    await show('order_no',false);
+    check(await page.locator('#sales-tbody .msg-err').innerText(),'visibility failure');
+    check(await page.locator('#sales-tbody .msg-err').getAttribute('colspan'),String(definitions.length-1));
+    check(await page.locator('#sales-tbody [data-sales-value]').count(),0);
+    check(await page.locator('[data-sales-total]').count(),0);
+    await page.locator('#sales-visible-all').click();await toggle.click();await page.evaluate(()=>loadSales());
+    await page.waitForFunction(()=>document.querySelector('[data-sales-field="order_no"]').getBoundingClientRect().width===200);
+    check(await page.evaluate(()=>localStorage.getItem('fifo.sales.ledger.pin.v2.user:'+CURRENT_USER_ID)),pinned);
+    await page.locator('#sales-ledger-scroll').evaluate(node=>{node.scrollLeft=0;});
+}
+
 async function checkHelpTips(page, suffix) {
     const button = page.locator('#p-type-label .help-tip-trigger');
     const source = page.locator('#product-form [data-product-type-text="ruleHelp"]');
@@ -187,12 +419,20 @@ async function checkHelpTips(page, suffix) {
 }
 
 async function main() {
+    const importRequests=[];
     const files = {'/': 'templates/index.html', '/copy': 'index.html',
-        '/page-interactions.js': 'static/page-interactions.js', '/financial-control.js': 'static/financial-control.js',
+        '/page-interactions.js': 'static/page-interactions.js',
         '/sales-ledger.js':'static/sales-ledger.js', '/sales-fields.json':'static/sales-fields.zh-CN.json',
+        '/sales-import-progress.js':'static/sales-import-progress.js',
         '/product-search.js':'static/product-search.js',
         '/inventory-workspace.js': 'static/inventory-workspace.js', '/inventory-assessment.js': 'static/inventory-assessment.js', '/inventory-allocations.js': 'static/inventory-allocations.js'};
     const server = http.createServer((req, res) => {
+        if (new URL(req.url,'http://unit.invalid').pathname==='/sales/import-stream') {
+            const item={body:'',write:event=>res.write(JSON.stringify(event)+'\n'),end:()=>res.end()};
+            req.on('data',chunk=>{item.body+=chunk.toString();});
+            res.writeHead(200,{'Content-Type':'application/x-ndjson','Cache-Control':'no-cache'});
+            res.flushHeaders();item.write({type:'progress',stage:'parsing'});importRequests.push(item);return;
+        }
         const file = files[new URL(req.url, 'http://unit.invalid').pathname];
         if (!file) {res.writeHead(404); res.end(); return;}
         res.setHeader('Content-Type', file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.json') ? 'application/json' : 'text/html; charset=utf-8');
@@ -211,6 +451,7 @@ async function main() {
         const assignmentCalls = [];
         const allocationCalls=[];let allocationGate=null,allocationStatus=200,allocationStoresStatus=200;let allocationTotal=1,allocationTotalAfterSave=null;
         const salesExportCalls = [];
+        const salesListQueries=[],salesSummaryQueries=[];
         let salesExportStatus = 200;
         let salesRows = [];
         let calculationGate=null,calculationStatus=200;
@@ -224,11 +465,12 @@ async function main() {
             other_cost: '0.0000', arrived_at: '2026-09-01T00:00:00', shipping_date: null, edit_version: 'a'.repeat(64),
             impairment_store_ids: [7, 8], impairment_store_names: ['店铺A', '<店铺B>'], impairment_store_history: []};
         const pageErrors = [];
-        page.on('pageerror', error => pageErrors.push(error.message));
+        page.on('pageerror', error => {pageErrors.push(error.message);console.error('Browser page error:', error.message);});
         await page.route('**/*', async route => {
             const url = new URL(route.request().url());
             if (url.hostname !== '127.0.0.1') {await route.abort(); return;}
             const fulfill = data => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(data)});
+            if(url.pathname==='/sales/import-stream')return route.continue();
             if (url.pathname === '/sales-fields.json' && fieldHelpStatus !== 200) return route.fulfill({status:fieldHelpStatus,body:'unavailable'});
             if (url.pathname === '/auth/config') return fulfill({local_enabled: true, sso_available: false});
             if (url.pathname === '/auth/me') return fulfill({id: 10, username: '库存测试', role, store_id: role === 'admin' ? null : 7, csrf_token: 'test-only'});
@@ -280,7 +522,8 @@ async function main() {
                 return route.fulfill({status: 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                     body: Buffer.from('PK\x03\x04sales-download-transport-fixture')});
             }
-            if (url.pathname === '/sales/monthly-summary' || url.pathname === '/sales/imports') return fulfill([]);
+            if (url.pathname === '/sales/monthly-summary') {salesSummaryQueries.push(Object.fromEntries(url.searchParams));return fulfill([]);}
+            if (url.pathname === '/sales/imports') return fulfill([]);
             if(url.pathname==='/sales/manual-settlements'){
                 const payload=route.request().postDataJSON();manualSettlementCalls.push(payload);
                 if(manualStatus!==200)return route.fulfill({status:manualStatus,contentType:'application/json',body:JSON.stringify({detail:'补录失败测试'})});
@@ -297,7 +540,7 @@ async function main() {
                     order_summary:{order_no:sale.order_no,store_id:7,store_name:'店铺A',line_count:2,complete:true,total_cost_cny:25,impairment_cny:'1.1'},
                     order_lines:[sale,{...sale,id:101,display_sku:'COMPONENT-OFF-PAGE',display_name:'筛选外组合组件',quantity:1,order_total_cost_cny:5,impairment_cny:'.2'}]});
             }
-            if (url.pathname === '/sales') return fulfill({items: salesRows, total: salesRows.length, page: 1, page_size: 20});
+            if (url.pathname === '/sales') {salesListQueries.push(Object.fromEntries(url.searchParams));return fulfill({items: salesRows, total: salesRows.length, page: 1, page_size: 20});}
             if (url.pathname === '/sales/pending-confirmations') {
                 if(pendingStatus!==200)return route.fulfill({status:pendingStatus,contentType:'application/json',body:JSON.stringify({detail:'<待确认失败测试>'})});
                 return fulfill({items: [], total: 0, page: 1, page_size: 20});
@@ -868,9 +1111,9 @@ async function main() {
         await page.locator('#ial-rows tr').waitFor();check(await page.locator('[data-ial-edit]').count(),0);
         check(await page.getByText('当前账号只读，管理员和运营可维护归属。',{exact:true}).isVisible(),true);
         await page.locator('[data-ial-action="close"]').click();role='admin';await page.reload();await page.waitForFunction(()=>CURRENT_ROLE==='admin');
-        salesRows = [{id: 1, product_id: 1, order_no: 'ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
+        salesRows = [{id: 1, product_id: 1, order_no: 'ORDER-COST-SOURCE-SKU', display_order_no:'00042-ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
             display_sku:'00123456789012345678',display_name:'商品*2+组合 '+ 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(10),
-            source_sku_id:'00123456789012345678',source_product_name:'商品*2+组合 '+ 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(10),transaction_type:'订单',source_quantity:2,
+            source_sku_id:'00123456789012345678',source_product_name:'Juguete para Perro',transaction_type:'订单',source_quantity:2,
             selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '60', platform_fee_cny: '5',
             profit_cny: '35', total_cost: '20', order_total_cost_cny: '20', cost_status: 'unverified',
             unit_purchase_cost_cny:'4',unit_head_shipping_cost_cny:'2',unit_last_mile_cost_cny:'1',unit_other_cost_cny:'3',unit_total_cost_cny:'10',
@@ -883,6 +1126,7 @@ async function main() {
              order_total_cost_cny: '0', purchase_cost_cny: '0', head_shipping_cost_cny: '0', last_mile_cost_cny: '0',
              other_cost_cny: '0', impairment_cny: '0'}];
         for (const suffix of ['/', '/copy']) {
+            await page.evaluate(()=>localStorage.removeItem('fifo.sales.ledger.hidden.v1.user:10'));
             await page.goto(address + suffix);
             await page.waitForFunction(() => CURRENT_USER_ID === 10);
             fieldHelpStatus=503;
@@ -903,8 +1147,17 @@ async function main() {
             await page.evaluate(()=>loadSales());
             check(await page.locator('#pending-confirmations-tbody').innerText(),'暂无待确认记录');
             check(await page.locator('#sales-tbody tr').count(),3);
-            check(await page.locator('[data-sales-field]').count(),24);
-            check(await page.locator('.sales-column-groups th').count(),6);
+            const definitions=JSON.parse(fs.readFileSync('static/sales-fields.zh-CN.json','utf8')).fields;
+            check(await page.locator('#sales-ledger-head [data-sales-field]').evaluateAll(nodes=>nodes.map(node=>node.dataset.salesField).sort()),
+                definitions.filter(field=>field.default_hidden!==true).map(field=>field.key).sort());
+            await page.locator('#sales-visible-toggle').click();
+            await page.locator('#sales-visible-all').click();
+            await page.locator('#sales-visible-toggle').click();
+            check(await page.locator('[data-sales-field]').count(),definitions.length);
+            check(await page.locator('#sales-ledger-head tr').count(),1);
+            await checkSalesHeaders(page,suffix);
+            await checkSalesScrolling(page,suffix,salesRows);
+            await checkSalesColumnVisibility(page,suffix);
             const firstSale=page.locator('#sales-tbody tr').first();
             const saleValue=key=>firstSale.locator(`[data-sales-value="${key}"]`);
             check(await saleValue('sku').innerText(),'00123456789012345678');
@@ -928,9 +1181,12 @@ async function main() {
             await page.keyboard.press('Escape');
             await firstSale.locator('[data-sale-calculation]').click();
             await page.locator('#sales-calc-body .sales-order-totals').waitFor();
+            check(await firstSale.locator('[data-sales-value="order_no"]').innerText(),'00042-ORDER-COST');
+            check(await firstSale.locator('[data-sale-calculation]').getAttribute('aria-label'),'计算明细 · 00042-ORDER-COST');
+            check(await page.locator('#sales-calc-body .sales-calculation-identity').first().innerText().then(v=>v.includes('00042-ORDER-COST')&&!v.includes('SOURCE-SKU')),true);
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('COST-BATCH')&&v.includes('COMPONENT-OFF-PAGE')&&v.includes('25.00')),true);
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('¥4.0000')),true);
-            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('来源产品名：商品*2+组合')),true);
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('来源产品名：Juguete para Perro')&&v.includes('狗狗咀嚼玩具')),true);
             check(await page.locator('#sales-calc-body script, #sales-calc-body img').count(),0);
             // 浏览器旧close事件晚到时，不得取消同一事件循环内新打开的计算明细。
             await page.evaluate(()=>{document.getElementById('sales-calc-dialog').close();document.querySelector('[data-sale-calculation]').click();});
@@ -1070,12 +1326,19 @@ async function main() {
             await page.evaluate(() => {document.querySelector('.sales-ledger-scroll').scrollLeft = 9999;});
             await page.evaluate(() => {document.querySelector('.sales-ledger-scroll').scrollLeft = 0;});
             await page.locator('#sales-month').fill('2026-09');
-            await page.locator('#sales-product-keyword').fill(' CW0001 ');
+            const orderSearch=page.getByRole('searchbox',{name:'商品名称 / SKU / 订单号',exact:true});
+            check(await orderSearch.getAttribute('placeholder'),'输入名称、SKU 或订单号');
+            await orderSearch.fill(' 00042-ORDER-COST ');await page.evaluate(()=>{salesPage=5;});
+            const searched=page.waitForResponse(r=>new URL(r.url()).pathname==='/sales'&&new URL(r.url()).searchParams.get('keyword')==='00042-ORDER-COST');
+            const summarized=page.waitForResponse(r=>new URL(r.url()).pathname==='/sales/monthly-summary'&&new URL(r.url()).searchParams.get('keyword')==='00042-ORDER-COST');
+            await orderSearch.press('Enter');await Promise.all([searched,summarized]);
+            check(salesListQueries.at(-1).page,'1');check(salesListQueries.at(-1).keyword,'00042-ORDER-COST');
+            check(salesSummaryQueries.at(-1),{month:'2026-09',keyword:'00042-ORDER-COST'});
             await page.evaluate(() => {salesPage = 5;});
             const download = page.waitForEvent('download');
             await page.locator('#sales-export-button').click();
             check((await download).suggestedFilename(), 'sales_202609.xlsx');
-            check(salesExportCalls.at(-1), {month: '2026-09', keyword: 'CW0001'});
+            check(salesExportCalls.at(-1), {month: '2026-09', keyword: '00042-ORDER-COST'});
             await page.waitForFunction(() => !salesExportBusy);
             check(await page.locator('#sales-month').isEnabled(), true);
             salesExportStatus = 404;
@@ -1172,6 +1435,54 @@ async function main() {
             await page.locator('[data-ia-action="overview"]').click();
             check(await page.locator('#inventory-assessment-root').isVisible(),false);
             check(await page.locator('#inventory-workspace-root').isVisible(),true);
+        }
+        // Actual HTTP streaming against both real pages, with no business import.
+        role='admin';
+        for (const suffix of ['/', '/copy']) {
+            await page.goto(`http://127.0.0.1:${server.address().port}${suffix}`);
+            await page.waitForFunction(()=>CURRENT_USER_ID===10);
+            await page.locator('button[onclick="switchTab(\'sales\')"]').click();
+            await page.locator('#sales-import-store option[value="7"]').waitFor({state:'attached'});
+            await page.locator('#sales-import-store').selectOption('7');
+            const help=page.locator('button[aria-describedby="sales-import-date-help"]');
+            await help.waitFor();await help.hover();
+            await page.waitForFunction(()=>document.getElementById('sales-import-date-help').getAttribute('role')==='tooltip');
+            check(await page.locator('#sales-import-date-help').innerText().then(v=>v.includes('下方月份只控制查询')),true);
+            await page.mouse.move(0,0);await page.keyboard.press('Escape');
+            await page.waitForFunction(()=>document.querySelector('button[aria-describedby="sales-import-date-help"]').getAttribute('aria-expanded')==='false');
+            const before=importRequests.length;
+            await page.locator('#import-csv').setInputFiles({name:'<进度测试>.csv',mimeType:'text/csv',buffer:Buffer.from('fixture')});
+            await page.waitForFunction(()=>document.getElementById('sales-import-progress-stage').textContent==='正在读取文件');
+            check(importRequests.length,before+1);check(await page.locator('#import-csv').isDisabled(),true);
+            check(await page.locator('#sales-import-button-text').textContent(),'正在导入…');
+            const request=importRequests.at(-1);
+            check(request.body.includes('name="store_id"'),true);check(request.body.includes('name="month"'),false);
+            request.write({type:'progress',stage:'writing',processed:40,total:100});
+            await page.waitForFunction(()=>document.getElementById('sales-import-progress-count').textContent.includes('40%'));
+            check(await page.locator('#sales-import-progress-bar').getAttribute('value'),'40');
+            check(await page.locator('#sales-import-progress-file').textContent(),'<进度测试>.csv · 店铺A');
+            check(await page.locator('#sales-import-progress-file img').count(),0);
+            for(const width of [1440,390]){
+                await page.setViewportSize({width,height:1000});
+                const box=await page.locator('#sales-import-progress-panel').boundingBox();
+                check(box.x>=0&&box.x+box.width<=width,true);
+                if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.locator('#sales-import-progress-panel').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`sales-import-progress-${width}.png`)});
+            }
+            await page.setViewportSize({width:1440,height:1000});
+            request.write({type:'progress',stage:'committing'});
+            await page.waitForFunction(()=>document.getElementById('sales-import-progress-stage').textContent==='正在确认保存结果');
+            check(await page.locator('#sales-import-progress-bar').getAttribute('value'),null);
+            request.write({type:'result',status:200,data:{success:true,settlement_rows:100,sales_created:90,skipped_duplicates:0,pending_confirmation:10,warnings:[]}});request.end();
+            await page.waitForFunction(()=>document.getElementById('sales-import-progress-panel').dataset.state==='review');
+            check(await page.locator('#sales-import-progress-count').textContent(),'100%');
+            check(await page.locator('#import-csv').isEnabled(),true);
+            check(await page.locator('#sales-import-button-text').textContent(),'导入订单详情');
+            await page.locator('#import-csv').setInputFiles({name:'retry.csv',mimeType:'text/csv',buffer:Buffer.from('fixture')});
+            await page.waitForFunction(()=>document.getElementById('sales-import-progress-stage').textContent==='正在读取文件');
+            const retry=importRequests.at(-1);retry.write({type:'result',status:400,data:{detail:'错误路径测试'}});retry.end();
+            await page.waitForFunction(()=>document.getElementById('sales-import-progress-panel').dataset.state==='error');
+            check(await page.locator('#sales-import-progress-result').textContent(),'错误路径测试');
+            check(await page.locator('#import-csv').isEnabled(),true);
         }
         role = 'viewer';
         await page.evaluate(async () => {handleSessionExpired(); await loadCurrentUser();});

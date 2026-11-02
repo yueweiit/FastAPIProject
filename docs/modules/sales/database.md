@@ -4,11 +4,17 @@
 
 名称识别不新增结构：Sale.product_id及SaleCostDetail仍保存实际出库组件；SettlementEntry保存来源SKU ID、产品名、交易类型和来源数量，原始商品标题等仍在raw_data。响应source_sku_id/source_product_name/source_quantity/source_type及transaction_type为派生字段，不回填历史数据。
 
+产品名展示兼容旧文件：优先读取raw_data中的“产品名”，缺列或空值时使用已有关联的Product.name；无关联时保留SettlementEntry.product_name。历史保存的平台标题仍由source_product_name返回，现存product_name/raw_data、销售关联、成本与库存均不回填。列表、单条详情和导出规则见[销售流程](workflow.md#分组台账与字段计算说明)。
+
 非赔付退款/调整识别成功时沿用SettlementEntry.product_id（仅单一商品）及SettlementEntryAllocation.product_id/multiplier/quantity保存归属，sale_id为空，组件数量保留来源符号；不创建Sale或SaleCostDetail，不改变批次剩余数。识别失败不保留部分关联；多商品退款无金额分摊时保持未分配产品线。此关联用于查询归属，不能作为库存恢复依据，历史空归属不自动回填。
+
+新导入的正来源数量纯运费/退款冲账在SettlementEntry.raw_data追加应用元字段_settlement_only_reason，值为shipping_adjustment/goods_refund/amount_adjustment。它只区分库存影响，不覆盖原始交易类型或来源数量；sale_id及组件sale_id为空，不生成FIFO成本。公开响应仍使用既有settlement_adjustment类型、实际出库数量0；公共财务事实查询/计数读取同一标记。文件提供的下划线字段会被移除，不能指定该内部标记；无新表、DDL、历史补写或旧关联变更。识别边界见[导入流程](workflow.md#文件导入)。
 
 手工补录复用SalesImportBatch（file_type=manual_settlement）及SettlementEntry，来源product_id/sale_id为空且不生成分摊。source_key使用manual:店铺ID:request_key占用现有唯一键，raw_data保存_manual_settlement及_manual_fingerprint用于来源识别与幂等内容校验；来源数量不等于出库数量，响应出库数为0。未新增表、字段或迁移。
 
 ## sales
+
+`order_no/order_claim`仍为原内部关联/防重标识，导入通常含订单ID及来源SKU；没有改写或回填。本轮新增的`display_order_no`仅是API派生展示字段，从结算raw_data明确保存的“订单ID/调整单ID”读取，无来源则回退保存编号，不新建数据库列或按连字符推断。内部成本分组不随显示编号合并。
 
 来源：[models.py](../../../models.py) 的 `Sale`。
 
@@ -67,6 +73,10 @@
 | `imported_at` | `DateTime` | 否 | 导入时间 | 数据库默认：func.now() |
 | `rolled_back_at` | `DateTime` | 是 | 撤销时间 | — |
 | `rolled_back_by_user_id` | `Integer` | 是 | 撤销操作者 | ForeignKey('users.id') |
+
+待确认重新处理仍使用现有表，不新增字段或表。`SettlementEntry.mapping_status/mapping_error`随原行处理更新，原source_key、原始业务字段、日期/数量/金额及固化汇率不覆盖；确认组件与销售关系替换原待确认分配。`SalesImportBatch.sales_created`累加此次新增明细数，`pending_confirmation`在导入头锁内按现存待确认行重算，原导入人/文件/导入时间保留。
+
+`SettlementEntry.raw_data`保留原键，并由服务端维护`_pending_resolution`（人工确认组件product_id/multiplier及操作人/上海时区时间）、`_pending_last_attempt`（最后处理前后原因）、`_pending_resolution_history`（人工确认与完成的操作记录）。这些内部键不接受Excel原始列写入；人工组件仅影响本行，库存不足仍保存选择供下次重试。记录随原来源撤销删除，不是独立不可变审计台账；旧月度版本仍保持原payload。字段入口见[schemas.py](../../../schemas.py)，事务与上游保护见[流程](workflow.md#待确认与文件撤销)。
 
 复合唯一约束与索引（ORM 声明）：
 

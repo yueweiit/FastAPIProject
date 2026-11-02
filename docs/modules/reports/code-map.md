@@ -1,5 +1,8 @@
 # 报表模块代码映射
 
+月末汇率与代发： [report_exchange_rates.py](../../../services/report_exchange_rates.py)负责按币种/月解析、请求内缓存、未结束月/缺率留空及原始订单去重（旧CSV按保存编号兼容）；reports.py复用于店铺损益与产品线，`_allocate_monthly_fulfillment_cost`按各店各月收入分摊后累计。回归：[test_monthly_profit_policy.py](../../../tests/test_monthly_profit_policy.py)、[CSV实际导入](../../../tests/test_sales_import_store.py)。
+
+
 | 页面/能力 | 前端函数/入口 | 后端/服务 | 表和来源 |
 | --- | --- | --- | --- |
 | 存货展示/导出 | loadInventoryImpairment、exportInventoryImpairmentReport | inventory_impairment_report、export_inventory_impairment_report、_load_inventory_impairment_report_rows | 批次、商品、规则、逐笔FIFO明细、销售时间及销售店铺 |
