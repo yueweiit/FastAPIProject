@@ -19,7 +19,8 @@ from routers.reports import (_build_product_line_profit_sheet, _build_store_prof
                              STORE_PROFIT_LOSS_MANUAL_KEYS)
 from routers.sales import list_sales, monthly_sales_summary
 from services.financial_facts import (derive_manual_periods, manual_period_values,
-                                     unlinked_settlement_events, valid_rate)
+                                     unlinked_settlement_events, valid_rate, count_unlinked_settlement_events,
+                                     SETTLEMENT_ONLY_KEY)
 
 
 class AsyncFacade:
@@ -122,6 +123,26 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         # 报表查询没有恢复退款库存、删除订单或重写保存成本。
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
         self.assertEqual(self.session.get(Sale, 1).total_cost, Decimal(40))
+
+    async def test_positive_quantity_shipping_and_full_refund_markers_reconcile_without_fifo(self):
+        self.session.get(SettlementEntry,1).raw_data={SETTLEMENT_ONLY_KEY:'shipping_adjustment'}
+        fee=self.entry(6,net=0,total=20,quantity=1)
+        fee.raw_data={SETTLEMENT_ONLY_KEY:'shipping_adjustment'}
+        refund=self.entry(7,net=0,total=0,quantity=1)
+        refund.raw_data={SETTLEMENT_ONLY_KEY:'goods_refund'}
+        self.session.commit()
+        events=await unlinked_settlement_events(self.db,{7},date(2026,9,1),date(2026,10,1))
+        self.assertEqual({row.entry_id for row in events},{2,3,6,7})
+        self.assertEqual(await count_unlinked_settlement_events(self.db,{7},date(2026,9,1),date(2026,10,1)),4)
+        summary=(await monthly_sales_summary(None,None,'2026-09',self.db,
+            SimpleNamespace(role='operator',store_id=7)))[0]
+        self.assertEqual((summary.sales_count,summary.sold_quantity,summary.settlement_event_count),(1,4,4))
+        self.assertEqual((summary.sales_revenue_cny,summary.platform_fee_cny,summary.gross_profit_cny),
+                         (Decimal(85),Decimal(-12),Decimal(57)))
+        values=_build_store_profit_loss_values(await self.auto_values(),{})
+        self.assertEqual(values['net_profit']['current'],summary.gross_profit_cny)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)
+        self.assertEqual(self.session.get(Sale,1).total_cost,40)
 
     async def test_paged_and_unpaged_list_include_same_events_and_keep_cost_details(self):
         user = SimpleNamespace(role="operator", store_id=7)

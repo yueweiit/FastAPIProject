@@ -134,9 +134,21 @@ async def sales_ledger_script():
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/sales-import-progress.js", include_in_schema=False)
+async def sales_import_progress_script():
+    return FileResponse(BASE_DIR / "static" / "sales-import-progress.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/product-search.js", include_in_schema=False)
 async def product_search_script():
     return FileResponse(BASE_DIR / "static" / "product-search.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/sales-pending.js", include_in_schema=False)
+async def sales_pending_script():
+    return FileResponse(BASE_DIR / "static" / "sales-pending.js", media_type="text/javascript",
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 

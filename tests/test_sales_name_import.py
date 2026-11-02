@@ -16,14 +16,15 @@ from routers.sales import _product_expression_parts, _resolve_product_components
 from tests import test_sales_import_store as fixtures
 
 
-def source_file(rows):
+def source_file(rows,extra_headers=()):
     output=io.StringIO();writer=csv.writer(output)
     writer.writerow(['结算日期','结算单 ID','付款 ID','状态','货币','交易类型','订单ID/调整单ID',
-        'SKU ID','数量','订单创建日期','净商品销售额','结算总金额','产品名','商品名称'])
+        'SKU ID','数量','订单创建日期','净商品销售额','结算总金额','产品名','商品名称',*extra_headers])
     for index,row in enumerate(rows,1):
-        writer.writerow(['2026-09-02',f'B{index}','P','已结算','CNY',row.get('type','订单'),
+        writer.writerow([row.get('settled_on','2026-09-02'),f'B{index}','P','已结算','CNY',row.get('type','订单'),
             row.get('order',f'ORDER-{index}'),row.get('sku','00123456789012345678'),row.get('quantity',2),
-            '2026-09-01',row.get('net',200),row.get('total',180),row.get('name','商品*4'),row.get('original','原始商品标题')])
+            row.get('ordered_on','2026-09-01'),row.get('net',200),row.get('total',180),row.get('name','商品*4'),row.get('original','原始商品标题'),
+            *(row.get(name) for name in extra_headers)])
     return output.getvalue().encode('utf-8-sig')
 
 

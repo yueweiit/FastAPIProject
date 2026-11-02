@@ -2,6 +2,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 import unicodedata
 from collections import Counter, defaultdict
@@ -9,6 +10,7 @@ from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Annotated
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
@@ -20,7 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
-from database import get_db
+from database import get_db, async_session
+from services.import_progress import ImportProgress
 from models import (
     InventoryBatch,
     PlatformSkuComponent,
@@ -50,11 +53,15 @@ from schemas import (
     SalesImportResponse,
     PendingConfirmationPageResponse,
     PendingConfirmationResponse,
+    PendingReasonCode, PendingRetryRequest, PendingRetryResponse,
 )
+from services.sales_pending import (pending_conditions, reason_expression, reason_code, saved_components,
+                                    retry_pending, REASON_CODES, REASON_LABELS)
 from services.fifo import fifo_sell, lock_fifo_batches, InsufficientStockError
 from services.exchange_rates import ExchangeRateError, get_cny_rates
 from services.financial_facts import (unlinked_settlement_events, count_unlinked_settlement_events,
-                                      valid_rate, settlement_expense, settlement_amounts, COMPENSATION_TYPES)
+                                      valid_rate, settlement_expense, settlement_amounts, COMPENSATION_TYPES,
+                                      SETTLEMENT_ONLY_KEY)
 from services.cost_layers import sale_cost_context, rounded_cost_components
 from services.sales_costs import attach_sale_impairment
 from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
@@ -85,6 +92,10 @@ ORDER_DETAIL_HEADER_ALIASES = {
     "SKUID": "SKU ID",
     "数量": "数量",
 }
+IMPORT_MESSAGES = {"zh-CN": {
+    "duplicate_inventory_order": "文件内同一订单/SKU存在多条商品销售，请核对结算调整行",
+    "failed": "导入失败，请核对导入历史后重试",
+}}
 def _clean_header(value) -> str:
     return str(value or "").strip().lstrip("\ufeff")
 
@@ -121,6 +132,30 @@ def _quantity_value(value, allow_negative: bool = False) -> int:
     if (not allow_negative and quantity < 0) or quantity != quantity.to_integral_value():
         raise ValueError(f"数量不是整数: {value}")
     return int(quantity)
+
+
+def _order_settlement_only_reason(row: dict, net_sales: Decimal, settlement_total: Decimal) -> str | None:
+    """商品净额为零时，区分货品交易与退款/纯金额调整；缺少货品依据时不猜测。"""
+    def amount(name):
+        value = _decimal_value(row.get(name))
+        if not value.is_finite():
+            raise ValueError(f"金额不是有效数字: {row.get(name)}")
+        return value
+
+    if net_sales != 0:
+        return None
+    if amount("商品退款") < 0:
+        return "goods_refund"
+    goods_fields = ("商品原价小计", "商家资助的折扣", "商品退款")
+    if any(name not in row or _text_value(row[name]) in {"", "/", "-", "—"} for name in goods_fields):
+        return None
+    if any(amount(name) != 0 for name in goods_fields):
+        return None
+    if amount("净运费") != 0:
+        return "shipping_adjustment"
+    if settlement_total != 0 or amount("调整金额") != 0:
+        return "amount_adjustment"
+    return None
 
 
 def _datetime_value(value) -> datetime | None:
@@ -606,10 +641,14 @@ def _settlement_entry(
     import_batch_id: int | None,
     exchange_rate: dict | None,
     mapping_error: str | None = None,
+    *, settlement_only_reason: str | None = None,
 ) -> SettlementEntry:
     def money(name: str) -> Decimal:
         return _decimal_value(row.get(name))
 
+    raw_data = {str(key): _json_value(value) for key, value in row.items() if not key.startswith("_")}
+    if settlement_only_reason:
+        raw_data[SETTLEMENT_ONLY_KEY] = settlement_only_reason
     return SettlementEntry(
         source_key=source_key,
         source_file=filename[:255] if filename else None,
@@ -655,7 +694,7 @@ def _settlement_entry(
         adjustment_amount=money("调整金额"),
         customer_payment=money("客户付款"),
         customer_refund=money("客户退款"),
-        raw_data={str(key): _json_value(value) for key, value in row.items() if not key.startswith("_")},
+        raw_data=raw_data,
     )
 
 
@@ -709,15 +748,113 @@ async def import_sales_file(
     store_id: Annotated[int | None, Form(gt=0)] = None,
 ):
     """导入旧版三列 CSV 或 TikTok Shop“订单详情”工作表。"""
+    return await _import_sales_file(file, db, user, store_id)
+
+
+@router.post("/import-stream")
+async def import_sales_stream(
+    file: UploadFile = File(...),
+    user: User = Depends(RequireOperator),
+    store_id: Annotated[int | None, Form(gt=0)] = None,
+):
+    # FastAPI can close request-scoped dependencies before streaming finishes.
+    # Capture only the authorization fields and bytes, then own a fresh session
+    # for the entire existing atomic import (including rollback and commit).
+    principal = SimpleNamespace(id=user.id, role=user.role, store_id=user.store_id)
+    content = await file.read()
+    filename = file.filename or ""
+
+    async def run(progress):
+        try:
+            async with async_session() as db:
+                upload = UploadFile(io.BytesIO(content), filename=filename)
+                result = await _import_sales_file(upload, db, principal, store_id, progress)
+                if hasattr(result, "body"):
+                    status, data = result.status_code, json.loads(result.body)
+                else:
+                    status, data = 200, result.model_dump(mode="json")
+            progress.publish({"type": "result", "status": status, "data": data})
+        except HTTPException as exc:
+            progress.publish({"type": "result", "status": exc.status_code,
+                              "data": {"detail": exc.detail}})
+        except Exception as exc:
+            # SQL exception strings may contain source rows/connection details.
+            logging.getLogger(__name__).error("Sales import failed (%s)", type(exc).__name__)
+            progress.publish({"type": "result", "status": 500, "data": {"detail": {
+                "code": "sales_import_failed", "message": IMPORT_MESSAGES["zh-CN"]["failed"]}}})
+
+    return StreamingResponse(ImportProgress().stream(run), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+async def _write_candidate_sales(db, item, *, user_id, store_id):
+    """原文件导入与待确认重试共用FIFO及金额分摊；调用方先锁全量商品批次。"""
+    sales_by_product = {}
+    if not item["is_inventory_sale"]:
+        return sales_by_product
+    component_sales = []
+    total_component_quantity = sum(
+        item["quantity"] * component["multiplier"]
+        for component in item["components"]
+    )
+    initial_share = (
+        item["net_product_sales"] / Decimal(total_component_quantity)
+        if total_component_quantity > 0 else Decimal("0")
+    )
+    for component in item["components"]:
+        component_quantity = item["quantity"] * component["multiplier"]
+        component_other_expense = item["other_expense"] * Decimal(component_quantity) / Decimal(total_component_quantity)
+        try:
+            sale, _ = await fifo_sell(
+                db=db,
+                product_id=component["product"].id,
+                order_no=item["order_no"],
+                quantity=component_quantity,
+                selling_price=initial_share,
+                platform_fee=component_other_expense,
+                sold_at=item["sold_at"],
+                user_id=user_id,
+                store_id=store_id,
+                commit=False,
+                claim_order=not component_sales,
+            )
+        except InsufficientStockError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        sales_by_product[component["product"].id] = sale
+        component_sales.append((component, sale, component_quantity))
+    total_cost = sum((sale.total_cost for _, sale, *_ in component_sales), Decimal("0"))
+    if total_cost > 0:
+        for component, sale, _ in component_sales:
+            component["cost_allocation_weight"] = sale.total_cost
+        component_shares = _component_allocation_shares(
+            item["components"], item["quantity"]
+        )
+        for (_, sale, component_quantity), component_share in zip(component_sales, component_shares):
+            allocated_sales = item["net_product_sales"] * component_share
+            allocated_other_expense = item["other_expense"] * component_share
+            sale.selling_price = allocated_sales / Decimal(component_quantity)
+            sale.platform_fee = allocated_other_expense
+            sale.profit = allocated_sales - sale.total_cost - allocated_other_expense
+
+    return sales_by_product
+
+
+async def _import_sales_file(file, db, user, store_id, progress=None):
+    async def report(stage, processed=None, total=None):
+        if progress is not None:
+            await progress.update(stage, processed, total)
+
+    await report("parsing")
     import_store = await _resolve_import_store(db, user, store_id)
 
     content = await file.read()
     if not content:
         raise HTTPException(status_code=400, detail="导入文件为空")
-    source_kind, sheet_name, rows = _read_import_file(file.filename or "", content)
+    source_kind, sheet_name, rows = await run_in_threadpool(_read_import_file, file.filename or "", content)
     if not rows:
         raise HTTPException(status_code=400, detail="文件中没有可导入的数据行")
 
+    await report("validating", 0, len(rows))
     products = list((await db.execute(select(Product).order_by(Product.id))).scalars().all())
     store_products: list[StoreProduct] = []
     if source_kind != "order_detail":
@@ -759,7 +896,9 @@ async def import_sales_file(
     skipped_duplicates = 0
     source_key_counts = Counter(source_keys)
 
-    for row, source_key in zip(rows, source_keys):
+    for index, (row, source_key) in enumerate(zip(rows, source_keys)):
+        if index and index % 50 == 0:
+            await report("validating", index, len(rows))
         row_number = int(row["_row_number"])
         identifier = _text_value(_source_value(row, "订单ID/调整单ID", "SKU")) or None
         if source_key_counts[source_key] > 1:
@@ -778,6 +917,7 @@ async def import_sales_file(
         is_inventory_sale = source_kind == "legacy_csv" or (
             transaction_type == "订单" and quantity > 0
         )
+        settlement_only_reason = None
         if source_kind == "legacy_csv":
             try:
                 sold_at = _datetime_value(row.get("日期"))
@@ -798,6 +938,10 @@ async def import_sales_file(
                 settlement_date = _datetime_value(row.get("结算日期"))
                 net_product_sales = _decimal_value(row.get("净商品销售额"))
                 settlement_total = _decimal_value(row.get("结算总金额"))
+                if transaction_type == "订单":
+                    settlement_only_reason = _order_settlement_only_reason(row, net_product_sales, settlement_total)
+                    if settlement_only_reason:
+                        is_inventory_sale = False
             except ValueError as exc:
                 errors.append(SalesImportError(row=row_number, message=str(exc), identifier=identifier))
                 continue
@@ -862,9 +1006,16 @@ async def import_sales_file(
             "net_product_sales": net_product_sales,
             "other_expense": other_expense,
             "is_inventory_sale": is_inventory_sale,
+            "settlement_only_reason": settlement_only_reason,
             "mapping_error": pending_mapping_error,
         })
 
+    await report("validating", len(rows), len(rows))
+    inventory_orders = Counter(item["order_no"] for item in candidates if item["is_inventory_sale"])
+    for item in candidates:
+        if item["is_inventory_sale"] and inventory_orders[item["order_no"]] > 1:
+            errors.append(SalesImportError(row=int(item["row"]["_row_number"]),
+                message=IMPORT_MESSAGES["zh-CN"]["duplicate_inventory_order"], identifier=item["order_no"]))
     if errors:
         return _import_error_response(source_kind, sheet_name, len(rows), len(rows), errors, warnings)
 
@@ -879,6 +1030,7 @@ async def import_sales_file(
         item["exchange_rate"] = None
         if item["sold_at"] is not None and currency:
             fx_requirements.add((currency, item["sold_at"].date()))
+    await report("exchange_rates")
     try:
         exchange_rates = await get_cny_rates(fx_requirements)
     except ExchangeRateError as exc:
@@ -905,6 +1057,7 @@ async def import_sales_file(
             ))
         return _import_error_response(source_kind, sheet_name, len(rows), len(rows), errors, warnings)
 
+    await report("inventory")
     required_product_ids: set[int] = set()
     for item in candidates:
         if item["is_inventory_sale"]:
@@ -937,55 +1090,12 @@ async def import_sales_file(
     await db.flush()
 
     sales_created = 0
+    await report("writing", 0, len(candidates))
     try:
-        for item in candidates:
-            sales_by_product = {}
-            if item["is_inventory_sale"]:
-                component_sales = []
-                total_component_quantity = sum(
-                    item["quantity"] * component["multiplier"]
-                    for component in item["components"]
-                )
-                initial_share = (
-                    item["net_product_sales"] / Decimal(total_component_quantity)
-                    if total_component_quantity > 0 else Decimal("0")
-                )
-                for component in item["components"]:
-                    component_quantity = item["quantity"] * component["multiplier"]
-                    component_other_expense = item["other_expense"] * Decimal(component_quantity) / Decimal(total_component_quantity)
-                    try:
-                        sale, _ = await fifo_sell(
-                            db=db,
-                            product_id=component["product"].id,
-                            order_no=item["order_no"],
-                            quantity=component_quantity,
-                            selling_price=initial_share,
-                            platform_fee=component_other_expense,
-                            sold_at=item["sold_at"],
-                            user_id=user.id,
-                            store_id=import_store.id if import_store else None,
-                            commit=False,
-                            claim_order=not component_sales,
-                        )
-                    except InsufficientStockError as exc:
-                        raise HTTPException(status_code=400, detail=str(exc))
-                    sales_by_product[component["product"].id] = sale
-                    component_sales.append((component, sale, component_quantity))
-                    sales_created += 1
-                total_cost = sum((sale.total_cost for _, sale, *_ in component_sales), Decimal("0"))
-                if total_cost > 0:
-                    for component, sale, _ in component_sales:
-                        component["cost_allocation_weight"] = sale.total_cost
-                    component_shares = _component_allocation_shares(
-                        item["components"], item["quantity"]
-                    )
-                    for (_, sale, component_quantity), component_share in zip(component_sales, component_shares):
-                        allocated_sales = item["net_product_sales"] * component_share
-                        allocated_other_expense = item["other_expense"] * component_share
-                        sale.selling_price = allocated_sales / Decimal(component_quantity)
-                        sale.platform_fee = allocated_other_expense
-                        sale.profit = allocated_sales - sale.total_cost - allocated_other_expense
-
+        for index, item in enumerate(candidates, 1):
+            sales_by_product = await _write_candidate_sales(db, item, user_id=user.id,
+                store_id=import_store.id if import_store else None)
+            sales_created += len(sales_by_product)
             settlement_product_id = None
             settlement_sale_id = None
             if len(item["components"]) == 1:
@@ -999,6 +1109,7 @@ async def import_sales_file(
                 import_batch.id,
                 item["exchange_rate"],
                 item["mapping_error"],
+                settlement_only_reason=item["settlement_only_reason"],
             )
             db.add(settlement_entry)
             await db.flush()
@@ -1012,7 +1123,10 @@ async def import_sales_file(
                     multiplier=component["multiplier"],
                     quantity=item["quantity"] * component["multiplier"],
                 ))
+            if index % 25 == 0 or index == len(candidates):
+                await report("writing", index, len(candidates))
         import_batch.sales_created = sales_created
+        await report("committing")
         await db.commit()
     except HTTPException:
         await db.rollback()
@@ -1608,14 +1722,13 @@ async def list_pending_confirmations(
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    reason: Annotated[PendingReasonCode | None, Query()] = None,
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
 ):
     """列出订单详情导入中尚未匹配本地商品的结算行。"""
-    base_filter = (
-        SettlementEntry.mapping_status == "pending_confirmation",
-        SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
-    )
-    if user.role != "admin":
-        base_filter += (SettlementEntry.store_id == _require_bound_store(user),)
+    base_filter = pending_conditions(user, reason, keyword)
+    counts = (await db.execute(select(reason_expression(), func.count()).select_from(SettlementEntry)
+        .where(*pending_conditions(user, keyword=keyword)).group_by(reason_expression()))).all()
     total = (await db.execute(
         select(func.count()).select_from(SettlementEntry).where(*base_filter)
     )).scalar_one()
@@ -1637,6 +1750,8 @@ async def list_pending_confirmations(
             platform_sku_id=entry.platform_sku_id,
             mapping_status=entry.mapping_status,
             mapping_error=_pending_confirmation_reason(entry),
+            reason_code=reason_code(entry.mapping_error),
+            confirmed_components=saved_components(entry),
             store_name=entry.store.name if entry.store else None,
             settlement_date=entry.settlement_date,
             order_created_at=entry.order_created_at,
@@ -1660,7 +1775,22 @@ async def list_pending_confirmations(
         total=total,
         page=page,
         page_size=page_size,
+        reason_counts={**dict.fromkeys(REASON_CODES, 0), **dict(counts)},
     )
+
+
+@router.post("/pending-confirmations/retry", response_model=PendingRetryResponse)
+async def retry_pending_confirmations(data: PendingRetryRequest, db: AsyncSession = Depends(get_db),
+                                      user: User = Depends(RequireOperator)):
+    try:
+        return await retry_pending(db, user, data)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(409, detail={"code": "pending_retry_conflict",
+            "message": "销售来源发生并发冲突，本次未保存，请刷新后核对再重试。"}) from exc
+    except Exception:
+        await db.rollback()
+        raise
 
 
 def _group_pending_confirmations(entries):
@@ -1720,14 +1850,11 @@ def _group_pending_confirmations(entries):
 async def export_pending_confirmations(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    reason: Annotated[PendingReasonCode | None, Query()] = None,
+    keyword: Annotated[str | None, Query(max_length=255)] = None,
 ):
     """导出全部待确认记录，并按 SKU ID 和待确认原因合并。"""
-    conditions = [
-        SettlementEntry.mapping_status == "pending_confirmation",
-        SettlementEntry.transaction_type.notin_(COMPENSATION_TRANSACTION_TYPES),
-    ]
-    if user.role != "admin":
-        conditions.append(SettlementEntry.store_id == _require_bound_store(user))
+    conditions = pending_conditions(user, reason, keyword)
     result = await db.execute(
         select(SettlementEntry).options(selectinload(SettlementEntry.store)).where(*conditions)
     )
@@ -1736,13 +1863,14 @@ async def export_pending_confirmations(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "待确认汇总"
-    headers = ["SKU ID", "待确认原因", "交易类型", "合计数量", "其他费用（原币）", "货币", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件"]
+    headers = ["SKU ID", "待确认原因", "交易类型", "合计数量", "其他费用（原币）", "货币", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件", "原因分类"]
     sheet.append(headers)
     for row in rows:
         sheet.append([
             row["platform_sku_id"], row["mapping_error"], row["transaction_types"], row["quantity"],
             row["other_expense"], row["currencies"], row["record_count"], row["product_names"],
             row["sku_names"], row["store_names"], row["source_files"],
+            REASON_LABELS[reason_code(row["mapping_error"])],
         ])
 
     header_fill = PatternFill("solid", fgColor="1F4E78")
@@ -1750,12 +1878,14 @@ async def export_pending_confirmations(
         cell.font = Font(color="FFFFFF", bold=True)
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    widths = (20, 42, 16, 12, 18, 10, 10, 32, 32, 24, 40)
+    widths = (20, 42, 16, 12, 18, 10, 10, 32, 32, 24, 40, 28)
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[chr(64 + index)].width = width
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
+            if isinstance(cell.value, str):
+                cell.data_type = "s"
         row[4].number_format = "0.00"
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions

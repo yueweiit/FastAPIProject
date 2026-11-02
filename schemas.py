@@ -531,6 +531,47 @@ class SalesImportRollbackResponse(BaseModel):
     settlement_rows_removed: int
 
 
+PendingReasonCode = Literal["stock_shortage", "product_missing", "product_ambiguous", "expression_invalid",
+                            "mapping_invalid", "order_conflict", "source_invalid", "other"]
+
+
+class PendingComponent(BaseModel):
+    product_id: int = Field(gt=0)
+    multiplier: int = Field(default=1, gt=0, le=2147483647)
+
+
+class PendingRetryRequest(BaseModel):
+    entry_ids: list[int] | None = Field(default=None, min_length=1, max_length=200)
+    reason: PendingReasonCode | None = None
+    keyword: str | None = Field(default=None, max_length=255)
+    components: list[PendingComponent] | None = Field(default=None, min_length=1, max_length=50)
+
+    @model_validator(mode="after")
+    def check_selection(self):
+        if self.entry_ids is not None:
+            if any(value <= 0 for value in self.entry_ids):
+                raise ValueError("entry_ids must be positive")
+            self.entry_ids = sorted(set(self.entry_ids))
+        if self.components is not None and (self.entry_ids is None or len(self.entry_ids) != 1):
+            raise ValueError("components require exactly one entry_id")
+        return self
+
+
+class PendingRetryItem(BaseModel):
+    id: int
+    status: Literal["confirmed", "pending", "skipped"]
+    reason_code: PendingReasonCode | None = None
+    message: str = ""
+
+
+class PendingRetryResponse(BaseModel):
+    confirmed_rows: int
+    pending_rows: int
+    skipped_rows: int
+    sales_created: int
+    results: list[PendingRetryItem]
+
+
 class PendingConfirmationResponse(BaseModel):
     id: int
     source_file: str | None = None
@@ -540,6 +581,8 @@ class PendingConfirmationResponse(BaseModel):
     platform_sku_id: str
     mapping_status: str
     mapping_error: str | None = None
+    reason_code: PendingReasonCode = "other"
+    confirmed_components: list[PendingComponent] = Field(default_factory=list)
     store_name: str | None = None
     settlement_date: datetime | None = None
     order_created_at: datetime | None = None
@@ -558,6 +601,7 @@ class PendingConfirmationPageResponse(BaseModel):
     total: int
     page: int
     page_size: int
+    reason_counts: dict[str, int] = Field(default_factory=dict)
 
 
 # ========== 报表 ==========

@@ -13,6 +13,8 @@ from models import (
 
 
 COMPENSATION_TYPES = {"物流赔付", "平台赔付", "物料赔付"}
+SETTLEMENT_ONLY_KEY = "_settlement_only_reason"
+SETTLEMENT_ONLY_REASONS = ("shipping_adjustment", "goods_refund", "amount_adjustment")
 ZERO = Decimal("0")
 
 
@@ -75,6 +77,7 @@ def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword
             .where(SettlementEntry.sale_id.is_(None), ~linked_sale,
                    or_(func.coalesce(SettlementEntry.transaction_type, "订单") != "订单",
                        SettlementEntry.quantity <= 0, SettlementEntry.net_product_sales < 0,
+                       SettlementEntry.raw_data[SETTLEMENT_ONLY_KEY].as_string().in_(SETTLEMENT_ONLY_REASONS),
                        SalesImportBatch.file_type == "manual_settlement")))
     if store_ids is not None:
         stmt = stmt.where(owner.in_(store_ids))
