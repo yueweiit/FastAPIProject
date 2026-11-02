@@ -93,4 +93,6 @@
 
 来源SKU ID、产品名、交易类型及来源数量的表头/说明集中在同一JSON资源；手工补录表单和状态在sales-ledger.js的manualMessages局部字典中，当前zh-CN并回退中文。交易类型是导入业务原文，保留原值，不作为界面翻译改写。新增手工补录历史标签使用PageInteractions.salesManualEntry；输入字段与服务器错误按原值安全显示。
 
-库存/销售共用的商品联想状态集中在[product-search.js](../../static/product-search.js)局部zh-CN字典；库存传入原有翻译键以保留既有提示，销售输入占位和隐藏帮助在manualMessages。候选SKU/名称按业务原值转义，组件不翻译或改写平台SKU；仅展示和填入名称，没有新增语言、依赖或业务状态。
+库存/销售/图册共用的商品联想状态集中在[product-search.js](../../static/product-search.js)局部zh-CN字典；库存传入原有翻译键以保留既有提示，销售输入占位和隐藏帮助在manualMessages。候选SKU/名称按业务原值转义，组件不翻译或改写平台SKU。没有新增语言、依赖或业务状态。
+
+图册标题、商品名称/SKU标签、查询/刷新/清空、占位/帮助、空态/加载/失败、图片下载及库存数量文案集中在[page-interactions.js](../../static/page-interactions.js)的gallery*键。两份首页通过data-gallery-text及galleryText读取，按页面lang回退zh-CN，候选名称/SKU和错误文本安全展示，库存数量沿用当前界面语言格式化。

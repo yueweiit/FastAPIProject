@@ -59,4 +59,6 @@ flowchart TD
 
 列表支持 SKU/名称模糊搜索，库存数量和价值由批次聚合；选项接口只取轻量商品信息。页面分页和跨页复选保存状态仅在浏览器内。导出带 product_ids 时导出选择记录；未传则导出全部商品，后端导出没有 keyword 参数，页面按当前查询得到 ID 实现筛选导出。
 
+图册顶部复用库存页的商品名称/SKU联想样式及[ProductSearch.bind](../../../static/product-search.js)。输入后可点查询、按回车或点候选；候选填入SKU后仍执行名称/SKU模糊搜索，完整SKU优先，不将候选当成独占商品ID过滤。`searchGallery`回到第一页，`loadGallery`沿用`GET /products`的keyword/page/page_size及prioritize_exact_sku=true；翻页/调整每页数量保留查询，刷新有未提交输入时先应用新条件，清空返回全部商品。无匹配、加载失败单独提示，图片下载保留。请求序号及公共api的isCurrent隔离过期响应，退出重置图册，旧会话401不能退出新会话。实现位于两份首页的图册段，无新API、数据库结构或依赖。
+
 更新图片保留旧文件；删除商品先检查盘点、平台映射等引用，数据库提交成功后才清理图片。已有盘点记录的商品拒绝删除；其他外键冲突返回409，图片保留。提交成功但图片清理失败返回明确warning，不把数据库已完成删除误报为未保存。依据：[products.py](../../../routers/products.py)的delete_product。

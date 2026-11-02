@@ -620,7 +620,24 @@
     <!-- ========== 产品图册 ========== -->
     <div id="sec-gallery" class="section">
         <div class="card">
-            <div class="flex-between"><h3>产品图册</h3><button class="btn btn-secondary" onclick="loadGallery()">刷新</button></div>
+            <h3 data-gallery-text="galleryTitle"></h3>
+            <form id="gallery-query" class="inventory-filters" onsubmit="searchGallery(); return false;">
+                <div class="form-group inventory-product-picker inventory-keyword-picker">
+                    <label for="gallery-keyword" data-gallery-text="galleryKeyword"></label>
+                    <div class="inventory-product-control">
+                        <input id="gallery-keyword" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="gallery-options" aria-describedby="gallery-hint" autocomplete="off" maxlength="255">
+                        <div id="gallery-popup" class="inventory-product-popup" hidden>
+                            <div id="gallery-options" class="inventory-product-options" role="listbox"></div>
+                            <p id="gallery-search-status" class="inventory-product-search-status" role="status" aria-live="polite"></p>
+                        </div>
+                    </div>
+                    <small id="gallery-hint" data-gallery-text="gallerySearchHint" hidden></small>
+                </div>
+                <button type="submit" class="btn btn-primary" data-gallery-text="gallerySearch"></button>
+                <button type="button" class="btn btn-secondary" onclick="refreshGallery()" data-gallery-text="galleryRefresh"></button>
+                <button type="button" class="btn btn-secondary" onclick="clearGallerySearch()" data-gallery-text="galleryClear"></button>
+            </form>
+            <p id="gallery-status" class="inventory-status" role="status" aria-live="polite"></p>
             <div id="gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:12px"></div>
             <div class="pagination" id="gallery-pagination"></div>
         </div>
@@ -1003,6 +1020,7 @@ async function doLogout() {
 }
 
 function handleSessionExpired() {
+    if (typeof resetGallerySession === 'function') resetGallerySession();
     resetSalesImportState();
     resetBatchEditSession();
     resetBatchExportSession();
@@ -1845,30 +1863,104 @@ function exportAllProducts() {
 let galleryPage = 1;
 let galleryPageSize = 20;
 let galleryTotal = 0;
-async function loadGallery() {
-    const result = await api('GET', `/products?page=${galleryPage}&page_size=${galleryPageSize}`);
-    const list = result.items;
-    galleryPage = result.page;
-    galleryPageSize = result.page_size;
-    galleryTotal = result.total;
-    const el = document.getElementById('gallery-grid');
-    if (!list.length) { el.innerHTML = '<div class="empty" style="grid-column:1/-1">暂无产品</div>'; renderPagination('gallery-pagination', 1, 1, 0, galleryPageSize); return; }
-    el.innerHTML = list.map(p => `
-        <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
-            <div style="height:160px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;position:relative">
-                ${p.image ? `<img src="${p.image}" loading="lazy" style="width:100%;height:100%;object-fit:cover">` : `<span style="color:#aaa;font-size:40px">📦</span>`}
-                ${p.image ? `<a class="btn btn-secondary gallery-download" href="${p.image}" download title="下载图片">下载</a>` : ''}
-            </div>
-            <div style="padding:12px">
-                <div style="font-weight:600;font-size:14px">${escapeHtml(p.name)}</div>
-                <div style="font-size:12px;color:#888;margin-top:4px">${escapeHtml(p.sku)} · 库存${p.stock_quantity}件</div>
-            </div>
-        </div>
-    `).join('');
-    renderPagination('gallery-pagination', galleryPage, Math.max(1, Math.ceil(galleryTotal / galleryPageSize)), galleryTotal, galleryPageSize);
+let galleryKeyword = '';
+let galleryRequestId = 0;
+let gallerySearchControl = null;
+const galleryText = key => window.PageInteractions.text(key);
+
+function initializeGallerySearch() {
+    document.querySelectorAll('[data-gallery-text]').forEach(node => {
+        node.textContent = galleryText(node.dataset.galleryText);
+    });
+    const input = document.getElementById('gallery-keyword');
+    input.placeholder = galleryText('galleryPlaceholder');
+    input.title = galleryText('gallerySearchHint');
+    document.getElementById('gallery-options').setAttribute('aria-label', galleryText('galleryKeyword'));
+    if (gallerySearchControl || !window.ProductSearch) return;
+    gallerySearchControl = window.ProductSearch.bind({
+        input, popup: document.getElementById('gallery-popup'), list: document.getElementById('gallery-options'),
+        status: document.getElementById('gallery-search-status'),
+        enabled: () => !!CURRENT_USER_ID && document.getElementById('sec-gallery').classList.contains('active'),
+        captureContext: () => {
+            const request = galleryRequestId, user = CURRENT_USER_ID;
+            return () => request === galleryRequestId && user === CURRENT_USER_ID && !!user;
+        },
+        onSelect: product => {input.value = product.sku; searchGallery();},
+    });
 }
-function goGalleryPage(page) { galleryPage = page; loadGallery(); }
-function changeGalleryPageSize(size) { galleryPageSize = Number(size); galleryPage = 1; loadGallery(); }
+
+async function loadGallery() {
+    if (!CURRENT_USER_ID) return;
+    initializeGallerySearch();
+    gallerySearchControl?.close();
+    const requestId = ++galleryRequestId, userId = CURRENT_USER_ID;
+    const current = () => requestId === galleryRequestId && userId === CURRENT_USER_ID && !!userId;
+    const params = new URLSearchParams({page: galleryPage, page_size: galleryPageSize});
+    if (galleryKeyword) {
+        params.set('keyword', galleryKeyword);
+        params.set('prioritize_exact_sku', 'true');
+    }
+    const el = document.getElementById('gallery-grid');
+    const status = document.getElementById('gallery-status');
+    el.innerHTML = '';
+    document.getElementById('gallery-pagination').innerHTML = '';
+    status.textContent = galleryText('galleryLoading');
+    try {
+        const result = await api('GET', `/products?${params}`, undefined, {isCurrent: current});
+        if (!current()) return;
+        const list = result.items;
+        galleryPage = result.page;
+        galleryPageSize = result.page_size;
+        galleryTotal = result.total;
+        status.textContent = '';
+        if (!list.length) {
+            el.innerHTML = `<div class="empty" style="grid-column:1/-1">${escapeHtml(galleryText(galleryKeyword ? 'galleryNoMatches' : 'galleryEmpty'))}</div>`;
+        } else {
+            el.innerHTML = list.map(p => `
+                <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+                    <div style="height:160px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;position:relative">
+                        ${p.image ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" loading="lazy" style="width:100%;height:100%;object-fit:cover">` : `<span style="color:#aaa;font-size:40px">📦</span>`}
+                        ${p.image ? `<a class="btn btn-secondary gallery-download" href="${escapeHtml(p.image)}" download title="${escapeHtml(galleryText('galleryDownload'))}">${escapeHtml(galleryText('galleryDownload'))}</a>` : ''}
+                    </div>
+                    <div style="padding:12px">
+                        <div style="font-weight:600;font-size:14px">${escapeHtml(p.name)}</div>
+                        <div style="font-size:12px;color:#888;margin-top:4px">${escapeHtml(p.sku)} · ${escapeHtml(galleryText('galleryStock').replace('{count}', Number(p.stock_quantity).toLocaleString(document.documentElement.lang || 'zh-CN')))}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+        renderPagination('gallery-pagination', galleryPage, Math.max(1, Math.ceil(galleryTotal / galleryPageSize)), galleryTotal, galleryPageSize);
+    } catch (error) {
+        if (current()) status.textContent = galleryText('galleryLoadFailed') + error.message;
+    }
+}
+function searchGallery() {
+    galleryKeyword = document.getElementById('gallery-keyword').value.trim();
+    document.getElementById('gallery-keyword').value = galleryKeyword;
+    galleryPage = 1;
+    return loadGallery();
+}
+function refreshGallery() {
+    return document.getElementById('gallery-keyword').value.trim() === galleryKeyword ? loadGallery() : searchGallery();
+}
+function clearGallerySearch() {
+    document.getElementById('gallery-keyword').value = '';
+    galleryKeyword = '';
+    galleryPage = 1;
+    return loadGallery();
+}
+function resetGallerySession() {
+    galleryRequestId++;
+    gallerySearchControl?.close();
+    galleryKeyword = '';
+    galleryPage = 1;
+    galleryPageSize = 20;
+    galleryTotal = 0;
+    document.getElementById('gallery-keyword').value = '';
+    for (const id of ['gallery-grid', 'gallery-pagination', 'gallery-status']) document.getElementById(id).textContent = '';
+}
+function goGalleryPage(page) { galleryPage = page; return loadGallery(); }
+function changeGalleryPageSize(size) { galleryPageSize = Number(size); galleryPage = 1; return loadGallery(); }
 
 // ========== 入库 ==========
 ['b-qty','b-total-amount','b-ship','b-lastmile','b-other'].forEach(id => {
