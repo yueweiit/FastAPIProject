@@ -38,6 +38,12 @@ def settlement_expense(net_sales, settlement_total, transaction_type=None):
     return settlement_amounts(net_sales, settlement_total, transaction_type)[1]
 
 
+def is_fulfillment_settlement(transaction_type, quantity, net_sales, settlement_only_reason=None):
+    """来源订单是否代表实物履约；兼容早期误关联销售的退款/赔付。"""
+    return (transaction_type in (None, "订单") and quantity > 0 and net_sales >= 0
+            and not settlement_only_reason)
+
+
 @dataclass(frozen=True)
 class FinancialEvent:
     entry_id: int
@@ -138,14 +144,14 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
     return result
 
 
-def derive_manual_periods(reports, report_month, keys, monthly_defaults=None):
+def derive_manual_periods(reports, report_month, keys, monthly_defaults=None, *, force_monthly=False):
     """月记录的 current 是事实；旧比较列仅作缺少月事实时的兼容回退。"""
     monthly_defaults = monthly_defaults or {}
     by_month = {report.report_month: report for report in reports}
     current_report = by_month.get(report_month)
     current = getattr(current_report, "manual_values", {}) or {}
     metadata = getattr(current_report, "report_metadata", {}) or {}
-    monthly_mode = metadata.get("manual_period_mode") == "monthly"
+    monthly_mode = force_monthly or metadata.get("manual_period_mode") == "monthly"
     previous_month = (report_month - timedelta(days=1)).replace(day=1)
     result = {}
     for key in keys:
@@ -175,7 +181,7 @@ def derive_manual_periods(reports, report_month, keys, monthly_defaults=None):
     return result
 
 
-async def manual_period_values(db, store_id, report_month, keys, monthly_defaults=None):
+async def manual_period_values(db, store_id, report_month, keys, monthly_defaults=None, *, force_monthly=False):
     start = min(date(report_month.year, 1, 1),
                 (report_month - timedelta(days=1)).replace(day=1))
     reports = (await db.execute(select(StoreProfitLossReport).where(
@@ -186,5 +192,5 @@ async def manual_period_values(db, store_id, report_month, keys, monthly_default
     from services.finance_config import financial_controls_enabled
     if financial_controls_enabled():
         from services.financial_controls import ledger_manual_periods
-        return await ledger_manual_periods(db, store_id, report_month, keys, reports, monthly_defaults)
-    return derive_manual_periods(reports, report_month, keys, monthly_defaults)
+        return await ledger_manual_periods(db, store_id, report_month, keys, reports, monthly_defaults, force_monthly=force_monthly)
+    return derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)

@@ -37,6 +37,16 @@ class AsyncFacade:
 
 class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        from tests.report_rate_fixtures import fixed_report_rates
+        self.unavailable_monthly_rates = False
+        async def rates(requirements):
+            if self.unavailable_monthly_rates:
+                from services.exchange_rates import ExchangeRateError
+                raise ExchangeRateError("offline monthly rate unavailable")
+            return await fixed_report_rates(requirements)
+        rate_patch = patch("services.report_exchange_rates.get_cny_rates", new=rates)
+        rate_patch.start()
+        self.addCleanup(rate_patch.stop)
         self.engine = create_engine("sqlite://")
         event.listen(self.engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
         Base.metadata.create_all(self.engine)
@@ -119,7 +129,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.platform_fee_cny, Decimal(8))
         self.assertEqual(row.gross_profit_cny, Decimal(37))
         values = _build_store_profit_loss_values(await self.auto_values(), {})
-        self.assertEqual(values["net_profit"]["current"], row.gross_profit_cny)
+        self.assertEqual(values["net_profit"]["current"], row.gross_profit_cny - Decimal(4))
         # 报表查询没有恢复退款库存、删除订单或重写保存成本。
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
         self.assertEqual(self.session.get(Sale, 1).total_cost, Decimal(40))
@@ -139,7 +149,10 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((summary.sales_count,summary.sold_quantity,summary.settlement_event_count),(1,4,4))
         self.assertEqual((summary.sales_revenue_cny,summary.platform_fee_cny,summary.gross_profit_cny),
                          (Decimal(85),Decimal(-12),Decimal(57)))
-        values=_build_store_profit_loss_values(await self.auto_values(),{})
+        auto = await self.auto_values()
+        self.assertEqual(auto['_fulfillment_counts']['current'], 0)
+        self.assertEqual(auto['fulfillment_cost']['current'], Decimal(0))
+        values=_build_store_profit_loss_values(auto,{})
         self.assertEqual(values['net_profit']['current'],summary.gross_profit_cny)
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)
         self.assertEqual(self.session.get(Sale,1).total_cost,40)
@@ -170,7 +183,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.platform_fee_cny,Decimal(8))
         self.assertEqual(summary.gross_profit_cny,Decimal('83.2'))
         values=_build_store_profit_loss_values(await self.auto_values(),{})
-        self.assertEqual(values['net_profit']['current'],summary.gross_profit_cny)
+        self.assertEqual(values['net_profit']['current'], Decimal('90.75'))
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)
         self.assertEqual(self.session.get(Sale,1).total_cost,Decimal(40))
         self.entry(9,net=0,total=1,quantity=0,kind='物流赔付',product=None,currency='USD',rate=None)
@@ -180,6 +193,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(missing.expense)
 
     async def test_missing_fx_masks_income_cost_profit_and_cross_store_excel_totals(self):
+        self.unavailable_monthly_rates = True
         self.entry(6, net=-5, total=-4, quantity=-1, currency="USD", rate=None)
         self.session.commit()
         values = _build_store_profit_loss_values(await self.auto_values(), {})
@@ -200,6 +214,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(profit[2].value)
 
     async def test_product_line_and_excel_keep_unknown_revenue_blank(self):
+        self.unavailable_monthly_rates = True
         self.entry(6, net=-5, total=-4, quantity=-1, currency="USD", rate=None)
         self.session.commit()
         with patch("routers.reports._sale_provision_adjustments", new=AsyncMock(return_value={1: (Decimal(0), "")})):
@@ -215,7 +230,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         with patch("routers.reports._sale_provision_adjustments", new=AsyncMock(return_value={1: (Decimal(0), "")})):
             rows = await _product_line_profit_data(self.db, {7}, date(2026, 9, 1), date(2026, 9, 30))
         self.assertEqual(sum(r["current"]["revenue"] for r in rows), Decimal(85))
-        self.assertEqual(sum(r["current"]["cost"] for r in rows), Decimal(48))
+        self.assertEqual(sum(r["current"]["cost"] for r in rows), Decimal(52))
 
     async def test_actual_month_rows_derive_previous_and_ytd_without_overwriting_legacy(self):
         self.session.add_all([

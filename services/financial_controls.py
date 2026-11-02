@@ -22,7 +22,7 @@ MONEY = Decimal("0.0001")
 EXPENSE_LABELS = {
     "customs_import_tax": "关税及进口税费", "local_logistics_cost": "本地物流配送成本",
     "fulfillment_cost": "代发成本", "tax_surcharge": "税金及附加", "salary": "人员薪资",
-    "advertising": "广告推广费", "platform_subscription": "平台月费/年费", "warehousing": "仓储费用",
+    "advertising": "广告推广费", "sample_expenses": "样品", "platform_subscription": "平台月费/年费", "warehousing": "仓储费用",
     "delivery": "配送费", "platform_fines": "平台罚款/赔偿", "research_development": "研发费用",
     "finance_expenses": "财务费用", "credit_impairment_loss": "信用减值损失",
     "non_operating_income": "营业外收入", "non_operating_expense": "营业外支出",
@@ -354,16 +354,17 @@ async def set_expense_source(db, user, payload):
     return row
 
 
-async def ledger_manual_periods(db, store_id, report_month, keys, reports, monthly_defaults):
+async def ledger_manual_periods(db, store_id, report_month, keys, reports, monthly_defaults, *, force_monthly=False):
     """仅显式选ledger的月/科目覆盖人工值；重复关联平台结算的凭证只作核对。"""
     from services.financial_facts import derive_manual_periods
     previous = (report_month - timedelta(days=1)).replace(day=1)
     start = min(date(report_month.year, 1, 1), previous)
     selections = (await db.execute(select(FinancialExpenseSource).where(
         FinancialExpenseSource.store_id == store_id, FinancialExpenseSource.report_month >= start,
-        FinancialExpenseSource.report_month <= report_month))).scalars().all()
+        FinancialExpenseSource.report_month <= report_month,
+        FinancialExpenseSource.category.in_(keys)))).scalars().all()
     if not selections:
-        return derive_manual_periods(reports, report_month, keys, monthly_defaults)
+        return derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)
     rows = (await db.execute(select(FinancialExpense).where(
         FinancialExpense.store_id == store_id, FinancialExpense.expense_date >= start,
         FinancialExpense.expense_date < month_bounds(report_month)[1]))).scalars().all()
@@ -388,8 +389,8 @@ async def ledger_manual_periods(db, store_id, report_month, keys, reports, month
     current = by_month.setdefault(report_month, SimpleNamespace(report_month=report_month,
                                  manual_values={}, report_metadata={}))
     current.report_metadata["manual_period_mode"] = "monthly"
-    recalculated = derive_manual_periods(list(by_month.values()), report_month, keys, monthly_defaults)
-    result = derive_manual_periods(reports, report_month, keys, monthly_defaults)
+    recalculated = derive_manual_periods(list(by_month.values()), report_month, keys, monthly_defaults, force_monthly=force_monthly)
+    result = derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)
     for selected in selections:
         if selected.mode != "ledger":
             continue

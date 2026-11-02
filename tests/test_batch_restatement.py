@@ -422,3 +422,11 @@ class BatchRestatementTests(unittest.IsolatedAsyncioTestCase):
         self.session.commit()
         self.assertEqual((old.version, new.version), (1, 2))
         self.assertEqual(old.payload, frozen)
+
+from unittest.mock import patch as _monthly_patch
+from tests.report_rate_fixtures import fixed_report_rates
+_monthly_rate_patch = _monthly_patch("services.report_exchange_rates.get_cny_rates", new=fixed_report_rates)
+def setUpModule():
+    _monthly_rate_patch.start()
+def tearDownModule():
+    _monthly_rate_patch.stop()

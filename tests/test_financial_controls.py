@@ -347,7 +347,7 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         manual = await manual_period_values(self.db, 7, date(2026, 9, 1), STORE_PROFIT_LOSS_MANUAL_KEYS)
         self.assertEqual(Decimal(manual["advertising"]["current"]), Decimal(0))
         values = _build_store_profit_loss_values(await self.auto_values(), manual)
-        self.assertEqual(values["net_profit"]["current"], Decimal(37))
+        self.assertEqual(values["net_profit"]["current"], Decimal(33))
 
     async def test_cross_store_excel_keeps_unconfirmed_ledger_blank_until_posted(self):
         expense = await controls.create_expense(self.db, self.user, self.expense())
@@ -526,8 +526,19 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         for row in legacy["inventory"]:
             row.pop("monthly_transfer_in_amount")
             row.pop("monthly_transfer_out_amount")
+        legacy["profit_loss"]["rows"] = [row for row in legacy["profit_loss"]["rows"] if row["key"] != "sample_expenses"]
+        for name in ("exchange_rates", "fulfillment_order_counts", "calculation_policy"):
+            legacy["profit_loss"].pop(name, None)
+        for row in legacy["profit_loss"]["rows"]:
+            row.pop("is_reserved", None)
+            if row["key"] == "net_profit":
+                row["value"]["current"] = "123.45"
         legacy_excel = load_workbook(version_workbook(SimpleNamespace(payload=legacy,
             report_month=original.report_month, version=1, status=original.status)), data_only=True)
+        profit = legacy_excel["09-店铺损益表"]
+        self.assertFalse(any(row[0].value.strip() == "样品" for row in profit if isinstance(row[0].value, str)))
+        net = next(row for row in profit if row[0].value == "三、净利润")
+        self.assertEqual(net[1].value, 123.45)
         self.assertEqual(legacy_excel.worksheets[0]["Y2"].value, 0)
 
     async def test_legacy_settlement_owner_fallback_is_visible_and_warned(self):

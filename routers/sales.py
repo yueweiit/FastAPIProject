@@ -61,7 +61,7 @@ from services.fifo import fifo_sell, lock_fifo_batches, InsufficientStockError
 from services.exchange_rates import ExchangeRateError, get_cny_rates
 from services.financial_facts import (unlinked_settlement_events, count_unlinked_settlement_events,
                                       valid_rate, settlement_expense, settlement_amounts, COMPENSATION_TYPES,
-                                      SETTLEMENT_ONLY_KEY)
+                                      SETTLEMENT_ONLY_KEY, is_fulfillment_settlement)
 from services.cost_layers import sale_cost_context, rounded_cost_components
 from services.sales_costs import attach_sale_impairment
 from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
@@ -1457,6 +1457,8 @@ async def _sale_import_context(
                 SettlementEntryAllocation.product_id,
                 SettlementEntryAllocation.quantity,
                 SettlementEntry.platform_sku_id,
+                SettlementEntry.order_id.label("source_fulfillment_order_id"),
+                SalesImportBatch.file_type.label("source_file_type"),
                 SettlementEntry.currency,
                 SettlementEntry.exchange_rate_to_cny,
                 SettlementEntry.exchange_rate_date,
@@ -1467,12 +1469,14 @@ async def _sale_import_context(
                 SettlementEntry.product_name,
                 SettlementEntry.raw_data["产品名"].as_string().label("display_product_name"),
                 SettlementEntry.raw_data["订单ID/调整单ID"].as_string().label("source_order_no"),
+                SettlementEntry.raw_data[SETTLEMENT_ONLY_KEY].as_string().label("settlement_only_reason"),
                 SettlementEntry.quantity.label("source_quantity"),
             )
             .join(
                 SettlementEntry,
                 SettlementEntry.id == SettlementEntryAllocation.settlement_entry_id,
             )
+            .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id)
             .where(SettlementEntryAllocation.sale_id.in_(sale_by_id))
         )
     ).all()
@@ -1554,9 +1558,15 @@ async def _sale_import_context(
 
     import_context_by_sale = {}
     for row in context_rows:
-        if row.sale_id is None or row.sale_id in import_context_by_sale:
+        if row.sale_id is None:
+            continue
+        fulfilled = is_fulfillment_settlement(row.transaction_type, row.source_quantity,
+            row.net_product_sales or Decimal(0), row.settlement_only_reason)
+        if row.sale_id in import_context_by_sale:
+            import_context_by_sale[row.sale_id]["is_fulfillment_order"] |= fulfilled
             continue
         import_context_by_sale[row.sale_id] = {
+            "is_fulfillment_order": fulfilled,
             "currency": (row.currency or "CNY").upper(),
             "exchange_rate_to_cny": row.exchange_rate_to_cny,
             "exchange_rate_date": row.exchange_rate_date,
@@ -1565,6 +1575,8 @@ async def _sale_import_context(
             "source_product_name": row.product_name or "-",
             "display_product_name": _text_value(row.display_product_name),
             "source_order_no": _text_value(row.source_order_no),
+            "source_fulfillment_order_id": row.source_fulfillment_order_id,
+            "source_file_type": row.source_file_type,
             "source_quantity": row.source_quantity,
             "transaction_type": row.transaction_type or "订单",
             "source_type": "import",
@@ -1572,20 +1584,26 @@ async def _sale_import_context(
         }
 
     # 兼容旧版只保存直接sale_id、尚未生成组件分摊的来源，不回填任何历史关系。
-    direct_entries = (await db.execute(select(SettlementEntry).where(
+    direct_entries = (await db.execute(select(SettlementEntry, SalesImportBatch.file_type)
+        .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id).where(
         SettlementEntry.sale_id.in_(sale_by_id),
         ~SettlementEntry.allocations.any(SettlementEntryAllocation.sale_id.is_not(None)))
-        .order_by(SettlementEntry.id))).scalars().all()
-    for entry in direct_entries:
+        .order_by(SettlementEntry.id))).all()
+    for entry, source_file_type in direct_entries:
         context = import_context_by_sale.setdefault(entry.sale_id, {
             "currency": (entry.currency or "CNY").upper(), "exchange_rate_to_cny": entry.exchange_rate_to_cny,
             "exchange_rate_date": entry.exchange_rate_date, "exchange_rate_source": entry.exchange_rate_source,
             "source_sku_id": entry.platform_sku_id or "-", "source_product_name": entry.product_name or "-",
             "display_product_name": _text_value((entry.raw_data or {}).get("产品名")),
             "source_order_no": _text_value((entry.raw_data or {}).get("订单ID/调整单ID")),
+            "source_fulfillment_order_id": entry.order_id,
+            "source_file_type": source_file_type,
             "source_quantity": entry.quantity, "transaction_type": entry.transaction_type or "订单", "source_type": "import",
             "source_net_product_sales": Decimal(0), "source_other_expense": Decimal(0),
-            "source_row_net_product_sales": Decimal(0), "source_row_settlement_total": Decimal(0)})
+            "source_row_net_product_sales": Decimal(0), "source_row_settlement_total": Decimal(0),
+            "is_fulfillment_order": False})
+        context["is_fulfillment_order"] |= is_fulfillment_settlement(entry.transaction_type,
+            entry.quantity, entry.net_product_sales or Decimal(0), (entry.raw_data or {}).get(SETTLEMENT_ONLY_KEY))
         revenue, expense = settlement_amounts(entry.net_product_sales or Decimal(0),
             entry.settlement_total or Decimal(0), entry.transaction_type)
         context["source_net_product_sales"] += revenue

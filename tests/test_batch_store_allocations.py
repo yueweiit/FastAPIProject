@@ -288,7 +288,7 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
     async def test_product_line_credits_follow_owners_and_reconcile_store_costs(self):
         await self.save([7, 8])
         db = InventoryReadSession(self.session)
-        for owner, expected in ((7, Decimal("196.5")), (8, Decimal("96.5"))):
+        for owner, expected in ((7, Decimal("200.5")), (8, Decimal("100.5"))):
             rows = await _product_line_profit_data(db, {owner}, date(2026, 9, 1), date(2026, 9, 30))
             self.assertEqual(sum(row["current"]["cost"] for row in rows), expected)
 
@@ -712,3 +712,11 @@ class ProvisionAllocationBoundaryTests(unittest.TestCase):
             for before, after in zip(previous, shares):
                 self.assertGreaterEqual(after, before)
             previous = shares
+
+from unittest.mock import patch as _monthly_patch
+from tests.report_rate_fixtures import fixed_report_rates
+_monthly_rate_patch = _monthly_patch("services.report_exchange_rates.get_cny_rates", new=fixed_report_rates)
+def setUpModule():
+    _monthly_rate_patch.start()
+def tearDownModule():
+    _monthly_rate_patch.stop()

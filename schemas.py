@@ -632,6 +632,7 @@ class StoreProfitLossRowResponse(BaseModel):
     kind: str
     is_auto: bool = False
     is_formula: bool = False
+    is_reserved: bool = False
     source: str | None = None
     value: StoreProfitLossCell
     manual_value: StoreProfitLossCell | None = None
@@ -657,6 +658,9 @@ class StoreProfitLossResponse(BaseModel):
     updated_at: datetime | None = None
     rows: list[StoreProfitLossRowResponse]
     warnings: list[str] = Field(default_factory=list)
+    exchange_rates: list[dict] = Field(default_factory=list)
+    fulfillment_order_counts: dict[str, int] = Field(default_factory=dict)
+    calculation_policy: str | None = None
 
 
 # ========== 财务主数据 ==========

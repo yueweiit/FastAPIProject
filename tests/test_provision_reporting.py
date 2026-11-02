@@ -201,11 +201,11 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(rows[0]["current"]["cost"])
                 self.assertIn("待核对", rows[0]["note"])
             else:
-                self.assertEqual(rows[0]["current"]["cost"], Decimal("195.001"))
+                self.assertEqual(rows[0]["current"]["cost"], Decimal("199.001"))
             workbook = Workbook()
             _build_product_line_profit_sheet(workbook, rows, date(2026,9,1))
             sheet = workbook.worksheets[-1]
-            self.assertEqual(sheet["D2"].value, None if adjustment is None else 195.001)
+            self.assertEqual(sheet["D2"].value, None if adjustment is None else 199.001)
             if adjustment is None:
                 self.assertIsNone(sheet["E2"].value)
                 self.assertIsNone(sheet["D3"].value)
@@ -213,3 +213,11 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+from unittest.mock import patch as _monthly_patch
+from tests.report_rate_fixtures import fixed_report_rates
+_monthly_rate_patch = _monthly_patch("services.report_exchange_rates.get_cny_rates", new=fixed_report_rates)
+def setUpModule():
+    _monthly_rate_patch.start()
+def tearDownModule():
+    _monthly_rate_patch.stop()

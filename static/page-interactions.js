@@ -43,6 +43,11 @@
         salesPendingLoadFailed: '待确认记录加载失败，请重试。',
         salesManualEntry: '手工结算补录',
         profitLossLedger: '使用明细',
+        profitLossYtd: '本年累计', profitLossReserved: '暂未接入',
+        profitLossPolicy: '金额为人民币；外币按各核算月月末或之前最近可用汇率换算，本年累计逐月累加。代发成本按实际履约订单去重，每单8 MXN；人工费用按人民币录入。营业外收支、所得税暂未接入，净利润暂按营业利润计算。',
+        profitLossYtdHelp: '当年1月至核算月各月金额累计；不使用本月值或本月汇率代替全年。',
+        profitLossRatePending: '月末汇率待核对',
+        profitLossBackendUpdate: '当前后端尚未加载月末汇率及每单8 MXN的报表口径，请更新并重启后端后再核对或保存。本页暂展示旧口径结果，不能作为新口径金额。',
         salesCostHelp: '原币核对列展示来源整行金额、币种和保存汇率，便于对照Excel；组合各组件重复展示来源金额，不合计。人民币交易金额按已保存组件份额换算。导入后按实际FIFO出库批次自动拆分采购、头程、尾程和其他入库成本，四项合计为本行订单总成本；组合商品同一订单号各行相加为整单成本。展示按分舍入，尾差按科目金额由大到小分配。出库商品跌价单列，不加到订单成本或重复扣减毛利；店铺损益仍按批次归属分摊，本列不代表销售店铺承担额。横向滚动可查看全部成本列。',
         batchExport: '导出', batchEdit: '编辑',
         batchImpairmentStores: '跌价归属店铺（必选）', batchImpairmentDefault: '待分配（在库存页管理）',
@@ -119,6 +124,9 @@
     });
     document.querySelectorAll?.('[data-sales-cost-text]')?.forEach(node => {
         node.textContent = text(node.dataset.salesCostText);
+    });
+    document.querySelectorAll?.('[data-profit-loss-text]')?.forEach(node => {
+        node.textContent = text(node.dataset.profitLossText);
     });
 
     // MySQL DateTime/API 是无时区的业务时间；不能经过 Date/UTC 转换。

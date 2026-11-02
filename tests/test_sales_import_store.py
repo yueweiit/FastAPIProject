@@ -45,6 +45,9 @@ def order_file(product_expression="商品"):
 
 class ImportStoreTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        from tests.report_rate_fixtures import fixed_report_rates
+        rate_patch = patch("services.report_exchange_rates.get_cny_rates", new=fixed_report_rates)
+        rate_patch.start();self.addCleanup(rate_patch.stop)
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
         self.session = Session(self.engine, expire_on_commit=False)
@@ -123,6 +126,18 @@ class ImportStoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(self.session.scalar(select(Sale)).store_id,7)
         self.assertEqual(self.session.scalar(select(SalesImportBatch)).store_id,7)
+
+    async def test_legacy_csv_fulfillment_does_not_merge_same_sku_across_dates(self):
+        from services.report_exchange_rates import fulfillment_orders
+        response=await self.request('POST','/sales/import',data={'store_id':'7'},
+            files={'file':('legacy.csv',b'SKU,2026-09-01,1\nSKU,2026-09-02,1\n','text/csv')})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['sales_created'],2)
+        imported=list(self.session.scalars(select(Sale)).all())
+        contexts,_=await sales._sale_import_context(self.db,imported)
+        self.assertEqual({entry.order_id for entry in self.session.scalars(select(SettlementEntry))},{'SKU'})
+        self.assertEqual({context['source_file_type'] for context in contexts.values()},{'legacy_csv'})
+        self.assertEqual(sum(len(keys) for keys in fulfillment_orders(imported,contexts).values()),2)
 
     async def test_operator_cannot_override_binding_or_import_unbound(self):
         self.actor=SimpleNamespace(id=2,role='operator',store_id=7)

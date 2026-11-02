@@ -341,8 +341,8 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             auto = await _store_profit_loss_auto_values(db, 7, date(2026,9,1))
         values = _build_store_profit_loss_values(auto,{})
         self.assertEqual(auto["inventory_other_cost"]["current"], Decimal(100))
-        self.assertEqual(values["operating_cost"]["current"], Decimal(200))
-        self.assertEqual(values["net_profit"]["current"], Decimal(100))
+        self.assertEqual(values["operating_cost"]["current"], Decimal(204))
+        self.assertEqual(values["net_profit"]["current"], Decimal(96))
 
     def test_cost_components_reconcile_to_saved_fifo_cost_after_rounding(self):
         detail = SimpleNamespace(quantity=1000, unit_cost=Decimal("0.0000"))
@@ -377,7 +377,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             auto = await _store_profit_loss_auto_values(db, 7, date(2026,9,1))
         values = _build_store_profit_loss_values(auto, {})
         self.assertEqual(auto["inventory_other_cost"]["current"], Decimal(0))
-        self.assertEqual(values["operating_cost"]["current"], Decimal(0))
+        self.assertEqual(values["operating_cost"]["current"], Decimal(4))
 
     async def test_oa_salary_default_is_separate_from_saved_manual_value(self):
         auto = {"salary": {"current": Decimal(100), "previous": Decimal(80),
@@ -582,6 +582,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "income_tax_expense": {"current": "5", "previous": "0", "ytd": "6"},
         }
 
+        auto_values["fulfillment_cost"] = {"current": Decimal(4), "previous": Decimal(2), "ytd": Decimal(12)}
         values = _build_store_profit_loss_values(auto_values, manual_values)
 
         self.assertEqual(values["operating_revenue"], {
@@ -601,7 +602,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "current": Decimal("0"), "previous": Decimal("5"), "ytd": Decimal("44"),
         })
         self.assertEqual(values["net_profit"], {
-            "current": Decimal("3"), "previous": Decimal("5"), "ytd": Decimal("46"),
+            "current": Decimal("0"), "previous": Decimal("5"), "ytd": Decimal("44"),
         })
 
     def test_saved_salary_overrides_oa_default_and_blank_uses_default(self):
@@ -651,3 +652,11 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+from unittest.mock import patch as _monthly_patch
+from tests.report_rate_fixtures import fixed_report_rates
+_monthly_rate_patch = _monthly_patch("services.report_exchange_rates.get_cny_rates", new=fixed_report_rates)
+def setUpModule():
+    _monthly_rate_patch.start()
+def tearDownModule():
+    _monthly_rate_patch.stop()

@@ -6,7 +6,7 @@ let checks = 0;
 const equal = (actual, expected) => { assert.equal(actual, expected); checks++; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const report = (month = '2026-09', store = 7, editable = true) => ({
-    report_month: month, store_id: store, can_edit: editable, rows: [], warnings: [],
+    report_month: month, store_id: store, can_edit: editable, calculation_policy: "month_end_fx_mxn8_v1", rows: [], warnings: [],
 });
 
 function setup(file, {admin = false, deferStores = false, manualInput = '123'} = {}) {
@@ -35,7 +35,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123'} =
     vm.runInContext(`let storeProfitLossReport=null, storeProfitLossRequestId=0;
         let storeProfitLossLoading=false, storeProfitLossSavePromise=null;`, context);
     for (const name of ['escapeHtml', 'defaultProfitLossMonth', 'profitLossSelectionMatches',
-        'updateProfitLossSaveState', 'resetStoreProfitLossState', 'loadStoreProfitLossStores',
+        'profitLossPolicyReady', 'updateProfitLossSaveState', 'resetStoreProfitLossState', 'loadStoreProfitLossStores',
         'loadStoreProfitLoss', 'saveStoreProfitLoss']) {
         const match = source.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(match, `Missing ${name}`);
@@ -57,28 +57,35 @@ function renderManualCell(file, manualValue, inputSource = 'manual') {
         return elements.get(id);
     };
     const context = vm.createContext({
-        window: {PageInteractions: {text: key => {equal(key, 'profitLossLedger'); return '使用明细';}}},
+        window: {PageInteractions: {text: key => {
+            const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新'};
+            equal(Object.hasOwn(labels,key),true);return labels[key];
+        }}},
         document: {getElementById: element},
-        formatProfitLossAmount: value => {
-            if (inputSource !== 'ledger') throw new Error('unexpected non-manual row');
-            return String(value);
-        },
+        formatProfitLossAmount: value => value == null ? '—' : String(value),
     });
-    for (const name of ['escapeHtml', 'renderStoreProfitLoss']) {
+    for (const name of ['escapeHtml', 'profitLossPolicyReady', 'renderStoreProfitLoss']) {
         const match = source.match(new RegExp('^function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(match, `Missing ${name}`);
         vm.runInContext(match[0], context);
     }
     context.report = {
-        store_name: '测试店铺', period_label: '2026年9月', can_edit: true,
+        store_name: '测试店铺', period_label: '2026年9月', can_edit: true, calculation_policy:'month_end_fx_mxn8_v1',
         rows: [{key: 'salary', label: '人员薪资', kind: 'manual', input_source: inputSource,
-            value: {current: 100}, manual_value: manualValue, remark: ''}],
+            value: {current: 100,ytd:321}, manual_value: manualValue, remark: ''}],
     };
     vm.runInContext('renderStoreProfitLoss(report)', context);
     return element('store-profit-loss-tbody').innerHTML;
 }
 
 async function verify(file) {
+    {
+        const ui=setup(file);const loading=ui.load();await flush();
+        const legacy=report();delete legacy.calculation_policy;
+        ui.queries()[0].resolve(legacy);await loading;
+        equal(ui.element('profit-loss-save').disabled,true);
+        await ui.save();equal(ui.writes().length,0);
+    }
     {
         const defaultCell = renderManualCell(file, null);
         equal(/data-profit-key="salary"[^>]*value="" placeholder="100"/.test(defaultCell), true);
@@ -87,6 +94,7 @@ async function verify(file) {
         const ledgerCell = renderManualCell(file, {current: 120}, 'ledger');
         equal(ledgerCell.includes('title="使用明细">100</td>'), true);
         equal(ledgerCell.includes('data-profit-key="salary"'), false);
+        equal(ledgerCell.includes('title="各月累计">321</td>'),true);
         const ui = setup(file, {manualInput: ''});
         const loading = ui.load(); await flush(); ui.queries()[0].resolve(report()); await loading;
         const saving = ui.save();
