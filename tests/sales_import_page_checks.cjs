@@ -7,7 +7,7 @@ function setup(file,role='admin') {
     const elements=new Map();
     const element=id=>{
         if(!elements.has(id)){
-            const e={value:'',disabled:false,textContent:'',dataset:{},style:{},files:[{name:'fixture.csv'}],
+            const e={value:'',disabled:false,textContent:'',dataset:{},style:{},files:[{name:'fixture.csv'}],removeAttribute:()=>{},
                 parentElement:{style:{},setAttribute:()=>{}}};
             Object.defineProperty(e,'innerHTML',{set(v){this.html=v;if(id.endsWith('store'))this.value='';},get(){return this.html||'';}});
             elements.set(id,e);
@@ -19,6 +19,7 @@ function setup(file,role='admin') {
         escapeHtml:v=>String(v).replaceAll('<','&lt;'),authHeaders:()=>({'X-CSRF-Token':'test'}),
         showMsg:(msg)=>c.message=msg,refreshSalesWorkspace:()=>c.refreshed=(c.refreshed||0)+1});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
+    vm.runInContext(fs.readFileSync('static/sales-import-progress.js','utf8'),c);
     vm.runInContext(`let salesStoreRequestId=0,salesImportSessionId=0,salesImportBusy=false,salesImportStoresReady=false;
         let CURRENT_USER_ID=1,CURRENT_ROLE=${JSON.stringify(role)},salesPage=1;
         const salesImportText=key=>window.PageInteractions.text(key);
@@ -36,6 +37,10 @@ const ok={ok:true,status:200,json:async()=>({settlement_rows:1,sales_created:1,s
 async function main(){
     for(const file of ['templates/index.html','index.html']){
         {
+            const {c,element:e}=setup(file);delete c.window.PageInteractions;delete c.window.SalesImportProgress;
+            c.resetSalesImportState();equal(e('import-csv').disabled,true);
+        }
+        {
             const {c,element:e}=setup(file);
             await c.loadManualSaleStores();
             equal(e('import-csv').disabled,true);
@@ -45,6 +50,7 @@ async function main(){
             const task=c.importSalesFile(e('import-csv'));await c.importSalesFile(e('import-csv'));
             equal(posts,1);equal(sent.options.body.values.store_id,'8');equal(sent.options.headers['X-CSRF-Token'],'test');
             equal(e('sales-import-store').disabled,true);result.resolve(ok);await task;
+            equal(sent.url,'/sales/import-stream');equal(e('sales-import-progress-panel').dataset.state,'complete');
             equal(c.refreshed,1);equal(e('sales-import-store').disabled,false);
         }
         {

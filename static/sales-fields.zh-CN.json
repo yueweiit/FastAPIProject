@@ -28,8 +28,8 @@
       "group": "基本信息",
       "kind": "text",
       "formula": "直接取值",
-      "source": "销售记录订单号",
-      "note": "同店铺同订单的完整明细在计算明细中汇总。",
+      "source": "导入文件的订单ID/调整单ID；手工记录使用填写的订单号",
+      "note": "展示来源原始编号，不拼接SKU ID。旧记录缺少来源编号时保留保存的订单号，不按连字符推断拆分；内部订单+SKU分组及防重不变，计算明细仍按原分组汇总组件。",
       "width": 200
     },
     {
@@ -48,8 +48,8 @@
       "group": "基本信息",
       "kind": "text",
       "formula": "直接取值",
-      "source": "导入产品名列，缺少该列时读取商品名称；手工补录直接填写",
-      "note": "保留来源表达式，例如商品A*2+商品B；计算明细展示识别的本地组件。",
+      "source": "导入文件的中文产品名列；历史缺列时展示已关联的本地商品名称；手工补录直接填写",
+      "note": "保留产品名表达式，例如商品A*2+商品B。历史缺列时只展示实际关联组件，不重建组合或改写库存成本；原始商品标题保留在来源信息中。",
       "width": 220
     },
     {
@@ -59,7 +59,7 @@
       "kind": "text",
       "formula": "直接取值",
       "source": "导入文件交易类型或手工补录类型",
-      "note": "订单参与名称识别和FIFO；物流/平台/物料赔付按结算金额计入收入，不扣库存。",
+      "note": "正常商品订单参与名称识别和FIFO；纯运费调整、退款冲账只保留结算，不新增扣库；物流/平台/物料赔付按结算金额计入收入，不扣库存。",
       "width": 125
     },
     {
@@ -79,8 +79,74 @@
       "kind": "quantity",
       "formula": "平台销售数量 × 组件配置倍数（导入组合商品）",
       "source": "实际保存的销售出库数量",
-      "note": "单位为本地库存件；不等同于平台销售套数，不同SKU的单件成本不能相加。",
+      "note": "单位为本地库存件；纯运费调整、退款冲账及手工结算补录显示0，不新增扣库。不等同于平台销售套数，不同SKU的单件成本不能相加。",
       "width": 125
+    },
+    {
+      "key": "currency",
+      "default_hidden": true,
+      "label": "原币币种",
+      "group": "原币核对",
+      "kind": "text",
+      "formula": "直接读取来源币种",
+      "source": "结算原始行保存的货币代码",
+      "note": "例如MXN为墨西哥比索，CNY为人民币；本组原币金额不带人民币符号。",
+      "width": 105
+    },
+    {
+      "key": "source_row_net_product_sales",
+      "default_hidden": true,
+      "label": "来源净商品销售额（原币）",
+      "group": "原币核对",
+      "kind": "source_money",
+      "formula": "直接读取来源行净商品销售额，不乘汇率",
+      "source": "结算原始行net_product_sales",
+      "note": "用于逐行对照Excel，保留最多4位小数；组合各组件重复展示整行金额，不合计。人民币收入按组件份额计算；赔付按结算金额计入收入。没有原始结算行时留空。",
+      "width": 205
+    },
+    {
+      "key": "source_row_settlement_total",
+      "default_hidden": true,
+      "label": "来源结算总金额（原币）",
+      "group": "原币核对",
+      "kind": "source_money",
+      "formula": "直接读取来源行结算总金额，不乘汇率",
+      "source": "结算原始行settlement_total",
+      "note": "普通记录其他费用为来源净商品销售额减结算总金额，再按份额与汇率换算。组合各组件重复展示整行金额，不合计；没有原始结算行时留空。",
+      "width": 195
+    },
+    {
+      "key": "exchange_rate_to_cny",
+      "default_hidden": true,
+      "label": "汇率（1原币兑人民币）",
+      "group": "原币核对",
+      "kind": "rate",
+      "formula": "人民币金额 = 原币金额 × 已保存汇率",
+      "source": "结算原始行exchange_rate_to_cny",
+      "note": "显示8位小数，使用导入时固化汇率，不重新查询或更改历史金额；人民币为1，缺失时待核对。",
+      "width": 185
+    },
+    {
+      "key": "exchange_rate_date",
+      "default_hidden": true,
+      "label": "汇率日期",
+      "group": "原币核对",
+      "kind": "date",
+      "formula": "直接读取已保存的实际汇率日期",
+      "source": "结算原始行exchange_rate_date",
+      "note": "导入按订单日期（缺失时用结算日期）取当日或此前最近可用汇率；本列展示实际取到的日期。",
+      "width": 125
+    },
+    {
+      "key": "exchange_rate_source",
+      "default_hidden": true,
+      "label": "汇率来源",
+      "group": "原币核对",
+      "kind": "text",
+      "formula": "直接读取已保存的汇率来源",
+      "source": "结算原始行exchange_rate_source",
+      "note": "历史外币汇率来源通常为Frankfurter/ECB，人民币为CNY；缺失时留空，不猜测来源。",
+      "width": 160
     },
     {
       "key": "selling_price_cny",
@@ -240,7 +306,7 @@
       "formula": "查看当前销售行、实际FIFO批次及整单汇总",
       "source": "授权销售出库记录",
       "note": "独立退款、调整、赔付没有库存出库明细。",
-      "width": 110
+      "width": 130
     }
   ],
   "extra_fields": [

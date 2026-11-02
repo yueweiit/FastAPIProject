@@ -10,6 +10,17 @@
         importSelectHelp: '请选择这次文件所属店铺', importBoundHelp: '文件将归入账号绑定的店铺',
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
+        importBusy: '正在导入…',
+        importDateHelp: '自动按文件日期归月，无需选择导入月份。商品销售使用订单创建日期，缺少时用结算日期；运费调整、退款冲账等独立结算使用结算日期，缺少时用订单创建日期，均缺少才用导入时间。下方月份只控制查询，同一文件可能跨月。',
+        importUploading: '正在上传文件', importParsing: '正在读取文件', importValidating: '正在校验数据',
+        importExchangeRates: '正在获取汇率', importInventory: '正在核对库存',
+        importWriting: '正在计算成本并写入数据', importCommitting: '正在确认保存结果',
+        importWorking: '正在处理，请稍候…', importRowProgress: '本阶段 {done} / {total} 行（{percent}%）',
+        importFileStore: '{file} · {store}', importComplete: '导入完成', importCompleteReview: '导入完成，部分记录待核对',
+        importSuccess: '导入完成：结算行{settlements}条，销售扣库存{sales}条，重复跳过{duplicates}条{pending}{warnings}。按文件日期自动归月，请切换查询月份查看。',
+        importPending: '；待确认{count}条', importWarnings: '；提示{count}条',
+        importProgressUnavailable: '导入进度模块未加载，请更新并重启后端后刷新页面。',
+        importConnectionLost: '进度连接中断，导入可能仍在继续。请刷新导入历史核对结果，避免重复提交。',
         galleryTitle: '产品图册', galleryKeyword: '商品名称 / SKU',
         galleryPlaceholder: '输入商品名称或 SKU', gallerySearch: '查询', galleryRefresh: '刷新', galleryClear: '清空',
         gallerySearchHint: '输入名称或 SKU 查找商品；可点选候选按其 SKU 查询，完整 SKU 匹配优先显示。',
@@ -18,6 +29,7 @@
         galleryLoadFailed: '图册加载失败，请重试：', galleryDownload: '下载图片',
         galleryStock: '库存{count}件',
         salesExport: '导出销售记录', salesExportLoading: '正在导出全部匹配的销售记录，请稍候…',
+        salesSearch: '商品名称 / SKU / 订单号', salesSearchPlaceholder: '输入名称、SKU 或订单号',
         salesExportReady: '销售记录已导出，请检查浏览器下载列表。',
         salesExportFailed: '销售记录导出失败，请稍后重试。',
         salesExportEmpty: '没有符合条件的销售记录可导出。',
@@ -30,7 +42,7 @@
         salesCostUnavailable: '销售明细模块尚未加载，请更新并重启后端后刷新页面。',
         salesPendingLoadFailed: '待确认记录加载失败，请重试。',
         salesManualEntry: '手工结算补录',
-        salesCostHelp: '导入后按实际FIFO出库批次自动拆分采购、头程、尾程和其他入库成本，四项合计为本行订单总成本；组合商品同一订单号各行相加为整单成本。展示按分舍入，尾差按科目金额由大到小分配。出库商品跌价单列，不加到订单成本或重复扣减毛利；店铺损益仍按批次归属分摊，本列不代表销售店铺承担额。横向滚动可查看全部成本列。',
+        salesCostHelp: '原币核对列展示来源整行金额、币种和保存汇率，便于对照Excel；组合各组件重复展示来源金额，不合计。人民币交易金额按已保存组件份额换算。导入后按实际FIFO出库批次自动拆分采购、头程、尾程和其他入库成本，四项合计为本行订单总成本；组合商品同一订单号各行相加为整单成本。展示按分舍入，尾差按科目金额由大到小分配。出库商品跌价单列，不加到订单成本或重复扣减毛利；店铺损益仍按批次归属分摊，本列不代表销售店铺承担额。横向滚动可查看全部成本列。',
         batchExport: '导出', batchEdit: '编辑',
         batchImpairmentStores: '跌价归属店铺（必选）', batchImpairmentDefault: '待分配（在库存页管理）',
         batchImpairmentHelp: '至少选择一家店铺，可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
@@ -100,6 +112,9 @@
     translateProvisionLabels();
     document.querySelectorAll?.('[data-sales-export-text]')?.forEach(node => {
         node.textContent = text(node.dataset.salesExportText);
+    });
+    document.querySelectorAll?.('[data-sales-search-placeholder]')?.forEach(node => {
+        node.placeholder = text(node.dataset.salesSearchPlaceholder);
     });
     document.querySelectorAll?.('[data-sales-cost-text]')?.forEach(node => {
         node.textContent = text(node.dataset.salesCostText);

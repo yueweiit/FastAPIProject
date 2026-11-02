@@ -33,13 +33,15 @@ async function main() {
     for (const file of ['templates/index.html', 'index.html']) {
         const {c, element: e, links, revoked, timers, requests, html} = setup(file);
         equal(html.includes('data-sales-export-text="salesExport"'), true);
+        equal(html.includes('data-sales-export-text="salesSearch"'), true);
+        equal(html.includes('data-sales-search-placeholder="salesSearchPlaceholder"'), true);
         equal(html.includes('window.SalesExport?.reset()'), true);
-        e('sales-month').value = '2026-09'; e('sales-product-keyword').value = '  P10  ';
+        e('sales-month').value = '2026-09'; e('sales-product-keyword').value = '  586332269815105453  ';
         const held = deferred();
         c.fetch = (url, options) => {requests.push({url, options}); return held.promise;};
         const first = c.exportSalesRecords(); await c.exportSalesRecords();
         equal(requests.length, 1);
-        equal(Object.fromEntries(new URLSearchParams(requests[0].url.split('?')[1])), {month: '2026-09', keyword: 'P10'});
+        equal(Object.fromEntries(new URLSearchParams(requests[0].url.split('?')[1])), {month: '2026-09', keyword: '586332269815105453'});
         equal(requests[0].options.credentials, 'same-origin');
         equal(e('sales-export-button').disabled, true); equal(e('sales-month').disabled, true);
         held.resolve(success()); await first;

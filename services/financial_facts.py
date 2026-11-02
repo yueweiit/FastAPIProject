@@ -61,6 +61,8 @@ class FinancialEvent:
     product_name: str = ""
     quantity: int = 0
     source_type: str = ""
+    display_product_name: str = ""
+    source_row_net_product_sales: Decimal | None = None
 
 
 def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword=None, entry_ids=None):
@@ -94,8 +96,11 @@ def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword
         matching_products = select(Product.id).where(or_(Product.sku.ilike(f"%{keyword}%"),
                                                         Product.name.ilike(f"%{keyword}%")))
         stmt = stmt.where(or_(SettlementEntry.product_id.in_(matching_products),
+                              SettlementEntry.order_id.ilike(f"%{keyword}%"),
+                              SettlementEntry.raw_data["订单ID/调整单ID"].as_string().ilike(f"%{keyword}%"),
                               SettlementEntry.platform_sku_id.ilike(f"%{keyword}%"),
                               SettlementEntry.product_name.ilike(f"%{keyword}%"),
+                              SettlementEntry.raw_data["产品名"].as_string().ilike(f"%{keyword}%"),
                               SettlementEntry.transaction_type.ilike(f"%{keyword}%")))
     return stmt.order_by(occurred, SettlementEntry.id)
 
@@ -111,6 +116,8 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
     rows = (await db.execute(stmt)).all()
     result = []
     for entry, store_id in rows:
+        raw_data = entry.raw_data or {}
+        manual = bool(raw_data.get("_manual_settlement"))
         rate = valid_rate(entry.currency, entry.exchange_rate_to_cny)
         net, expense = settlement_amounts(entry.net_product_sales or ZERO,
             entry.settlement_total or ZERO, entry.transaction_type)
@@ -124,7 +131,9 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
             entry.transaction_type or "结算调整", entry.order_id or "",
             net, expense, rate, entry.exchange_rate_date, entry.exchange_rate_source, entry.imported_at,
             product_name=entry.product_name or "", quantity=entry.quantity,
-            source_type=("manual_settlement" if (entry.raw_data or {}).get("_manual_settlement") else "import"),
+            source_type="manual_settlement" if manual else "import",
+            display_product_name=(entry.product_name or "") if manual else str(raw_data.get("产品名") or "").strip(),
+            source_row_net_product_sales=entry.net_product_sales,
         ))
     return result
 

@@ -1374,11 +1374,12 @@ def _build_sale_response(
         **{key: value for key, value in (source_context or {}).items()
            if key in {"transaction_type", "source_sku_id", "source_product_name", "source_quantity", "source_type"} and value is not None},
         display_sku=(source_context or {}).get("source_sku_id"),
-        display_name=(source_context or {}).get("source_product_name"),
+        display_name=(source_context or {}).get("display_product_name") or (source_context or {}).get("source_product_name"),
         id=sale.id,
         product_id=sale.product_id,
         user_id=sale.user_id,
         order_no=sale.order_no,
+        display_order_no=_text_value((source_context or {}).get("source_order_no")) or sale.order_no,
         quantity=sale.quantity,
         selling_price=sale.selling_price,
         total_cost=adjusted_cost,
@@ -1400,6 +1401,8 @@ def _build_sale_response(
         platform_fee=sale.platform_fee,
         profit=sale.profit,
         currency=currency,
+        source_row_net_product_sales=(source_context or {}).get("source_row_net_product_sales"),
+        source_row_settlement_total=(source_context or {}).get("source_row_settlement_total"),
         exchange_rate_to_cny=exchange_rate_to_cny,
         exchange_rate_date=exchange_rate_date,
         exchange_rate_source=exchange_rate_source,
@@ -1462,6 +1465,8 @@ async def _sale_import_context(
                 SettlementEntry.net_product_sales,
                 SettlementEntry.transaction_type,
                 SettlementEntry.product_name,
+                SettlementEntry.raw_data["产品名"].as_string().label("display_product_name"),
+                SettlementEntry.raw_data["订单ID/调整单ID"].as_string().label("source_order_no"),
                 SettlementEntry.quantity.label("source_quantity"),
             )
             .join(
@@ -1537,10 +1542,15 @@ async def _sale_import_context(
                 {
                     "source_net_product_sales": Decimal("0"),
                     "source_other_expense": Decimal("0"),
+                    "source_row_net_product_sales": Decimal("0"),
+                    "source_row_settlement_total": Decimal("0"),
                 },
             )
             context["source_net_product_sales"] += amount
             context["source_other_expense"] += expense
+            # 来源整行用于与Excel核对；组合各组件重复展示，不能跨组件合计。
+            context["source_row_net_product_sales"] += first.net_product_sales or Decimal(0)
+            context["source_row_settlement_total"] += first.settlement_total or Decimal(0)
 
     import_context_by_sale = {}
     for row in context_rows:
@@ -1553,6 +1563,8 @@ async def _sale_import_context(
             "exchange_rate_source": row.exchange_rate_source,
             "source_sku_id": row.platform_sku_id or "-",
             "source_product_name": row.product_name or "-",
+            "display_product_name": _text_value(row.display_product_name),
+            "source_order_no": _text_value(row.source_order_no),
             "source_quantity": row.source_quantity,
             "transaction_type": row.transaction_type or "订单",
             "source_type": "import",
@@ -1569,12 +1581,27 @@ async def _sale_import_context(
             "currency": (entry.currency or "CNY").upper(), "exchange_rate_to_cny": entry.exchange_rate_to_cny,
             "exchange_rate_date": entry.exchange_rate_date, "exchange_rate_source": entry.exchange_rate_source,
             "source_sku_id": entry.platform_sku_id or "-", "source_product_name": entry.product_name or "-",
+            "display_product_name": _text_value((entry.raw_data or {}).get("产品名")),
+            "source_order_no": _text_value((entry.raw_data or {}).get("订单ID/调整单ID")),
             "source_quantity": entry.quantity, "transaction_type": entry.transaction_type or "订单", "source_type": "import",
-            "source_net_product_sales": Decimal(0), "source_other_expense": Decimal(0)})
+            "source_net_product_sales": Decimal(0), "source_other_expense": Decimal(0),
+            "source_row_net_product_sales": Decimal(0), "source_row_settlement_total": Decimal(0)})
         revenue, expense = settlement_amounts(entry.net_product_sales or Decimal(0),
             entry.settlement_total or Decimal(0), entry.transaction_type)
         context["source_net_product_sales"] += revenue
         context["source_other_expense"] += expense
+        context["source_row_net_product_sales"] += entry.net_product_sales or Decimal(0)
+        context["source_row_settlement_total"] += entry.settlement_total or Decimal(0)
+
+    # 旧文件未携带中文产品名时，展示实际已扣库的本地组件；不重建来源或改写历史关联。
+    legacy_products = {sale.product_id for sale in sales
+                       if (context := import_context_by_sale.get(sale.id)) and not context.get("display_product_name")}
+    local_names = dict((await db.execute(select(Product.id, Product.name).where(
+        Product.id.in_(legacy_products)))).all()) if legacy_products else {}
+    for sale in sales:
+        context = import_context_by_sale.get(sale.id)
+        if context and not context.get("display_product_name"):
+            context["display_product_name"] = local_names.get(sale.product_id)
 
     platform_sku_ids = {row.platform_sku_id for row in context_rows if row.platform_sku_id}
     product_ids = {row.product_id for row in context_rows if row.product_id is not None}
@@ -1914,9 +1941,13 @@ def _sale_filter_values(
     if normalized_keyword:
         pattern = f"%{normalized_keyword}%"
         source_matches = or_(SettlementEntry.platform_sku_id.ilike(pattern),
-                            SettlementEntry.product_name.ilike(pattern), SettlementEntry.transaction_type.ilike(pattern))
+                            SettlementEntry.order_id.ilike(pattern),
+                            SettlementEntry.raw_data["订单ID/调整单ID"].as_string().ilike(pattern),
+                            SettlementEntry.product_name.ilike(pattern),
+                            SettlementEntry.raw_data["产品名"].as_string().ilike(pattern),
+                            SettlementEntry.transaction_type.ilike(pattern))
         conditions.append(
-            or_(Product.name.ilike(pattern), Product.sku.ilike(pattern),
+            or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), Sale.order_no.ilike(pattern),
                 Sale.id.in_(select(SettlementEntry.sale_id).where(source_matches)),
                 Sale.id.in_(select(SettlementEntryAllocation.sale_id).join(SettlementEntry,
                     SettlementEntry.id == SettlementEntryAllocation.settlement_entry_id).where(source_matches)))
@@ -2089,15 +2120,17 @@ async def _sale_response_rows(db, sales, *, cost_contexts=None):
     return response
 
 
-def _financial_event_response(event, store_name):
+def _financial_event_response(event, store_name, local_product_name=None):
     return SaleResponse(
-        id=-event.entry_id, product_id=event.product_id, order_no=event.order_no,
+        id=-event.entry_id, product_id=event.product_id, order_no=event.order_no, display_order_no=event.order_no,
         quantity=0, selling_price=event.original_revenue, total_cost=Decimal(0),
         purchase_cost_cny=Decimal(0), head_shipping_cost_cny=Decimal(0),
         last_mile_cost_cny=Decimal(0), other_cost_cny=Decimal(0),
         order_total_cost_cny=Decimal(0), impairment_cny=Decimal(0),
         platform_fee=event.original_expense, profit=event.original_revenue-event.original_expense,
         currency=event.currency, exchange_rate_to_cny=event.rate,
+        source_row_net_product_sales=event.source_row_net_product_sales,
+        source_row_settlement_total=event.source_amount,
         exchange_rate_date=event.rate_date, exchange_rate_source=event.rate_source,
         selling_price_cny=event.revenue, sales_revenue_cny=event.revenue,
         platform_fee_cny=event.expense,
@@ -2105,7 +2138,8 @@ def _financial_event_response(event, store_name):
         store_name=store_name, sold_at=event.occurred_at,
         created_at=event.created_at or event.occurred_at,
         record_type="compensation_income" if event.transaction_type in COMPENSATION_TRANSACTION_TYPES else "manual_settlement" if event.source_type == "manual_settlement" else "settlement_adjustment",
-        display_sku=event.platform_sku_id or "-", display_name=event.product_name or "-",
+        display_sku=event.platform_sku_id or "-",
+        display_name=event.display_product_name or local_product_name or event.product_name or "-",
         source_sku_id=event.platform_sku_id or "-", source_product_name=event.product_name or "-",
         source_quantity=event.quantity, transaction_type=event.transaction_type, source_type=event.source_type,
     )
@@ -2149,7 +2183,12 @@ async def list_sales(
         stores = dict((await db.execute(select(Store.id, Store.name).where(
             Store.id.in_({event.store_id for event in events if event.store_id is not None})
         ))).all())
-        event_responses = [_financial_event_response(event, stores.get(event.store_id)) for event in events]
+        event_product_ids = {event.product_id for event in events
+                             if event.product_id is not None and not event.display_product_name}
+        event_product_names = dict((await db.execute(select(Product.id, Product.name).where(
+            Product.id.in_(event_product_ids)))).all()) if event_product_ids else {}
+        event_responses = [_financial_event_response(event, stores.get(event.store_id),
+                            event_product_names.get(event.product_id)) for event in events]
         if page is not None:
             # 先合并全部记录再分页，费用/退款不能造成丢行、重复页或缺失成本明细。
             all_sales = await _filtered_sales(db, product_id, keyword, month, user, include_cost_details=True)
@@ -2229,7 +2268,9 @@ async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include
         complete = key[0] is not None
         known_cost = complete and all(row.cost_status != "needs_review" for row in lines)
         known_impairment = complete and all(row.impairment_cny is not None for row in lines)
+        display_numbers = {row.display_order_no or row.order_no for row in lines}
         summaries[key] = SalesOrderCostSummary(order_no=key[1], store_id=key[0], store_name=store_names.get(key[0]),
+            display_order_no=next(iter(display_numbers)) if len(display_numbers) == 1 else key[1],
             line_count=len(lines), complete=complete,
             total_cost_cny=sum((row.order_total_cost_cny if row.order_total_cost_cny is not None else
                 row.total_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) for row in lines), Decimal(0)) if known_cost else None,

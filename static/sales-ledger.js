@@ -3,6 +3,7 @@
     'use strict';
     const messages = {'zh-CN': {
         pending:'待核对', na:'—', empty:'暂无销售记录', pageTotal:'本页合计', unknownStore:'未关联店铺',
+        pageTotalHelp:'只合计当前页展示的实际出库数量和可加总金额，来源数量及单价不合计；月度统计按月份汇总全部筛选记录。左右滚动明细可查看对应列，本页合计会同步移动。明细区可独立上下滚动，表头保持可见。',
         detail:'计算明细', close:'关闭', loading:'正在读取完整订单与FIFO明细…',
         failed:'计算明细读取失败，请重试。', unavailable:'销售计算接口或字段资源尚未加载，请更新并重启后端后刷新。',
         formula:'公式', source:'来源', note:'口径', row:'本行成本计算', batches:'实际FIFO批次',
@@ -14,12 +15,22 @@
         rowHelp:'单件用未舍入分项除实际库存出库件数，显示4位；各金额按分展示并分配尾差。代入金额最多显示8位，计算仍用服务端原精度。跨批次单价为本次出库加权平均，不能用显示单价反算订单金额。',
         batchHelp:'保存的FIFO单价和数量是成本依据，分项按原始/冻结构成分配，叠加启用的对应成本补差；不是按最新采购价重算历史出库。',
         impairmentHelp:'各出库库存层的准备转销折算数量乘对应有效单位成本后相加。销售当天先计提后转销；跌价单列，不重复加进成本或扣减毛利，也不代表销售店铺的承担额。',
-        wholeHelp:'按同店铺同订单全部授权出库明细汇总，不受当前商品、月份和页面筛选限制。不同SKU的单价不相加；本行和整单金额不可重复合计。',
+        wholeHelp:'按同店铺原内部订单分组的全部授权出库明细汇总，不受当前商品、月份和页面筛选限制。导入订单按订单ID+来源SKU分组，组合组件归在同组；显示原始订单号不会将不同来源SKU合并。不同商品的单价不相加；本行和汇总金额不可重复合计。',
         basis:'数量口径：本地库存实际出库件数；组合商品按组件行展示，不等同于平台销售套数。',
         count:'出库明细数', wholeCost:'整单销售成本（元）', wholeImpairment:'整单出库跌价（元）',
         originalCurrency:'原币', rate:'汇率', rateDate:'汇率日期', rateSource:'汇率来源', missingRate:'汇率缺失，人民币金额待核对。',
+        sourceRowHelp:'来源整行原币金额，用于对照Excel；组合各组件重复展示，不参与合计。人民币收入和费用仍按已保存的组件份额及汇率计算。',
+        sourceBackendUnavailable:'后端待更新',
+        sourceBackendUpdate:'当前后端尚未加载原币核对字段。请重启后端服务后刷新页面；已导入的记录仍会保留，无需重新导入Excel。',
         noBatches:'没有可核对的FIFO批次。', noImpairment:'没有可回放的出库跌价明细。',
         localSku:'本地SKU', localProduct:'本地商品', sourceQuantity:'来源数量', sourceProduct:'来源产品名',
+        fixedField:'固定字段', noFixedField:'不固定', clearFixedFields:'清空固定',
+        pinnedCount:'已固定 {count} 列', pinLimitedSummary:'固定 {active} / {selected} 列',
+        visibleFields:'显示字段', allFieldsVisible:'全部显示', showAllFields:'全部显示', hiddenFieldCount:'已隐藏 {count} 列',
+        visibleFieldsHelp:'取消勾选可隐藏字段，表头、明细和本页合计一起隐藏；至少保留一列。全部显示可恢复。隐藏不删除固定选择，重新显示时恢复；按账号记住当前浏览器设置，仅影响页面，不改变查询、计算或导出。',
+        keepVisibleField:'请至少保留一个显示字段。', hiddenFieldPin:'该字段已隐藏，重新显示后可调整固定。',
+        pinLimited:'已选择 {selected} 列，当前窗口仅能固定前 {active} 列，其余保持滚动；窗口加宽后自动恢复，不改变已选设置。',
+        fixedFieldHelp:'可勾选多个字段，按原字段顺序移到最左侧并固定；清空恢复原列顺序。固定区域过宽时会明确提示并临时减少固定列，给右侧数据留出空间。同一账号在当前浏览器记住选择，不改变筛选、计算或导出格式。',
     }};
     const manualMessages = {'zh-CN': {
         title:'手工结算补录',sku:'SKU ID',product:'产品名',store:'店铺',date:'结算日期',transaction:'交易类型',
@@ -39,11 +50,14 @@
     const userId = () => typeof CURRENT_USER_ID === 'undefined' ? 0 : CURRENT_USER_ID;
     let resource, pendingResource, epoch = 0, loadSerial = 0, detailSerial = 0, controller;
     let manualBusy=false,manualController,manualAttempt,manualProductSearch;
+    const compactTable = window.matchMedia?.('(max-width:760px)');
+    let pinOwner=null, pinnedKeys=['order_no'], hiddenKeys=[], lastView=null, renderedPinLayout='', scrollSyncPositions;
     const current = token => token.epoch === epoch && token.user === userId();
     const money = (value, places = 2) => value == null || !Number.isFinite(Number(value)) ? t('pending') : `¥${Number(value).toFixed(places)}`;
     const preciseMoney = value => money(value,8).replace(/(\.\d{2}\d*?)0+$/, '$1');
     const unknownSum = values => values.some(v => v == null || !Number.isFinite(Number(v))) ? null : values.reduce((s,v) => s + Number(v), 0);
     const totalCost = row => row.order_total_cost_cny ?? row.total_cost;
+    const orderNumber = row => row.display_order_no || row.order_no;
     function description(meta) {
         return `<p><strong>${h(t('formula'))}：</strong>${h(meta.formula)}</p><p><strong>${h(t('source'))}：</strong>${h(meta.source)}</p><p><strong>${h(t('note'))}：</strong>${h(meta.note)}</p>`;
     }
@@ -52,53 +66,219 @@
         if (!pendingResource) pendingResource = fetch('/sales-fields.json', {credentials:'same-origin'}).then(async response => {
             if (!response.ok) throw new Error(t('unavailable'));
             const data = await response.json();
-            if (data.version !== 1 || !Array.isArray(data.fields) || data.fields.length !== 24 || !Array.isArray(data.extra_fields)) throw new Error(t('unavailable'));
+            if (data.version !== 1 || !Array.isArray(data.fields) || data.fields.length !== 30 || !Array.isArray(data.extra_fields)) throw new Error(t('unavailable'));
             resource = data;
         }).finally(() => {pendingResource = null;});
         await pendingResource;
     }
-    function headers() {
-        const groups = [];
-        for (const meta of resource.fields) {
-            if (groups.at(-1)?.name === meta.group) groups.at(-1).count++;
-            else groups.push({name:meta.group, count:1});
+    const pinStorageKey = owner => `fifo.sales.ledger.pin.v2.user:${owner}`;
+    const hiddenStorageKey = owner => `fifo.sales.ledger.hidden.v1.user:${owner}`;
+    const validField = key => resource?.fields.some(field=>field.key===key);
+    const validPin = key => resource?.fields.some(field => field.key === key && field.kind !== 'action');
+    const normalizedPins = keys => resource.fields.filter(field=>field.kind!=='action'&&keys.includes(field.key)).map(field=>field.key);
+    const pinLayout = columns => JSON.stringify(columns.map(field=>[field.key,field.width,field.pinned]));
+    function initializePin() {
+        const owner=userId();
+        if(pinOwner===owner)return;
+        pinOwner=owner;pinnedKeys=['order_no'];hiddenKeys=resource.fields.filter(field=>field.default_hidden===true).map(field=>field.key);
+        try {
+            const saved=owner ? window.localStorage?.getItem(pinStorageKey(owner)) : null;
+            if(saved!==null&&saved!==undefined){
+                const keys=JSON.parse(saved);
+                if(Array.isArray(keys)&&keys.length<=resource.fields.length&&keys.every(validPin))pinnedKeys=normalizedPins(keys);
+            }else if(owner){
+                const legacy=window.localStorage?.getItem(`fifo.sales.ledger.pin.v1.user:${owner}`);
+                if(legacy==='none')pinnedKeys=[];else if(validPin(legacy))pinnedKeys=[legacy];
+            }
+        }catch(_error){}
+        try {
+            const saved=owner?window.localStorage?.getItem(hiddenStorageKey(owner)):null;
+            if(saved!==null&&saved!==undefined){
+                const keys=JSON.parse(saved);
+                if(Array.isArray(keys)&&keys.length<=resource.fields.length&&keys.every(validField)){
+                    const normalized=resource.fields.filter(field=>keys.includes(field.key)).map(field=>field.key);
+                    if(normalized.length<resource.fields.length)hiddenKeys=normalized;
+                }
+            }
+        }catch(_error){}
+        const root=el('sales-pin-field');
+        if(!root)return;
+        const groups=new Map();
+        resource.fields.filter(field=>field.kind!=='action').forEach(field=>{
+            if(!groups.has(field.group))groups.set(field.group,[]);
+            groups.get(field.group).push(field);
+        });
+        root.innerHTML=[...groups].map(([name,fields])=>
+            `<fieldset class="sales-pin-options"><legend>${h(name)}</legend>${fields.map(field=>`<label for="sales-pin-option-${h(field.key)}"><input id="sales-pin-option-${h(field.key)}" type="checkbox" data-sales-pin-key="${h(field.key)}"${pinnedKeys.includes(field.key)?' checked':''}><span>${h(field.label)}</span></label>`).join('')}</fieldset>`).join('');
+        el('sales-pin-toggle')?.setAttribute?.('aria-disabled','false');
+        if(el('sales-pin-clear'))el('sales-pin-clear').disabled=false;
+        const visibleRoot=el('sales-visible-field');
+        if(visibleRoot){
+            const visibleGroups=new Map();
+            resource.fields.forEach(field=>{if(!visibleGroups.has(field.group))visibleGroups.set(field.group,[]);visibleGroups.get(field.group).push(field);});
+            visibleRoot.innerHTML=[...visibleGroups].map(([name,fields])=>`<fieldset class="sales-pin-options"><legend>${h(name)}</legend>${fields.map(field=>`<label for="sales-visible-option-${h(field.key)}"><input id="sales-visible-option-${h(field.key)}" type="checkbox" data-sales-visible-key="${h(field.key)}"${hiddenKeys.includes(field.key)?'':' checked'}><span>${h(field.label)}</span></label>`).join('')}</fieldset>`).join('');
         }
-        el('sales-ledger-head').innerHTML = `<tr class="sales-column-groups">${groups.map((group,index) => `<th colspan="${group.count}" scope="colgroup" class="sales-group-${index}">${h(group.name)}</th>`).join('')}</tr><tr>${resource.fields.map((meta,index) =>
-            `<th scope="col" data-sales-field="${h(meta.key)}" class="sales-stick-${index}"><span id="sales-field-${h(meta.key)}">${h(meta.label)}</span><div data-help-tip data-help-anchor="#sales-field-${h(meta.key)}">${description(meta)}</div></th>`).join('')}</tr>`;
-        const cols = resource.fields.map(meta => `<col style="width:${meta.width}px">`).join('');
+        el('sales-visible-toggle')?.setAttribute?.('aria-disabled','false');
+        if(el('sales-visible-all'))el('sales-visible-all').disabled=false;
+    }
+    function displayColumns() {
+        initializePin();
+        const visible=resource.fields.filter(meta=>!hiddenKeys.includes(meta.key));
+        const selected=visible.filter(meta=>pinnedKeys.includes(meta.key));
+        const ordered=[...selected,...visible.filter(meta=>!pinnedKeys.includes(meta.key))];
+        const available=el('sales-ledger-scroll')?.clientWidth||(compactTable?.matches?360:1400);
+        const budget=Math.max(80,Math.floor(available*(compactTable?.matches ? .55:.7)));
+        const mobileLimit=Math.min(160,Math.floor(available*.45));
+        let left=0,canFreeze=true;
+        return ordered.map(meta=>{
+            const chosen=pinnedKeys.includes(meta.key);
+            let width=chosen&&compactTable?.matches?Math.min(meta.width,mobileLimit):meta.width;
+            if(chosen&&left===0&&canFreeze)width=Math.min(width,budget);
+            const pinned=chosen&&canFreeze&&left+width<=budget;
+            if(chosen&&!pinned)canFreeze=false;
+            const pinLeft=pinned?left:null;if(pinned)left+=width;
+            return {...meta,width,pinned,pinLeft};
+        });
+    }
+    function updatePinControls(columns) {
+        const active=columns.filter(field=>field.pinned).length,selected=pinnedKeys.filter(key=>!hiddenKeys.includes(key)).length;
+        const labels=resource.fields.filter(field=>pinnedKeys.includes(field.key)&&!hiddenKeys.includes(field.key)).map(field=>field.label);
+        const fill=(key,values)=>Object.entries(values).reduce((message,[name,value])=>message.replaceAll(`{${name}}`,String(value)),t(key));
+        if(el('sales-pin-summary'))el('sales-pin-summary').textContent=!selected?t('noFixedField'):active<selected?fill('pinLimitedSummary',{active,selected}):selected===1?labels[0]:fill('pinnedCount',{count:selected});
+        const status=el('sales-pin-limit');if(status){status.hidden=active===selected;status.textContent=active<selected?fill('pinLimited',{active,selected}):'';}
+        resource.fields.forEach(field=>{
+            const input=el(`sales-pin-option-${field.key}`);
+            if(input){input.checked=pinnedKeys.includes(field.key);input.disabled=hiddenKeys.includes(field.key);input.title=input.disabled?t('hiddenFieldPin'):'';}
+            const visible=el(`sales-visible-option-${field.key}`);if(visible)visible.checked=!hiddenKeys.includes(field.key);
+        });
+        if(el('sales-visible-summary'))el('sales-visible-summary').textContent=hiddenKeys.length?fill('hiddenFieldCount',{count:hiddenKeys.length}):t('allFieldsVisible');
+    }
+    function refreshLayout() {
+        if(!resource||!lastView)return;
+        window.HelpTips?.close();render(lastView.rows,lastView.products,true);
+    }
+    function changePin(event) {
+        if(!resource)return;
+        initializePin();
+        const input=event?.target,key=input?.dataset?.salesPinKey;
+        if(!validPin(key)||hiddenKeys.includes(key))return;
+        pinnedKeys=normalizedPins(input.checked?[...pinnedKeys,key]:pinnedKeys.filter(value=>value!==key));
+        savePin();
+    }
+    function savePin() {
+        try {if(userId())window.localStorage?.setItem(pinStorageKey(userId()),JSON.stringify(pinnedKeys));}catch(_error){}
+        refreshColumns();
+    }
+    function refreshColumns() {
+        if(lastView){refreshLayout();return;}
+        window.HelpTips?.close();
+        const columns=displayColumns();headers(columns);
+        const empty=el('sales-tbody')?.querySelector?.('td[colspan]');if(empty)empty.colSpan=columns.length;
+        window.HelpTips?.refresh();
+    }
+    function changeVisibility(event) {
+        if(!resource)return;
+        initializePin();
+        const input=event?.target,key=input?.dataset?.salesVisibleKey;
+        if(!validField(key))return;
+        const keys=input.checked?hiddenKeys.filter(value=>value!==key):[...hiddenKeys,key];
+        const normalized=resource.fields.filter(field=>keys.includes(field.key)).map(field=>field.key);
+        if(normalized.length===resource.fields.length){
+            input.checked=true;
+            if(el('sales-visible-status'))el('sales-visible-status').textContent=t('keepVisibleField');
+            return;
+        }
+        hiddenKeys=normalized;saveVisibility();
+    }
+    function saveVisibility() {
+        try{if(userId())window.localStorage?.setItem(hiddenStorageKey(userId()),JSON.stringify(hiddenKeys));}catch(_error){}
+        if(el('sales-visible-status'))el('sales-visible-status').textContent='';
+        refreshColumns();
+    }
+    function headers(columns) {
+        renderedPinLayout=pinLayout(columns);updatePinControls(columns);
+        const themes = new Map();
+        resource.fields.forEach(meta=>{if(!themes.has(meta.group))themes.set(meta.group,themes.size);});
+        el('sales-ledger-head').innerHTML = `<tr>${columns.map(meta =>
+            `<th scope="col" data-sales-field="${h(meta.key)}" class="sales-group-${themes.get(meta.group)}${meta.pinned?' sales-pinned':''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''}><span id="sales-field-${h(meta.key)}">${h(meta.label)}</span><div data-help-tip data-help-anchor="#sales-field-${h(meta.key)}">${description(meta)}</div></th>`).join('')}</tr>`;
+        const cols = columns.map(meta => `<col style="width:${meta.width}px">`).join('');
         el('sales-ledger-cols').innerHTML = cols; el('sales-total-cols').innerHTML = cols;
-        const width = resource.fields.reduce((sum,meta)=>sum+meta.width,0)+'px';
+        const width = columns.reduce((sum,meta)=>sum+meta.width,0)+'px';
         el('sales-ledger-table').style.width=width; el('sales-total-table').style.width=width;
     }
+    compactTable?.addEventListener?.('change',()=>{
+        refreshLayout();
+    });
+    window.addEventListener?.('resize',()=>{
+        if(resource&&lastView&&pinLayout(displayColumns())!==renderedPinLayout)refreshLayout();
+    });
     function value(row, meta, product) {
+        if (meta.key === 'order_no') return orderNumber(row);
         if (meta.key === 'sku') return row.display_sku || product.sku || '-';
         if (meta.key === 'product_name') return row.display_name || product.name || '-';
         if (meta.key === 'store_name') return row.store_name || t('unknownStore');
-        if (meta.kind === 'date') return row.sold_at?.slice(0,10) || '-';
+        if (meta.kind === 'date') return row[meta.key]?.slice(0,10) || '-';
         if (meta.key === 'order_total_cost_cny') return totalCost(row);
         return row[meta.key];
     }
-    function render(rows, products) {
-        headers();
-        const columns = resource.fields;
+    function initializeScrollSync() {
+        const summary=el('sales-total-scroll'),detail=el('sales-ledger-scroll');
+        if(!summary?.addEventListener || !detail?.addEventListener)return;
+        // 只同步横向位置变化，忽略纵向事件和程序回声，避免覆盖用户的新位置。
+        const positions=scrollSyncPositions=new WeakMap([[summary,summary.scrollLeft],[detail,detail.scrollLeft]]);
+        const sync=(source,target)=>{
+            if(positions.get(source)===source.scrollLeft)return;
+            positions.set(source,source.scrollLeft);
+            if(target.scrollLeft!==source.scrollLeft)target.scrollLeft=source.scrollLeft;
+            positions.set(target,target.scrollLeft);
+        };
+        summary.addEventListener('scroll',()=>sync(summary,detail),{passive:true});
+        detail.addEventListener('scroll',()=>sync(detail,summary),{passive:true});
+    }
+    const sourceFields = ['source_row_net_product_sales','source_row_settlement_total'];
+    const hasSourceField = (row,key) => Object.prototype.hasOwnProperty.call(row,key);
+    function sourceBackendStatus(rows=[]) {
+        const status=el('sales-currency-status');
+        if(!status)return;
+        const missing=rows.some(row=>sourceFields.some(key=>!hasSourceField(row,key)));
+        status.textContent=missing?t('sourceBackendUpdate'):'';
+        status.hidden=!missing;
+    }
+    function render(rows, products, preservePosition=false) {
+        const detail=el('sales-ledger-scroll'),left=detail?.scrollLeft||0,top=detail?.scrollTop||0;
+        const columns = displayColumns();
+        headers(columns);lastView={rows,products};
+        sourceBackendStatus(rows);
         el('sales-tbody').innerHTML = rows.length ? rows.map(row => `<tr>${columns.map((meta,index) => {
             const v = value(row, meta, products[row.product_id] || {});
             const numeric = meta.kind === 'money' || meta.kind === 'unit';
             const notApplicable = meta.kind === 'unit' && !(row.quantity > 0);
-            const text = notApplicable ? t('na') : numeric ? money(v,meta.kind === 'unit' ? 4 : 2) : ['quantity','source_quantity'].includes(meta.kind) ? v == null ? t('na') : Number(v).toLocaleString(document.documentElement.lang) : h(v);
+            const sourceMoney = meta.kind === 'source_money';
+            const rate = meta.kind === 'rate';
+            let text;
+            if (sourceMoney) {
+                text = !hasSourceField(row,meta.key) ? h(t('sourceBackendUnavailable')) : v == null || !Number.isFinite(Number(v)) ? t('na') : h(Number(v).toLocaleString(document.documentElement.lang,{minimumFractionDigits:2,maximumFractionDigits:4}));
+            } else if (rate) {
+                text = v == null || !Number.isFinite(Number(v)) ? t('pending') : Number(v).toFixed(8);
+            } else {
+                text = notApplicable ? t('na') : numeric ? money(v,meta.kind === 'unit' ? 4 : 2) : ['quantity','source_quantity'].includes(meta.kind) ? v == null ? t('na') : Number(v).toLocaleString(document.documentElement.lang) : h(v);
+            }
             const transaction = ['selling_price_cny','sales_revenue_cny','platform_fee_cny','profit_cny'].includes(meta.key);
             const fxReason = `${t('originalCurrency')} ${row.currency || 'CNY'}；${t('rate')} ${row.exchange_rate_to_cny ?? t('pending')}；${t('rateDate')} ${row.exchange_rate_date || '—'}；${t('rateSource')} ${row.exchange_rate_source || '—'}`;
-            const reason = meta.key === 'impairment_cny' ? row.impairment_review_reason : transaction ?
+            const reason = sourceMoney ? hasSourceField(row,meta.key) ? t('sourceRowHelp') : t('sourceBackendUpdate') : rate ? fxReason : meta.key === 'impairment_cny' ? row.impairment_review_reason : transaction ?
                 [fxReason, row.exchange_rate_to_cny == null && row.currency && row.currency !== 'CNY' ? t('missingRate') : '',meta.key === 'profit_cny' ? row.cost_review_reason : ''].filter(Boolean).join('；') : row.cost_breakdown_review_reason || row.cost_review_reason;
-            const content = meta.kind === 'action' ? (row.id > 0 && (row.record_type || 'sale') === 'sale' ? `<button type="button" class="btn btn-secondary" data-sale-calculation="${Number(row.id)}" aria-label="${h(t('detail')+' · '+row.order_no)}">${h(t('detail'))}</button>` : t('na')) : text;
-            return `<td data-sales-value="${h(meta.key)}" class="sales-stick-${index} ${numeric && v == null && !notApplicable ? 'fx-missing' : ''}" title="${h(reason || '')}">${content}</td>`;
+            const content = meta.kind === 'action' ? (row.id > 0 && (row.record_type || 'sale') === 'sale' ? `<button type="button" class="btn btn-secondary" data-sale-calculation="${Number(row.id)}" aria-label="${h(t('detail')+' · '+orderNumber(row))}">${h(t('detail'))}</button>` : t('na')) : text;
+            const number=['money','unit','quantity','source_quantity','source_money','rate'].includes(meta.kind);
+            return `<td data-sales-value="${h(meta.key)}" class="${meta.pinned?'sales-pinned ':''}${number?'sales-number ':''}${(numeric || rate) && v == null && !notApplicable ? 'fx-missing' : ''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''} title="${h(reason || '')}">${content}</td>`;
         }).join('')}</tr>`).join('') : `<tr><td colspan="${columns.length}" class="empty">${h(t('empty'))}</td></tr>`;
-        const firstTotal=columns.findIndex(meta=>meta.kind==='quantity');
-        el('sales-total-summary-body').innerHTML = `<tr><td colspan="${firstTotal}">${h(t('pageTotal'))}</td>${columns.slice(firstTotal).map(meta => {
-            if (!['quantity','money'].includes(meta.kind)) return `<td data-sales-total="${h(meta.key)}"></td>`;
+        el('sales-total-summary-body').innerHTML = `<tr>${columns.map(meta => {
+            const attr=`data-sales-total="${h(meta.key)}" class="sales-number${meta.pinned?' sales-pinned':''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''}`;
+            if (!['quantity','money'].includes(meta.kind)) return `<td ${attr}></td>`;
             const values = rows.map(row => value(row,meta,{}));
-            return `<td data-sales-total="${h(meta.key)}">${meta.kind === 'quantity' ? values.reduce((sum,v) => sum + Number(v || 0),0).toLocaleString(document.documentElement.lang) : money(unknownSum(values))}</td>`;
+            return `<td ${attr}>${meta.kind === 'quantity' ? values.reduce((sum,v) => sum + Number(v || 0),0).toLocaleString(document.documentElement.lang) : money(unknownSum(values))}</td>`;
         }).join('')}</tr>`;
+        if(detail){detail.scrollLeft=left;detail.scrollTop=preservePosition?top:0;scrollSyncPositions?.set(detail,detail.scrollLeft);}
+        if(el('sales-total-scroll')){const summary=el('sales-total-scroll');summary.scrollLeft=detail?.scrollLeft||0;scrollSyncPositions?.set(summary,summary.scrollLeft);}
         window.HelpTips?.refresh();
     }
     function table(head, rows) {
@@ -120,7 +300,7 @@
         const costBatches = data.cost_batches.map(batch => `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td><td>${money(batch.unit_cost,4)}</td>${categories.map(key=>`<td>${preciseMoney(batch[key+'_cost_cny'])}</td>`).join('')}<td>${money(batch.total_cost_cny,4)}</td></tr>`);
         const impairments = data.impairment_batches.map(batch=>`<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td><td>${batch.impairment_units == null ? t('pending') : h(batch.impairment_units)}</td><td>${money(batch.unit_cost,4)}</td><td>${money(batch.impairment_cny)}</td><td>${batch.impairment_units == null ? t('pending') : `${h(batch.impairment_units)} × ${money(batch.unit_cost,4)} = ${money(batch.impairment_cny)}`}</td></tr>`);
         const order = data.order_summary;
-        return `<p class="sales-calculation-identity">${h(data.sku)} · ${h(data.product_name)} · ${h(sale.order_no)}</p><p class="sales-calculation-identity">${h(t('sourceProduct'))}：${h(sale.source_product_name || t('na'))} · ${h(t('sourceQuantity'))}：${h(sale.source_quantity ?? t('na'))} · ${h(sale.transaction_type || '')}</p><p data-help-tip data-help-anchor="#sales-calc-title">${h(t('basis'))}</p>
+        return `<p class="sales-calculation-identity">${h(data.sku)} · ${h(data.product_name)} · ${h(orderNumber(sale))}</p><p class="sales-calculation-identity">${h(t('sourceProduct'))}：${h(sale.source_product_name || t('na'))} · ${h(t('sourceQuantity'))}：${h(sale.source_quantity ?? t('na'))} · ${h(sale.transaction_type || '')}</p><p data-help-tip data-help-anchor="#sales-calc-title">${h(t('basis'))}</p>
             ${notes.map(note=>`<p class="msg msg-err" role="alert">${h(note)}</p>`).join('')}
             ${section('row',t('row'),t('rowHelp'),table([t('category'),t('raw'),t('shown'),t('unit'),t('calculation')],lines))}
             ${section('batches',t('batches'),t('batchHelp'),costBatches.length ? table([t('batch'),t('quantity'),t('unitCost'),...categories.map(t),t('total')],costBatches) : `<p>${h(t('noBatches'))}</p>`)}
@@ -220,6 +400,17 @@
         finally{if(current(token)){manualBusy=false;manualController=null;el('s-manual-fields').disabled=false;}}
     }
     function reset() {
+        sourceBackendStatus();
+        pinOwner=null;pinnedKeys=['order_no'];hiddenKeys=[];lastView=null;
+        if(el('sales-pin-picker'))el('sales-pin-picker').open=false;
+        if(el('sales-pin-field'))el('sales-pin-field').innerHTML='';
+        el('sales-pin-toggle')?.setAttribute?.('aria-disabled','true');
+        if(el('sales-pin-clear'))el('sales-pin-clear').disabled=true;
+        if(el('sales-visible-picker'))el('sales-visible-picker').open=false;
+        if(el('sales-visible-field'))el('sales-visible-field').innerHTML='';
+        el('sales-visible-toggle')?.setAttribute?.('aria-disabled','true');
+        if(el('sales-visible-all'))el('sales-visible-all').disabled=true;
+        if(el('sales-visible-status'))el('sales-visible-status').textContent='';
         epoch++;loadSerial++;detailSerial++;controller?.abort();controller=null;
         manualProductSearch?.close();
         manualController?.abort();manualController=null;manualBusy=false;manualAttempt=null;
@@ -236,6 +427,16 @@
         const button=event.target.closest('[data-sale-calculation]'); if (button) open(Number(button.dataset.saleCalculation));
     });
     document.querySelectorAll?.('[data-sales-manual-text]').forEach(node=>{node.textContent=mt(node.dataset.salesManualText);});
+    document.querySelectorAll?.('[data-sales-pin-text]').forEach(node=>{node.textContent=t(node.dataset.salesPinText);});
+    el('sales-pin-field')?.addEventListener?.('change',changePin);
+    el('sales-pin-clear')?.addEventListener?.('click',()=>{if(resource){initializePin();pinnedKeys=[];savePin();}});
+    el('sales-pin-toggle')?.addEventListener?.('click',event=>{if(el('sales-pin-toggle').getAttribute('aria-disabled')==='true')event.preventDefault();});
+    el('sales-visible-field')?.addEventListener?.('change',changeVisibility);
+    el('sales-visible-all')?.addEventListener?.('click',()=>{if(resource){initializePin();hiddenKeys=[];saveVisibility();}});
+    el('sales-visible-toggle')?.addEventListener?.('click',event=>{if(el('sales-visible-toggle').getAttribute('aria-disabled')==='true')event.preventDefault();});
+    document.addEventListener?.('click',event=>{for(const prefix of ['pin','visible']){const picker=el(`sales-${prefix}-picker`);if(picker?.open&&!picker.contains(event.target))picker.open=false;}});
+    document.addEventListener?.('keydown',event=>{for(const prefix of ['pin','visible']){const picker=el(`sales-${prefix}-picker`);if(event.key==='Escape'&&picker?.open){picker.open=false;el(`sales-${prefix}-toggle`)?.focus();event.preventDefault();}}});
+    initializeScrollSync();
     initializeManualProductSearch();
     updateManualSummary();
     window.SalesLedger = {ready,render,reset,createManualSettlement,updateManualSummary,
@@ -243,7 +444,9 @@
         beginLoad:()=>({epoch,user:userId(),load:++loadSerial}),
         currentLoad:token=>current(token)&&token.load===loadSerial,
         fail:(error,token)=>{if(current(token)&&token.load===loadSerial){
-            el('sales-tbody').innerHTML=`<tr><td colspan="${resource?.fields.length || 24}" class="msg msg-err" role="alert">${h(error.message || t('failed'))}</td></tr>`;
+            lastView=null;
+            sourceBackendStatus();
+            el('sales-tbody').innerHTML=`<tr><td colspan="${resource?displayColumns().length:30}" class="msg msg-err" role="alert">${h(error.message || t('failed'))}</td></tr>`;
             el('sales-total-summary-body').replaceChildren();
         }},
     };

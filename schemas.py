@@ -367,6 +367,7 @@ class SaleResponse(BaseModel):
     product_id: int | None = None
     user_id: int | None = None
     order_no: str
+    display_order_no: str | None = None
     quantity: int
     selling_price: Decimal
     total_cost: Decimal
@@ -390,6 +391,8 @@ class SaleResponse(BaseModel):
     platform_fee: Decimal
     profit: Decimal
     currency: str = "CNY"
+    source_row_net_product_sales: Decimal | None = None
+    source_row_settlement_total: Decimal | None = None
     exchange_rate_to_cny: Decimal | None = Decimal("1")
     exchange_rate_date: date | None = None
     exchange_rate_source: str | None = None
@@ -413,6 +416,7 @@ class SaleResponse(BaseModel):
 
 class SalesOrderCostSummary(BaseModel):
     order_no: str
+    display_order_no: str | None = None
     store_id: int | None = None
     store_name: str | None = None
     line_count: int

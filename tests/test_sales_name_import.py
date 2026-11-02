@@ -5,14 +5,16 @@ import unittest
 from datetime import date, datetime
 from decimal import Decimal as D
 from types import SimpleNamespace as NS
+from unittest.mock import AsyncMock, patch
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import select
 
 from models import (Product, InventoryBatch, Sale, SaleCostDetail, SettlementEntry,
                     SettlementEntryAllocation, SalesImportBatch, ProductLine, StoreProduct)
 from routers.reports import _product_line_profit_data
-from routers.sales import _product_expression_parts, _resolve_product_components
+from routers.sales import _product_expression_parts, _resolve_product_components, _order_settlement_only_reason
+from services.financial_facts import SETTLEMENT_ONLY_KEY
 from tests import test_sales_import_store as fixtures
 
 
@@ -29,6 +31,18 @@ def source_file(rows,extra_headers=()):
 
 
 class NameParserTests(unittest.TestCase):
+    def test_financial_only_classifier_preserves_zero_price_goods_and_missing_evidence(self):
+        fee={'商品原价小计':0,'商家资助的折扣':0,'商品退款':0,'净运费':20}
+        self.assertEqual(_order_settlement_only_reason(fee,D(0),D(20)),'shipping_adjustment')
+        self.assertEqual(_order_settlement_only_reason({'商品退款':-100},D(0),D(0)),'goods_refund')
+        self.assertEqual(_order_settlement_only_reason({**fee,'净运费':0},D(0),D(-5)),'amount_adjustment')
+        for row,net,total in (({},D(0),D(-20)),({**fee,'商品原价小计':100,'商家资助的折扣':-100},D(0),D(20)),
+                              (fee,D(100),D(20)),({**fee,'商品原价小计':''},D(0),D(20)),
+                              ({**fee,'净运费':0},D(0),D(0))):
+            self.assertIsNone(_order_settlement_only_reason(row,net,total))
+        for field in ('商品退款','商品原价小计','净运费'):
+            with self.assertRaises(ValueError):_order_settlement_only_reason({**fee,field:'NaN'},D(0),D(20))
+
     def test_counts_combinations_and_repeated_components(self):
         self.assertEqual(_product_expression_parts('商品*4+黑色×2＋白色'),[('商品',4),('黑色',2),('白色',1)])
         parts,error=_resolve_product_components({'产品名':'黑色*2+黑色*3'},[NS(id=1,name='黑色')],[],None,strict_names=True)
@@ -51,9 +65,9 @@ class NameImportTests(unittest.IsolatedAsyncioTestCase):
     tearDown=fixtures.ImportStoreTests.tearDown
     request=fixtures.ImportStoreTests.request
 
-    async def upload(self,rows):
+    async def upload(self,rows,*,extra_headers=()):
         return await self.request('POST','/sales/import',data={'store_id':'7'},
-            files={'file':('source.csv',source_file(rows),'text/csv')})
+            files={'file':('source.csv',source_file(rows,extra_headers),'text/csv')})
 
     def add_bundle_products(self):
         self.session.add_all([Product(id=2,sku='BLACK',name='吸盘逗猫棒（黑色）'),
@@ -64,7 +78,7 @@ class NameImportTests(unittest.IsolatedAsyncioTestCase):
         self.session.commit()
 
     async def test_unmapped_source_sku_uses_name_multiplier_and_is_idempotent(self):
-        response=await self.upload([{'name':'商品*4'}]);self.assertEqual(response.status_code,200,response.text)
+        response=await self.upload([{'name':'商品*4','original':'Juguete para Perro'}]);self.assertEqual(response.status_code,200,response.text)
         self.assertEqual((response.json()['sales_created'],response.json()['pending_confirmation']),(1,0))
         sale=self.session.scalar(select(Sale));self.assertEqual(sale.quantity,8)
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,2)
@@ -73,6 +87,87 @@ class NameImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['source_quantity'],2);self.assertEqual(D(row['total_cost']),80)
         response=await self.upload([{'name':'商品*4'}]);self.assertEqual(response.json()['skipped_duplicates'],1)
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,2)
+
+    async def test_xlsx_be_product_name_wins_over_spanish_listing_title(self):
+        self.add_bundle_products()
+        expression='吸盘逗猫棒（黑色）*2+吸盘逗猫棒（白色）'
+        workbook=Workbook();sheet=workbook.active;sheet.title='订单详情'
+        headers=['结算日期','结算单 ID','付款 ID','状态','货币','交易类型','订单ID/调整单ID',
+                 'SKU ID','数量','商品名称','SKU 名称','订单创建日期','结算总金额','净商品销售额']
+        headers += [None]*(56-len(headers))+['产品名']
+        row={'结算日期':'2026-09-02','结算单 ID':'BE-BILL','付款 ID':'PAY','状态':'已结算','货币':'CNY',
+             '交易类型':'订单','订单ID/调整单ID':'BE-ORDER','SKU ID':'00123456789012345678','数量':2,
+             '商品名称':'Juguete para Perro con Material','SKU 名称':'Kit Negro+Blanco',
+             '订单创建日期':'2026-09-01','结算总金额':180,'净商品销售额':200,'产品名':expression}
+        sheet.append(headers);sheet.append([row.get(header) for header in headers])
+        self.assertEqual(sheet['BE1'].value,'产品名')
+        output=io.BytesIO();workbook.save(output);workbook.close()
+        response=await self.request('POST','/sales/import',data={'store_id':'7'},
+            files={'file':('source.xlsx',output.getvalue(),'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')})
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual((response.json()['sales_created'],response.json()['pending_confirmation']),(2,0))
+        rows=(await self.request('GET','/sales?keyword=00123456789012345678')).json()
+        self.assertEqual({r['display_name'] for r in rows},{expression})
+        self.assertEqual({r['display_sku'] for r in rows},{'00123456789012345678'})
+        self.assertEqual({r['product_id']:r['quantity'] for r in rows},{2:4,3:2})
+        self.assertEqual(sum(D(r['total_cost']) for r in rows),140)
+        self.assertEqual([self.session.get(InventoryBatch,key).remaining_quantity for key in (4,5)],[6,8])
+        exported=await self.request('GET','/sales/export?keyword=00123456789012345678')
+        book=load_workbook(io.BytesIO(exported.content),data_only=True)
+        self.assertEqual({r[3] for r in list(book['销售记录'].values)[1:-1]},{expression})
+
+    async def test_old_allocation_uses_local_name_without_rewriting_source_or_cost(self):
+        await self.upload([{'name':'商品*4'}])
+        entry=self.session.scalar(select(SettlementEntry));entry.product_name='Juguete para Perro'
+        raw=dict(entry.raw_data);raw.pop('产品名');raw['商品名称']=entry.product_name;entry.raw_data=raw
+        self.session.commit()
+        before=(await self.request('GET','/sales/monthly-summary?keyword=SKU')).json()
+        row=(await self.request('GET','/sales?keyword=SKU')).json()[0]
+        self.assertEqual((row['display_name'],row['source_product_name']),('商品','Juguete para Perro'))
+        self.assertEqual((row['display_sku'],row['quantity'],D(row['total_cost'])),('00123456789012345678',8,D(80)))
+        detail=(await self.request('GET',f"/sales/{row['id']}")).json()
+        self.assertEqual(detail['display_name'],'商品')
+        exported=await self.request('GET','/sales/export?keyword=SKU')
+        self.assertEqual(list(load_workbook(io.BytesIO(exported.content),data_only=True)['销售记录'].values)[1][3],'商品')
+        self.assertEqual((await self.request('GET','/sales/monthly-summary?keyword=SKU')).json(),before)
+        self.assertEqual(entry.product_name,'Juguete para Perro');self.assertEqual(entry.raw_data,raw)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,2)
+        self.assertEqual(len(self.session.scalars(select(Sale)).all()),1)
+        self.assertEqual(len(self.session.scalars(select(SettlementEntryAllocation)).all()),1)
+        self.actor=NS(id=2,role='viewer',store_id=8)
+        self.assertEqual((await self.request('GET','/sales?keyword=SKU')).json(),[])
+
+    async def test_old_source_with_raw_product_name_keeps_expression_and_filter(self):
+        await self.upload([{'name':'商品*4'}])
+        entry=self.session.scalar(select(SettlementEntry));entry.product_name='Juguete para Perro'
+        self.session.commit()
+        rows=(await self.request('GET','/sales?keyword=商品*4')).json()
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['display_name'],'商品*4')
+        summary=(await self.request('GET','/sales/monthly-summary?keyword=商品*4')).json()
+        self.assertEqual(summary[0]['sold_quantity'],8)
+        exported=await self.request('GET','/sales/export?keyword=商品*4')
+        self.assertEqual(list(load_workbook(io.BytesIO(exported.content),data_only=True)['销售记录'].values)[1][3],'商品*4')
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,2)
+        self.assertEqual(entry.product_name,'Juguete para Perro')
+
+    async def test_old_financial_events_prefer_raw_product_name_or_linked_local_name(self):
+        await self.upload([{'type':'退款','name':'商品','quantity':-1,'net':-20,'total':-18},
+                           {'type':'物流赔付','name':'中文赔付说明','sku':'/','quantity':0,'net':0,'total':15}])
+        entries=self.session.scalars(select(SettlementEntry).order_by(SettlementEntry.id)).all()
+        refund,compensation=entries
+        raw=dict(refund.raw_data);raw.pop('产品名');refund.raw_data=raw
+        refund.product_name='Juguete para Perro';compensation.product_name='/'
+        self.session.commit()
+        row=(await self.request('GET','/sales?keyword=SKU')).json()[0]
+        self.assertEqual((row['display_name'],row['source_product_name'],row['quantity']),('商品','Juguete para Perro',0))
+        rows=(await self.request('GET','/sales?keyword=中文赔付说明')).json()
+        self.assertEqual(len(rows),1);self.assertEqual(rows[0]['display_name'],'中文赔付说明')
+        summary=(await self.request('GET','/sales/monthly-summary?keyword=中文赔付说明')).json()[0]
+        self.assertEqual(D(summary['sales_revenue_cny']),15)
+        exported=await self.request('GET','/sales/export?keyword=中文赔付说明')
+        self.assertEqual(list(load_workbook(io.BytesIO(exported.content),data_only=True)['销售记录'].values)[1][3],'中文赔付说明')
+        self.assertEqual(self.session.scalars(select(Sale)).all(),[])
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,10)
 
     async def test_bundle_component_filters_do_not_duplicate_source_income(self):
         self.add_bundle_products()
@@ -197,11 +292,127 @@ class NameImportTests(unittest.IsolatedAsyncioTestCase):
             net_product_sales=100,settlement_total=90,raw_data={}))
         self.session.commit();self.db.info.clear()
         row=(await self.request('GET',f'/sales/{sale_id}')).json()
-        self.assertEqual(row['display_sku'],'00000012345678901234');self.assertEqual(row['display_name'],'旧来源产品名')
+        self.assertEqual(row['display_sku'],'00000012345678901234');self.assertEqual(row['display_name'],'商品')
+        self.assertEqual(row['source_product_name'],'旧来源产品名')
         self.assertEqual(row['source_quantity'],1);self.assertEqual(row['quantity'],2)
         self.assertEqual(self.session.scalars(select(SettlementEntryAllocation)).all(),[])
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,8)
         self.assertEqual(self.session.get(Sale,sale_id).total_cost,20)
+
+
+class SettlementOnlyImportTests(unittest.IsolatedAsyncioTestCase):
+    setUp=fixtures.ImportStoreTests.setUp
+    tearDown=fixtures.ImportStoreTests.tearDown
+    request=fixtures.ImportStoreTests.request
+    add_bundle_products=NameImportTests.add_bundle_products
+    financial_headers=('商品原价小计','商家资助的折扣','商品退款','净运费','调整金额')
+
+    async def upload(self,rows,*,extra_headers=()):
+        return await NameImportTests.upload(self,rows,extra_headers=(*self.financial_headers,*extra_headers))
+
+    def fee(self,**values):
+        return {'order':'SAME','name':'商品','quantity':1,'net':0,'total':20,
+                '商品原价小计':0,'商家资助的折扣':0,'商品退款':0,'净运费':20,'调整金额':0,**values}
+
+    async def test_shipping_adjustments_do_not_duplicate_sale_cost_or_inventory(self):
+        rows=[self.fee(),self.fee(net=100,total=80,商品原价小计=100,净运费=0),
+              self.fee(total=-20,净运费=-20)]
+        response=await self.upload(rows);self.assertEqual(response.status_code,200,response.text)
+        result=response.json();self.assertEqual((result['sales_created'],result['settlement_rows'],result['pending_confirmation']),(1,3,0))
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,9)
+        self.assertEqual(len(self.session.scalars(select(SaleCostDetail)).all()),1)
+        entries=self.session.scalars(select(SettlementEntry).order_by(SettlementEntry.id)).all()
+        self.assertEqual([entry.raw_data.get(SETTLEMENT_ONLY_KEY) for entry in entries],['shipping_adjustment',None,'shipping_adjustment'])
+        self.assertEqual([entry.sale_id is None for entry in entries],[True,False,True])
+        displayed=(await self.request('GET','/sales?product_id=1&month=2026-09')).json()
+        self.assertEqual(len(displayed),3);self.assertEqual(sum(row['quantity'] for row in displayed),1)
+        self.assertEqual(sum(D(row['total_cost']) for row in displayed),10)
+        adjustments=[row for row in displayed if row['record_type']=='settlement_adjustment']
+        self.assertEqual(len(adjustments),2)
+        self.assertEqual({row['source_quantity'] for row in adjustments},{1})
+        self.assertTrue(all(row['quantity']==0 and D(row['total_cost'])==0 for row in adjustments))
+        summary=(await self.request('GET','/sales/monthly-summary?month=2026-09')).json()[0]
+        self.assertEqual((summary['sales_count'],summary['sold_quantity'],summary['settlement_event_count']),(1,1,2))
+        self.assertEqual((D(summary['sales_revenue_cny']),D(summary['platform_fee_cny']),D(summary['gross_profit_cny'])),(100,20,70))
+        page=(await self.request('GET','/sales?month=2026-09&page=2&page_size=1')).json()
+        self.assertEqual(page['total'],3);self.assertEqual(len(page['items']),1)
+        response=await self.request('GET','/sales/export?month=2026-09&product_id=1')
+        values=list(load_workbook(io.BytesIO(response.content),data_only=True)['销售记录'].values)
+        self.assertEqual(len(values),5);self.assertEqual(values[-1][4],1)
+        self.assertEqual((values[-1][7],values[-1][8],values[-1][9],values[-1][10]),(100,10,20,70))
+        retry=await self.upload(rows);self.assertEqual(retry.json()['skipped_duplicates'],3)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,9)
+        rollback=await self.request('POST',f"/sales/imports/{result['import_batch_id']}/rollback")
+        self.assertEqual(rollback.status_code,200,rollback.text)
+        self.assertEqual((rollback.json()['restored_quantity'],rollback.json()['sales_removed']),(1,1))
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,10)
+        self.assertEqual(self.session.scalars(select(SettlementEntry)).all(),[])
+
+    async def test_full_refund_and_zero_price_gift_have_distinct_stock_effects(self):
+        rows=[self.fee(order='REFUND',商品原价小计=100,商品退款=-100,净运费=0,total=0),
+              self.fee(order='GIFT',quantity=2,商品原价小计=100,商家资助的折扣=-100,净运费=0,total=-5),
+              {'order':'OLD-ZERO','name':'商品','quantity':1,'net':0,'total':0}]
+        response=await self.upload(rows);self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['sales_created'],2)
+        entries=self.session.scalars(select(SettlementEntry).order_by(SettlementEntry.id)).all()
+        self.assertEqual(entries[0].raw_data[SETTLEMENT_ONLY_KEY],'goods_refund')
+        self.assertIsNone(entries[0].sale_id)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,7)
+        displayed=(await self.request('GET','/sales')).json()
+        self.assertEqual(len(displayed),3);self.assertEqual(sum(row['quantity'] for row in displayed),3)
+        self.assertEqual(sum(D(row['total_cost']) for row in displayed),30)
+
+    async def test_adjustment_after_existing_order_stays_in_its_settlement_month(self):
+        sale=await self.upload([self.fee(net=100,total=90,商品原价小计=100,净运费=0)])
+        self.assertEqual(sale.status_code,200,sale.text)
+        adjustment=await self.upload([self.fee(settled_on='2026-10-07')])
+        self.assertEqual(adjustment.status_code,200,adjustment.text)
+        self.assertEqual(adjustment.json()['sales_created'],0)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,9)
+        september=(await self.request('GET','/sales/monthly-summary?month=2026-09')).json()[0]
+        october=(await self.request('GET','/sales/monthly-summary?month=2026-10')).json()[0]
+        self.assertEqual((september['sold_quantity'],D(september['gross_profit_cny'])),(1,80))
+        self.assertEqual((october['sold_quantity'],october['settlement_event_count'],D(october['gross_profit_cny'])),(0,1,20))
+        response=await self.request('GET','/sales/export?month=2026-10')
+        rows=list(load_workbook(io.BytesIO(response.content),data_only=True)['销售记录'].values)
+        self.assertEqual((rows[1][4],rows[1][8],rows[1][10]),(0,0,20))
+        self.actor=NS(id=2,role='viewer',store_id=8)
+        self.assertEqual((await self.request('GET','/sales?month=2026-10')).json(),[])
+        self.actor=NS(id=1,role='admin',store_id=None)
+        rollback=await self.request('POST',f"/sales/imports/{adjustment.json()['import_batch_id']}/rollback")
+        self.assertEqual(rollback.json()['restored_quantity'],0)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,9)
+
+    async def test_bundle_fee_is_unallocated_financial_event_without_fifo(self):
+        self.add_bundle_products()
+        response=await self.upload([self.fee(name='吸盘逗猫棒（黑色）*2+吸盘逗猫棒（白色）',quantity=2)])
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual((response.json()['sales_created'],response.json()['pending_confirmation']),(0,0))
+        entry=self.session.scalar(select(SettlementEntry));self.assertIsNone(entry.product_id)
+        self.assertIsNone(entry.sale_id)
+        self.assertEqual({row.sale_id for row in self.session.scalars(select(SettlementEntryAllocation))},{None})
+        rows=(await self.request('GET','/sales')).json();self.assertEqual(len(rows),1)
+        self.assertEqual((rows[0]['quantity'],D(rows[0]['profit_cny'])),(0,20))
+        self.assertTrue(all(batch.remaining_quantity==10 for batch in self.session.scalars(select(InventoryBatch))))
+
+    async def test_real_duplicate_goods_orders_fail_before_rates_or_database_writes(self):
+        with patch('routers.sales.get_cny_rates',new_callable=AsyncMock) as rates:
+            response=await self.upload([self.fee(net=100,total=90),self.fee(net=200,total=180)])
+        self.assertEqual(response.status_code,400,response.text);rates.assert_not_awaited()
+        result=response.json();self.assertFalse(result['success'])
+        self.assertEqual([row['row'] for row in result['errors']],[2,3])
+        self.assertTrue(all('文件内同一订单/SKU' in row['message'] for row in result['errors']))
+        for model in (Sale,SaleCostDetail,SettlementEntry,SalesImportBatch):
+            self.assertEqual(self.session.scalars(select(model)).all(),[])
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,10)
+
+    async def test_source_file_cannot_forge_internal_stock_effect_marker(self):
+        response=await self.upload([self.fee(net=100,total=90,**{SETTLEMENT_ONLY_KEY:'shipping_adjustment'})],
+                                  extra_headers=(SETTLEMENT_ONLY_KEY,))
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()['sales_created'],1)
+        self.assertNotIn(SETTLEMENT_ONLY_KEY,self.session.scalar(select(SettlementEntry)).raw_data)
+        self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,9)
 
 
 class ManualSettlementTests(unittest.IsolatedAsyncioTestCase):
