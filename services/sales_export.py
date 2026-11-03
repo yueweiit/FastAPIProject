@@ -29,6 +29,8 @@ def _append(sheet, values, row_number):
 
 
 def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_summaries=()):
+    resource = sales_field_help()
+    impairment_help = next(field for field in resource["fields"] if field["key"] == "impairment_cny")
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "销售记录"
@@ -95,7 +97,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
                  ("金额", "收入、费用、成本及毛利为人民币，沿用保存汇率及当前成本追溯结果。来源净商品销售额、来源结算总金额为原币，币种见原币列，汇率表示1原币兑人民币；不修改库存、销售或原始成本。"),
                  ("原币核对", "来源金额保留原始结算行金额，组合各组件重复展示整行值，不参与合计；人民币收入和费用仍按已保存组件份额换算。没有原始结算行时留空。"),
                  ("成本拆分", "采购、头程、尾程、其他入库成本按实际FIFO批次汇总；展示金额按分舍入，尾差按科目金额由大到小分配，合计等于本行订单总成本。组合商品同一订单号各行相加为整单成本。"),
-                 ("跌价", "出库商品跌价为实际持有期间已提准备的参考金额，入库当天0天、销售当天先计提再转销。单列、不加到订单成本、不重复扣减毛利；店铺损益仍按批次归属分摊，不等于本销售店铺承担额。"),
+                 ("跌价", impairment_help["formula"] + "；" + impairment_help["note"]),
                  ("待核对", "未知金额和相应合计留空，不以0代替；未核对成本沿用台账展示，作废批次相关毛利待核对。")), 1):
         _append(notes, pair, number)
     notes.column_dimensions["A"].width = 22
@@ -106,7 +108,6 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
         row[1].alignment = Alignment(wrap_text=True)
     definitions = workbook.create_sheet("字段口径说明")
     _append(definitions, ("字段编码", "字段名称", "分组", "计算公式", "数据来源", "口径说明"), 1)
-    resource = sales_field_help()
     for number, field in enumerate([f for f in [*resource["fields"], *resource["extra_fields"]] if f["kind"] != "action"], 2):
         _append(definitions, [field[key] for key in ("key", "label", "group", "formula", "source", "note")], number)
     _style_header(definitions)

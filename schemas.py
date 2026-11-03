@@ -445,6 +445,12 @@ class SaleBatchImpairmentResponse(BaseModel):
     unit_cost: Decimal
     impairment_units: Decimal | None = None
     impairment_cny: Decimal | None = None
+    arrival_date: date | None = None
+    order_date: date | None = None
+    age_days: int | None = None
+    product_type: str | None = None
+    daily_rate: Decimal | None = None
+    total_cost_cny: Decimal | None = None
 
 
 class SaleCostExplanationResponse(BaseModel):

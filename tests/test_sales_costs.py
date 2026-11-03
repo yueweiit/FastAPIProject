@@ -1,17 +1,19 @@
 """销售成本拆分/跌价的隔离SQLite、真实导入与Excel勾稽回归。"""
+import csv
+import io
 import os
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal as D
 from io import BytesIO
 from types import SimpleNamespace as NS
 
 from openpyxl import load_workbook
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from models import (BatchImpairmentStore, InventoryBatch, InventoryCostAdjustment,
                     InventoryCostAdjustmentLine, PlatformSkuComponent, PlatformSkuMapping,
-                    Product, ProductImpairmentRule, Sale, SaleCostDetail, SettlementEntry)
+                    Product, ProductImpairmentRule, Sale, SaleCostDetail, SettlementEntry, SettlementEntryAllocation)
 from services.cost_layers import fifo_cost_components, fifo_cost_groups, rounded_cost_components
 from tests import test_sales_export as exports, test_sales_import_store as imports
 
@@ -58,7 +60,11 @@ class CostAllocationTests(unittest.TestCase):
 
 class SalesCostTests(unittest.IsolatedAsyncioTestCase):
     entry = exports.SalesExportTests.entry
-    setUp = exports.SalesExportTests.setUp
+    def setUp(self):
+        exports.SalesExportTests.setUp(self)
+        # 本组使用真实订单创建日，避免财务通用夹具的日期与出库日期互相矛盾。
+        self.session.get(SettlementEntry,1).order_created_at=self.session.get(Sale,1).sold_at
+        self.session.commit()
     asyncTearDown = exports.SalesExportTests.asyncTearDown
     record_query = exports.SalesExportTests.record_query
     exported = exports.SalesExportTests.exported
@@ -103,7 +109,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_four_rules_arrival_day_and_rule_history(self):
         for kind,safe,expected in (('new',0,'1.8'),('stable',0,'3.6'),
-                                    ('safe_stock',8,'1.8'),('no_impairment',0,'0')):
+                                    ('safe_stock',8,'3.6'),('no_impairment',0,'0')):
             self.db.info.clear()
             self.costs(kind=kind,safe=safe)
             row=next(r for r in await self.listed() if r['id']==1)
@@ -115,9 +121,54 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
                                                    effective_date=date(2026,9,5))])
         self.session.commit(); self.db.info.clear()
         row=next(r for r in await self.listed() if r['id']==1)
-        # 原类型从到货日生效，9/5起切换新品。
-        self.assertEqual(D(row['impairment_cny']),D('2.4'))
+        # 订单日已切换新品：完整库龄9天统一按订单日0.5%，不分段累计。
+        self.assertEqual(D(row['impairment_cny']),D('1.8'))
         self.session.get(Sale,1).sold_at=datetime(2026,9,1)
+        self.session.get(SettlementEntry,1).order_created_at=datetime(2026,9,1)
+        self.session.commit();self.db.info.clear()
+        row=next(r for r in await self.listed() if r['id']==1)
+        self.assertEqual(D(row['impairment_cny']),0)
+
+    async def test_safe_stock_does_not_reduce_sales_formula_and_report_replay_stays_separate(self):
+        self.costs(kind='stable',safe=10000)
+        row=next(r for r in await self.listed() if r['id']==1)
+        self.assertEqual(D(row['impairment_cny']),D('3.6'))
+        from services.inventory_provision_data import load_inventory_provision_data
+        _batches,_details,replay=await load_inventory_provision_data(self.db,date(2026,9,10),product_ids={10})
+        self.assertEqual(sum(item.units for item in replay.writeoffs if item.sale.sale_id==1),0)
+        self.assertEqual(D(row['profit_cny']),50)
+
+    async def test_formula_has_no_ninety_percent_cap(self):
+        sold_at=self.session.get(Sale,1).sold_at
+        for kind,days,expected in (('stable',120,'48'),('new',240,'48'),('no_impairment',300,'0')):
+            self.costs(kind=kind,safe=10000)
+            self.session.get(InventoryBatch,1).arrived_at=sold_at-timedelta(days=days)
+            self.session.commit();self.db.info.clear()
+            row=next(r for r in await self.listed() if r['id']==1)
+            self.assertEqual(D(row['impairment_cny']),D(expected),(kind,row))
+            self.assertEqual(D(row['total_cost']),40)
+
+    async def test_order_date_type_ignores_later_type_changes_and_effective_day_is_inclusive(self):
+        self.costs(kind='no_impairment')
+        self.session.add_all([
+            ProductImpairmentRule(product_id=10,product_type='stable',safe_stock_quantity=1000,effective_date=date(2026,9,1)),
+            ProductImpairmentRule(product_id=10,product_type='new',safe_stock_quantity=1000,effective_date=date(2026,9,5)),
+            ProductImpairmentRule(product_id=10,product_type='no_impairment',safe_stock_quantity=0,effective_date=date(2026,10,1))])
+        for day,expected in ((3,'0.8'),(5,'0.8'),(10,'1.8')):
+            self.session.get(Sale,1).sold_at=datetime(2026,9,day,23,59)
+            self.session.get(SettlementEntry,1).order_created_at=datetime(2026,9,day,23,59)
+            self.session.commit();self.db.info.clear()
+            row=next(r for r in await self.listed() if r['id']==1)
+            self.assertEqual(D(row['impairment_cny']),D(expected))
+
+    async def test_formula_uses_saved_outbound_cost_and_zero_cost_not_latest_batch_unit(self):
+        self.costs()
+        self.session.get(InventoryBatch,1).unit_cost=D(999)
+        self.session.commit();self.db.info.clear()
+        row=next(r for r in await self.listed() if r['id']==1)
+        self.assertEqual(D(row['impairment_cny']),D('1.8'))
+        self.session.get(Sale,1).total_cost=0
+        self.session.scalar(select(SaleCostDetail)).unit_cost=0
         self.session.commit();self.db.info.clear()
         row=next(r for r in await self.listed() if r['id']==1)
         self.assertEqual(D(row['impairment_cny']),0)
@@ -218,9 +269,109 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.get(Sale,1).total_cost,40)
         self.assertEqual(self.session.scalar(select(SaleCostDetail)).unit_cost,10)
 
+    async def test_fractional_adjustment_uses_effective_fifo_cost_without_false_unknown(self):
+        self.costs()
+        os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED']='1'
+        self.session.add(InventoryCostAdjustment(id=1,request_key='fractional',source_ref='fractional',category='head_shipping',
+            allocation_basis='quantity',amount=20,amount_cny=20,currency='CNY',exchange_rate=1,
+            document_date=date(2026,9,1),rate_date=date(2026,9,1),is_final=True,created_by=1))
+        self.session.flush()
+        self.session.add(InventoryCostAdjustmentLine(adjustment_id=1,batch_id=1,quantity=7,allocation_weight=7,amount_cny=20))
+        self.session.commit();self.db.info.clear()
+        row=next(r for r in await self.listed() if r['id']==1)
+        self.assertIsNotNone(row['impairment_cny'])
+        self.assertAlmostEqual(D(row['impairment_cny']),(D(40)+D(80)/7)*D('0.045'),places=20)
+
+    async def test_micro_adjustment_rounding_boundary_is_known_for_both_signs(self):
+        self.costs()
+        batch=self.session.get(InventoryBatch,1)
+        batch.quantity,batch.remaining_quantity=14,7
+        batch.purchase_price=batch.unit_cost=D('10.0001')
+        batch.shipping_cost=batch.last_mile_cost=batch.other_cost=0
+        sale=self.session.get(Sale,1);sale.quantity=7;sale.total_cost=D('70.0007')
+        detail=self.session.scalar(select(SaleCostDetail));detail.quantity=7;detail.unit_cost=D('10.0001')
+        header=InventoryCostAdjustment(id=1,request_key='boundary',source_ref='boundary',category='head_shipping',
+            allocation_basis='quantity',amount=D('.0001'),amount_cny=D('.0001'),currency='CNY',exchange_rate=1,
+            document_date=date(2026,9,1),rate_date=date(2026,9,1),is_final=True,created_by=1)
+        self.session.add(header);self.session.flush()
+        line=InventoryCostAdjustmentLine(adjustment_id=1,batch_id=1,quantity=14,allocation_weight=14,amount_cny=D('.0001'))
+        self.session.add(line)
+        from unittest.mock import patch
+        with patch.dict(os.environ,{'FIFO_FINANCIAL_CONTROLS_ENABLED':'1'}):
+            for amount in (D('.0001'),D('-.0001')):
+                # 构造两组独立的测试输入，非通过接口修改已入账凭证。
+                header.amount=header.amount_cny=line.amount_cny=amount
+                self.session.commit();self.db.info.clear()
+                data=(await self.client.get('/sales/1/cost-breakdown')).json()
+                self.assertIsNotNone(data['sale']['impairment_cny'])
+                expected=(D('70.0007')+amount/2)*D('.045')
+                self.assertAlmostEqual(D(data['sale']['impairment_cny']),expected,places=24)
+                self.assertEqual(self.session.get(Sale,1).total_cost,D('70.0007'))
+
+    async def test_real_cost_discrepancy_is_not_masked_by_tolerance(self):
+        from schemas import SaleResponse
+        from services.sales_costs import attach_sale_impairment
+        self.costs()
+        original=next(r for r in await self.listed() if r['id']==1)
+        for difference in (D('.0001'),D('-.0001'),D('.00005'),D('-.00005')):
+            row=SaleResponse.model_validate(original)
+            row.total_cost+=difference
+            details=await attach_sale_impairment(self.db,[row],include_details=True)
+            self.assertIsNone(row.impairment_cny,difference)
+            self.assertIsNone(details[1][0]['impairment_cny'])
+
+    async def test_source_order_date_drives_age_and_type_without_changing_sale_month(self):
+        self.costs(kind='new')
+        self.session.get(SettlementEntry,1).order_created_at=datetime(2026,9,5)
+        self.session.add_all([
+            ProductImpairmentRule(product_id=10,product_type='stable',safe_stock_quantity=0,effective_date=date(2026,9,1)),
+            ProductImpairmentRule(product_id=10,product_type='new',safe_stock_quantity=0,effective_date=date(2026,9,8))])
+        self.session.commit();self.db.info.clear()
+        data=(await self.client.get('/sales/1/cost-breakdown')).json()
+        line=data['impairment_batches'][0]
+        self.assertEqual((line['order_date'],line['age_days'],line['product_type']),('2026-09-05',4,'stable'))
+        self.assertEqual(D(data['sale']['impairment_cny']),D('1.6'))
+        self.assertEqual(self.session.get(Sale,1).sold_at,datetime(2026,9,10))
+
+    async def test_direct_source_missing_date_and_conflicting_order_sources_are_unknown(self):
+        self.costs()
+        entry=self.session.get(SettlementEntry,1)
+        self.session.execute(delete(SettlementEntryAllocation).where(SettlementEntryAllocation.sale_id==1))
+        entry.sale_id=1;entry.order_created_at=None;entry.transaction_type=None
+        self.session.commit();self.db.info.clear()
+        row=(await self.client.get('/sales/1')).json()
+        self.assertIsNone(row['impairment_cny'])
+        self.assertIn('订单创建日期缺失',row['impairment_review_reason'])
+        entry.order_created_at=datetime(2026,9,10)
+        other=self.entry(99,net=1,total=1,quantity=1)
+        other.order_created_at=datetime(2026,9,11)
+        self.session.flush()
+        self.session.add(SettlementEntryAllocation(settlement_entry_id=99,product_id=10,sale_id=1,component_name='P10',quantity=1))
+        self.session.commit();self.db.info.clear()
+        row=(await self.client.get('/sales/1')).json()
+        self.assertIsNone(row['impairment_cny'])
+        self.assertIn('创建日期不一致',row['impairment_review_reason'])
+
+    async def test_linked_refund_and_duplicate_direct_link_do_not_replace_order_date(self):
+        self.costs()
+        self.session.get(SettlementEntry,1).sale_id=1
+        refund=self.entry(99,net=-1,total=-1,quantity=-1,kind='退款')
+        refund.order_created_at=None;refund.sale_id=1
+        settlement_only=self.entry(100,net=0,total=-1,quantity=1)
+        settlement_only.order_created_at=None;settlement_only.sale_id=1
+        settlement_only.raw_data={'_settlement_only_reason':'goods_refund'}
+        self.session.flush()
+        self.session.add(SettlementEntryAllocation(settlement_entry_id=99,product_id=10,sale_id=1,component_name='P10',quantity=-1))
+        self.session.commit();self.db.info.clear()
+        data=(await self.client.get('/sales/1/cost-breakdown')).json()
+        self.assertEqual(data['impairment_batches'][0]['order_date'],'2026-09-10')
+        self.assertEqual(D(data['sale']['impairment_cny']),D('1.8'))
+
 
 class ImportedSalesCostTests(unittest.IsolatedAsyncioTestCase):
-    setUp=imports.ImportStoreTests.setUp
+    def setUp(self):
+        imports.ImportStoreTests.setUp(self)
+        self.actor.username='admin'
     tearDown=imports.ImportStoreTests.tearDown
     request=imports.ImportStoreTests.request
     upload=imports.ImportStoreTests.upload
@@ -236,6 +387,37 @@ class ImportedSalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([D(row[f]) for f in FIELDS],[D(8),D(4),D(2),D(6)])
         self.assertEqual(D(row['order_total_cost_cny']),20)
         self.assertEqual(D(row['impairment_cny']),0)
+
+    async def test_missing_source_order_date_is_unknown_in_list_details_and_export(self):
+        values=list(csv.reader(io.StringIO(imports.order_file().decode('utf-8-sig'))))
+        column=values[0].index('订单创建日期')
+        for value in values[1:]:value[column]=''
+        output=io.StringIO();csv.writer(output).writerows(values)
+        result=await self.request('POST','/sales/import',data={'store_id':'7'},
+            files={'file':('missing-order-date.csv',output.getvalue().encode('utf-8-sig'),'text/csv')})
+        self.assertEqual(result.status_code,200,result.text)
+        sale=self.session.scalar(select(Sale))
+        self.assertEqual(sale.sold_at,datetime(2026,9,2))
+        listed=(await self.request('GET','/sales?month=2026-09')).json()[0]
+        self.assertIsNone(listed['impairment_cny'])
+        self.assertIn('订单创建日期缺失',listed['impairment_review_reason'])
+        self.assertEqual(D(listed['total_cost']),10)
+        detail=(await self.request('GET',f'/sales/{sale.id}/cost-breakdown')).json()
+        self.assertIsNone(detail['order_summary']['impairment_cny'])
+        for key in ('order_date','age_days','daily_rate','impairment_cny'):
+            self.assertIsNone(detail['impairment_batches'][0][key],key)
+        book=load_workbook(BytesIO((await self.request('GET','/sales/export?month=2026-09')).content),data_only=True)
+        self.assertIsNone(book['销售记录']['W2'].value)
+        self.assertEqual(self.session.get(Sale,sale.id).sold_at,datetime(2026,9,2))
+
+    async def test_legacy_csv_explicit_date_remains_usable(self):
+        source='SKU,2026-09-03,1\n'.encode('utf-8-sig')
+        response=await self.request('POST','/sales/import',data={'store_id':'7'},files={'file':('legacy.csv',source,'text/csv')})
+        self.assertEqual(response.status_code,200,response.text)
+        sale=self.session.scalar(select(Sale))
+        detail=(await self.request('GET',f'/sales/{sale.id}/cost-breakdown')).json()
+        self.assertEqual(detail['impairment_batches'][0]['order_date'],'2026-09-03')
+        self.assertEqual(D(detail['sale']['impairment_cny']),D('.2'))
 
     async def test_real_import_generates_multi_batch_combination_costs_and_export(self):
         first=self.session.get(InventoryBatch,1)

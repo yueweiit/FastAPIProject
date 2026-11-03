@@ -8,7 +8,7 @@ from sqlalchemy import select
 from fastapi import HTTPException
 
 from models import (InventoryBatch, Product, Sale, SaleCostDetail, User,
-                    InventoryCostAdjustment, InventoryCostAdjustmentLine, ProductLine, StoreProduct)
+                    InventoryCostAdjustment, InventoryCostAdjustmentLine, ProductLine, StoreProduct, SettlementEntry)
 from routers.sales import _order_cost_data
 from services.cost_layers import fifo_cost_components
 from services.sales_fields import sales_field_help
@@ -17,7 +17,10 @@ from tests import test_sales_export as exports
 
 class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
     entry = exports.SalesExportTests.entry
-    setUp = exports.SalesExportTests.setUp
+    def setUp(self):
+        exports.SalesExportTests.setUp(self)
+        self.session.get(SettlementEntry,1).order_created_at=self.session.get(Sale,1).sold_at
+        self.session.commit()
     asyncTearDown = exports.SalesExportTests.asyncTearDown
     record_query = exports.SalesExportTests.record_query
     exported = exports.SalesExportTests.exported
@@ -74,6 +77,14 @@ class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(D(summary['impairment_cny']),sum(D(row['impairment_cny']) for row in data['order_lines']))
         self.assertEqual(data['cost_batches'][0]['batch_no'],'TEST')
         self.assertEqual(sum(D(row['impairment_cny']) for row in data['impairment_batches']),D(data['sale']['impairment_cny']))
+        impairment=data['impairment_batches'][0]
+        self.assertEqual(impairment['arrival_date'],'2026-09-01')
+        self.assertEqual(impairment['order_date'],data['sale']['sold_at'][:10])
+        self.assertEqual(impairment['age_days'],9)
+        self.assertEqual(impairment['product_type'],'stable')
+        self.assertEqual(D(impairment['daily_rate']),D('.01'))
+        self.assertEqual(D(impairment['total_cost_cny']),40)
+        self.assertEqual(D(impairment['impairment_cny']),D('3.6'))
         book=await self.exported(product_id=10)
         orders=list(book['订单汇总'].values)
         self.assertEqual(orders[1][1:4],('SALE',2,46))
@@ -112,6 +123,8 @@ class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
                 data=await self.explanation()
                 self.assertEqual(D(data['sale']['unit_total_cost_cny']),expected)
                 self.assertEqual(D(data['sale']['unit_head_shipping_cost_cny']),D('4.5') if key==1 else D('3.5'))
+                self.assertEqual(D(data['sale']['impairment_cny']),D('2.08') if key==1 else D('1.9'))
+                self.assertEqual(sum(D(line['total_cost_cny']) for line in data['impairment_batches']),D(data['sale']['total_cost']))
                 self.assertEqual(self.session.get(Sale,1).total_cost,60)
                 self.assertEqual(self.session.scalar(select(SaleCostDetail).where(SaleCostDetail.batch_id==1)).unit_cost,10)
 
