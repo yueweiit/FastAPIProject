@@ -1,5 +1,7 @@
 # 销售模块代码映射
 
+销售跌价日期由`services/sales_costs.py:_sale_order_dates`统一读取获准销售的分摊/直接履约来源，沿用`financial_facts.is_fulfillment_settlement`排除退款及纯结算来源；实际来源创建日缺失或冲突保留null，legacy_csv/手工显式日期兼容，不改销售归属期。`attach_sale_impairment`比较成本差额的四位HALF_UP结果，避免先舍入总额的中点误判。`test_sales_costs`覆盖正负微小补差、真实差额拒绝、缺日期的列表/解释/Excel、直接/重复/冲突关联、来源日期与销售归属期不同、退款排除及旧CSV。
+
 | 功能 | 页面函数 | 后端/服务函数 | 核心数据 |
 | --- | --- | --- | --- |
 | 手工结算补录 | loadManualSaleStores、createSale → SalesLedger.createManualSettlement | create_manual_settlement | stores、sales_import_batches、settlement_entries；不扣库存 |
@@ -19,7 +21,7 @@
 | 全筛选销售Excel | exportSalesRecords、resetSalesExportSession | export_sales_records → list_sales；count_unlinked_settlement_events → 与事件读取共用SQL；services/sales_export.py格式化 | 保存成本/汇率、独立事件；只读、权限不变 |
 | 成本详情 | 列表成本提示；独立详情 API | get_sale | sale_cost_details、inventory_batches |
 | 四项成本/本行总额 | loadSales，字段资源驱动的台账及本页合计 | sale_cost_context → fifo_cost_components/rounded_cost_components；_build_sale_response | 保存FIFO成本、冻结cost_basis、财务补差；原成本不改写 |
-| 出库商品跌价参考 | loadSales、销售Excel追加列 | services/sales_costs.py attach_sale_impairment → services/inventory_provision_data.py load_inventory_provision_data | 同商品全局事实回放，仅输出获准销售；与店铺损益归属分开 |
+| 出库商品跌价参考 | loadSales、sales-ledger.js计算明细、销售Excel追加列 | services/sales_costs.py attach_sale_impairment → 商品类型历史、获准销售FIFO明细及引用批次 | 自然日库龄×订单日比例×本批有效成本；不扣安全库存、不设90%上限，与报表准备转销分开 |
 | 待确认筛选/导出/重试 | SalesPending（static/sales-pending.js），两份首页的原函数委托 | list_pending_confirmations、export_pending_confirmations、retry_pending_confirmations → services/sales_pending.py | 原settlement_entries及分配、原导入头；共用_write_candidate_sales/FIFO，不重建结算来源 |
 | 导入历史/撤销 | loadSalesImports、rollbackSalesImport | list_sales_imports、rollback_sales_import | 全部关联业务表 |
 | 汇率 | 单价提示、人民币金额 | get_cny_rates | 结算汇率字段 |

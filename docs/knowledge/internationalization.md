@@ -41,6 +41,10 @@
 
 ## 交付检查与已知限制
 
+- 销售跌价新增的“订单创建日期缺失/来源日期不一致”说明集中在`sales_costs.py`的日期来源解析中，经既有`impairment_review_reason`传给页面及Excel；未知日期/比例/金额复用既有待核对展示，不把结算日标为创建日。沿用现有中文信息契约，无新增语言或前端枚举。
+
+- 销售出库跌价的批次库龄公式、日期/天数/类型/日比例/本批订单成本标签集中于`sales-ledger.js`的局部zh-CN字典；比例使用当前语言的百分数格式。销售字段公式与导出“跌价”说明共用`sales-fields.zh-CN.json`，不再展示准备转销折算量公式；旧API折算字段保留兼容。后台历史类型推定和异常仍沿用可读说明，无新增语言、依赖或数据库字段。
+
 - 跌价归属弹窗新增的编辑标题、多选说明、生效方式说明、保存影响说明及操作列表头集中于`inventory-allocations.js`局部zh-CN字典的`editorTitle/storeHint/splitHint/arrivalHelp/changeHelp/saveHint/action`；商品、批次和店铺名称保留原值并转义。沿用当前语言回退，无新增语言或依赖。
 
 - 归属保存后的部分成功提示和重试按钮集中于`inventory-allocations.js`局部zh-CN字典的`savedRefreshFailed/retryRefresh`；保存失败与刷新失败分开表达，不展示未经转义的异常内容。沿用当前语言回退，无新增语言、依赖或导出字段。

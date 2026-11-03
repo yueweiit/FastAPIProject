@@ -71,10 +71,12 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 | `other_cost_cny` | Decimal / null，分 | 本行其他入库成本，与平台其他费用分开 |
 | `order_total_cost_cny` | Decimal / null，分 | 四项展示金额之和，本行总成本；原 `total_cost` 仍为完整精度 |
 | `cost_breakdown_review_reason` | string / null | 原始构成/明细缺失、不一致或作废的拆分待核对说明 |
-| `impairment_cny` | Decimal / null，完整计算精度 | 出库商品已提跌价参考金额，独立于成本及毛利 |
+| `impairment_cny` | Decimal / null，完整计算精度 | 出库商品按订单库龄公式计算的跌价参考金额，独立于成本及毛利 |
 | `impairment_review_reason` | string / null | 跌价待核对或历史规则推定说明，已知参考金额也可附说明 |
 
-非库存事件上述金额为0；有出库但未知的分项/跌价为null。字段按实际本地组件数量计算，不对组合订单重复返回整单总额；不得把 `impairment_cny` 直接作为销售店铺跌价费用。服务端先校验现有店铺权限，再为获准响应计算，跨店全局事实仅用于共享安全库存计算。
+非库存事件上述金额为0；有出库但未知的分项/跌价为null。字段按实际本地组件数量计算，不对组合订单重复返回整单总额；不得把 `impairment_cny` 直接作为销售店铺跌价费用或准备转销。服务端先校验现有店铺权限，只读取获准销售引用的批次及商品类型历史；公式及缺历史兼容见[出库成本流程](workflow.md#出库成本拆分与跌价参考)。
+
+跌价日期另读取获准销售的分摊/直接履约来源：订单详情的来源创建日缺失或冲突时，`impairment_cny`及明细的`order_date/age_days/product_type/daily_rate`为null，通过`impairment_review_reason`说明；已知成本继续展示。手工、无履约来源的历史销售和legacy_csv使用显式保存日期。`SaleResponse.sold_at`仍为原销售归属日，不因本次读取重写或重分核算月份；正常订单可在计算明细看到真实来源日期。
 
 `GET /sales/export`沿用列表的`month=YYYY-MM`、`keyword≤255`和可选`product_id>0`筛选；月份为空导出全部月份，keyword首尾空白忽略，商品ID与关键字按AND组合。没有page/page_size限制，不按当前页截断。admin读取全部店铺，operator/viewer固定当前绑定店铺，无绑定403；不接受以store_id切换范围。静态路径先于`/{sale_id}`注册，不改变已有详情接口。
 
@@ -94,7 +96,7 @@ SaleResponse增加`transaction_type`、`source_sku_id`、`source_product_name`�
 
 SaleResponse追加可空只读字段`unit_purchase_cost_cny`、`unit_head_shipping_cost_cny`、`unit_last_mile_cost_cny`、`unit_other_cost_cny`、`unit_total_cost_cny`，均为Decimal，展示4位。四项由未舍入的有效成本分项除本行实际出库数量后ROUND_HALF_UP；不能用已舍入的两位金额反推。总单价由有效FIFO总成本除数量；分项未知但总成本已知时，总单价可保留。作废成本的总单价及无出库事件的全部单价为null，页面分别显示待核对/不适用。原有成本、利润和月度精度不变。
 
-`GET /sales/{sale_id}/cost-breakdown`仅返回当前权限下的库存销售；没有可见来源（含独立财务事件负ID/其他店铺）404 `sale_cost_not_found`，非管理员未绑定仍403。`SaleCostExplanationResponse`含sale、sku、product_name、quantity_basis固定`inventory_units`、cost_batches、impairment_batches、order_summary及order_lines。批次成本含batch_id/no、quantity、有效unit_cost、未舍入四项和total_cost_cny；跌价批次含quantity、有效unit_cost、impairment_units及impairment_cny，解释折算准备数量乘单位成本的实际转销。
+`GET /sales/{sale_id}/cost-breakdown`仅返回当前权限下的库存销售；没有可见来源（含独立财务事件负ID/其他店铺）404 `sale_cost_not_found`，非管理员未绑定仍403。`SaleCostExplanationResponse`含sale、sku、product_name、quantity_basis固定`inventory_units`、cost_batches、impairment_batches、order_summary及order_lines。批次成本含batch_id/no、quantity、有效unit_cost、未舍入四项和total_cost_cny。跌价批次追加可空只读字段`arrival_date/order_date`（自然日日期）、`age_days`（整数）、`product_type`（订单日类型）、`daily_rate`（Decimal）和`total_cost_cny`（本批出库有效成本）；`impairment_cny=age_days×daily_rate×total_cost_cny`。旧`quantity/unit_cost/impairment_units`保留兼容，impairment_units现为`quantity×age_days×daily_rate`的折算量，不表示准备转销数量；异常时金额及折算量为空。无新增持久化字段，旧客户端可忽略追加字段。
 
 整单按`coalesce(sales.store_id,创建人当前store_id)+order_no`读取完整授权出库行，不受页面、月份或商品筛选限制；不会合并不同店铺同号订单。历史店铺无法确定时只返回被选中行，order_summary.complete=false、两项整单金额null并附review_reason，不猜测范围。已知店铺complete=true仅指来源范围完整，金额是否可信仍以null/核对说明为准。成本为完整明细各行分位总额之和，任一作废成本则整单成本待核对；跌价任一未知则整单跌价未知。明细接口上限1000出库行，超限422 `sales_order_too_large`，不返回截断汇总。
 
