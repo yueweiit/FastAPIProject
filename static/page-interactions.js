@@ -18,6 +18,8 @@
         importWriting: '正在计算成本并写入数据', importCommitting: '正在确认保存结果',
         importWorking: '正在处理，请稍候…', importRowProgress: '本阶段 {done} / {total} 行（{percent}%）',
         importFileStore: '{file} · {store}', importComplete: '导入完成', importCompleteReview: '导入完成，部分记录待核对',
+        importCompactSummary: '结算行{settlements}条，销售扣库存{sales}条，重复跳过{duplicates}条{pending}{warnings}',
+        importShowDetails: '查看详情', importHideDetails: '收起详情', importDismiss: '关闭提示',
         importSuccess: '导入完成：结算行{settlements}条，销售扣库存{sales}条，重复跳过{duplicates}条{pending}{warnings}。按文件日期自动归月，请切换查询月份查看。',
         importPending: '；待确认{count}条', importWarnings: '；提示{count}条',
         importProgressUnavailable: '导入进度模块未加载，请更新并重启后端后刷新页面。',

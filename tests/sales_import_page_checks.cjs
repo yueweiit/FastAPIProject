@@ -8,6 +8,7 @@ function setup(file,role='admin') {
     const element=id=>{
         if(!elements.has(id)){
             const e={value:'',disabled:false,textContent:'',dataset:{},style:{},files:[{name:'fixture.csv'}],removeAttribute:()=>{},
+                setAttribute:()=>{},addEventListener:()=>{},matches:()=>false,contains:()=>false,
                 parentElement:{style:{},setAttribute:()=>{}}};
             Object.defineProperty(e,'innerHTML',{set(v){this.html=v;if(id.endsWith('store'))this.value='';},get(){return this.html||'';}});
             elements.set(id,e);
@@ -15,7 +16,7 @@ function setup(file,role='admin') {
         return elements.get(id);
     };
     const c=vm.createContext({window:{},document:{documentElement:{lang:'zh-CN'},getElementById:element,querySelectorAll:()=>[]},
-        Number,String,Error,Promise,FormData:class{constructor(){this.values={};}append(k,v){this.values[k]=v;}},
+        Number,String,Error,Promise,setTimeout:()=>1,clearTimeout:()=>{},FormData:class{constructor(){this.values={};}append(k,v){this.values[k]=v;}},
         escapeHtml:v=>String(v).replaceAll('<','&lt;'),authHeaders:()=>({'X-CSRF-Token':'test'}),
         showMsg:(msg)=>c.message=msg,refreshSalesWorkspace:()=>c.refreshed=(c.refreshed||0)+1});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);

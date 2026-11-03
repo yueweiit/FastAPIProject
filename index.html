@@ -94,6 +94,14 @@
         .sales-import-progress-file { color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
         .sales-import-progress progress { display:block; width:100%; height:10px; margin:12px 0; accent-color:#267099; }
         .sales-import-progress-result { margin-top:8px; font-size:13px; overflow-wrap:anywhere; }
+        .sales-import-progress-actions { display:flex; flex-wrap:wrap; gap:8px; margin-left:auto; }
+        .sales-import-progress-actions[hidden], .sales-import-progress-details[hidden], .sales-import-progress-brief[hidden] { display:none; }
+        .sales-import-progress-actions .btn { padding:4px 10px; font-size:12px; }
+        .sales-import-progress-brief { font-size:13px; overflow-wrap:anywhere; }
+        .sales-import-progress:not([data-state="running"]) { padding:10px 16px; }
+        .sales-import-progress:not([data-state="running"]) .sales-import-progress-heading { align-items:center; }
+        .sales-import-progress:not([data-state="running"]) progress { display:none; }
+        .sales-import-progress:not([data-state="running"]) .sales-import-progress-details { margin-top:10px; }
         .sales-import-progress[data-state="complete"] { border-color:#b9e4d8; background:#effaf5; color:#087c63; }
         .sales-import-progress[data-state="review"] { border-color:#efd6a5; background:#fffbf1; color:#896016; }
         .sales-import-progress[data-state="error"] { border-color:#f2becb; background:#fff2f5; color:#be294d; }
@@ -788,10 +796,19 @@
             </div>
         </div>
         <section class="sales-import-progress" id="sales-import-progress-panel" role="status" aria-live="polite" aria-atomic="true" hidden>
-            <div class="sales-import-progress-heading"><strong id="sales-import-progress-stage"></strong><span id="sales-import-progress-count"></span></div>
-            <div class="sales-import-progress-file" id="sales-import-progress-file"></div>
-            <progress id="sales-import-progress-bar" max="100" aria-labelledby="sales-import-progress-stage"></progress>
-            <div class="sales-import-progress-result" id="sales-import-progress-result"></div>
+            <div class="sales-import-progress-heading">
+                <strong id="sales-import-progress-stage"></strong><span id="sales-import-progress-count"></span>
+                <div class="sales-import-progress-actions" id="sales-import-progress-actions" hidden>
+                    <button type="button" class="btn btn-secondary" id="sales-import-progress-toggle" aria-controls="sales-import-progress-details" aria-expanded="false"></button>
+                    <button type="button" class="btn btn-secondary" id="sales-import-progress-close"></button>
+                </div>
+            </div>
+            <div class="sales-import-progress-brief" id="sales-import-progress-brief" hidden></div>
+            <div class="sales-import-progress-details" id="sales-import-progress-details">
+                <div class="sales-import-progress-file" id="sales-import-progress-file"></div>
+                <progress id="sales-import-progress-bar" max="100" aria-labelledby="sales-import-progress-stage"></progress>
+                <div class="sales-import-progress-result" id="sales-import-progress-result"></div>
+            </div>
         </section>
         <div class="card sales-entry-card" id="sales-manual-entry-card">
             <div class="flex-between" style="margin-bottom:14px">
