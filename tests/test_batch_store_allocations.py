@@ -170,6 +170,45 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
         self.actor.role='viewer'
         self.assertEqual((await self.client.put("/batches/1/impairment-stores",json=current)).status_code,403)
 
+    async def test_exact_batch_filter_reads_old_batch_without_changing_data(self):
+        self.session.add(InventoryBatch(product_id=1, user_id=8, batch_no="NEWER", quantity=10,
+            remaining_quantity=10, purchase_price=20, unit_cost=20, arrived_at=datetime(2026, 10, 1)))
+        self.session.commit()
+        before = await self.batch()
+        self.queries.clear()
+        for role in ("admin", "operator", "viewer"):
+            self.actor.role = role
+            response = await self.client.get("/batches", params={"product_id":1,"batch_id":1,"page":99,"page_size":1})
+            self.assertEqual(response.status_code,200,response.text)
+            data = response.json()
+            self.assertEqual((data["total"],data["page"]),(1,1))
+            self.assertEqual(data["items"],[before])
+        self.assertTrue(all(query == "SELECT" for query in self.queries),self.queries)
+        self.assertEqual((await self.client.get("/batches?batch_id=1&product_id=2")).json(),[])
+        self.assertEqual((await self.client.get("/batches?batch_id=999")).json(),[])
+        self.assertEqual((await self.client.get("/batches?batch_id=0")).status_code,422)
+        self.session.get(InventoryBatch,1).voided_at = datetime(2026,10,1)
+        self.session.commit()
+        self.assertEqual((await self.client.get("/batches?batch_id=1")).json(),[])
+
+    async def test_sold_out_legacy_batch_can_change_only_ownership_with_controls_disabled(self):
+        self.add_sale(3,1,70,datetime(2026,9,5),7)
+        self.session.get(InventoryBatch,1).remaining_quantity = 0
+        self.session.commit()
+        before = await self.batch()
+        self.assertEqual(before["impairment_store_history"],[])
+        self.actor.id,self.actor.username,self.actor.role,self.actor.store_id = 8,"U8","operator",8
+        with patch("services.finance_config.financial_controls_enabled", return_value=False), \
+             patch("routers.batches.financial_controls_enabled", return_value=False):
+            response = await self.client.put("/batches/1/impairment-stores",json={
+                "impairment_store_ids":[8],"edit_version":before["edit_version"],"impairment_change_mode":"from_arrival"})
+        self.assertEqual(response.status_code,200,response.text)
+        after = response.json()
+        self.assertEqual(after["impairment_store_ids"],[8])
+        self.assertEqual(after["impairment_store_history"][0]["effective_date"],"2026-09-01")
+        for field in ("quantity","remaining_quantity","unit_cost","total_amount","purchase_price","shipping_cost","last_mile_cost","other_cost","arrived_at"):
+            self.assertEqual(after[field],before[field],field)
+
     async def test_inventory_assignment_allows_operator_and_rolls_back_failed_store_write(self):
         before = await self.batch()
         payload={"impairment_store_ids":[7,8],"edit_version":before["edit_version"],"impairment_change_mode":"from_arrival"}
@@ -291,6 +330,13 @@ class BatchStoreAllocationTests(unittest.IsolatedAsyncioTestCase):
         for owner, expected in ((7, Decimal("200.5")), (8, Decimal("100.5"))):
             rows = await _product_line_profit_data(db, {owner}, date(2026, 9, 1), date(2026, 9, 30))
             self.assertEqual(sum(row["current"]["cost"] for row in rows), expected)
+            product = next(row for row in rows if row["product_id"] == 1)
+            self.assertEqual(product["row_type"], "product")
+            self.assertIn("按批次跌价归属店铺", product["note"])
+            quantities = [sale.quantity for sale in self.session.scalars(select(Sale)).all()
+                if sale.product_id == 1 and (sale.store_id or self.session.get(User, sale.user_id).store_id) == owner
+                and date(2026, 9, 1) <= sale.sold_at.date() < date(2026, 10, 1)]
+            self.assertEqual(product["current_quantity"], sum(quantities))
 
     async def test_store_workbook_keeps_allocated_cost_reserve_and_cached_book_value(self):
         await self.save([7, 8])

@@ -39,8 +39,8 @@ function setup(file) {
     handleSessionExpired: () => vm.runInContext('resetBatchExportSession()', context),
   });
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), context);
-  vm.runInContext('let selectedBatchIds = new Set(), batchExportBusy = false, batchExportSessionEpoch = 0;', context);
-  for (const name of ['setBatchExportStatus', 'resetBatchExportSession', 'downloadBatchExport', 'exportBatch', 'exportAllBatches']) {
+  vm.runInContext('let selectedBatchIds = new Set(), batchExportBusy = false, batchExportSessionEpoch = 0, batchSearchProduct = null;', context);
+  for (const name of ['batchFilterParams', 'setBatchExportStatus', 'resetBatchExportSession', 'downloadBatchExport', 'exportBatch', 'exportAllBatches']) {
     const source = html.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
     ok(source);
     vm.runInContext(source[0], context);

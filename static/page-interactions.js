@@ -59,7 +59,12 @@
         profitLossBackendUpdate: '当前后端尚未加载月末汇率及每单8 MXN的报表口径，请更新并重启后端后再核对或保存。本页暂展示旧口径结果，不能作为新口径金额。',
         salesCostHelp: '原币核对列展示来源整行金额、币种和保存汇率，便于对照Excel；组合各组件重复展示来源金额，不合计。人民币交易金额按已保存组件份额换算。导入后按实际FIFO出库批次自动拆分采购、头程、尾程和其他入库成本，四项合计为本行订单总成本；组合商品同一订单号各行相加为整单成本。展示按分舍入，尾差按科目金额由大到小分配。出库商品跌价单列，不加到订单成本或重复扣减毛利；店铺损益仍按批次归属分摊，本列不代表销售店铺承担额。横向滚动可查看全部成本列。',
         batchExport: '导出', batchEdit: '编辑',
-        batchImpairmentStores: '跌价归属店铺（必选）', batchImpairmentDefault: '待分配（在库存页管理）',
+        batchSearchLabel: '商品名称 / SKU / 批次号', batchSearchPlaceholder: '输入商品名称、SKU 或批次号',
+        batchSearchSubmit: '搜索', batchSearchClear: '清空',
+        batchSearchHint: '输入名称或SKU查看商品候选；点击或上下键后回车可精确查询该商品批次。不选候选时，按名称、SKU或批次号搜索。',
+        batchImpairmentStores: '跌价归属店铺（必选）', batchImpairmentDefault: '待分配',
+        batchImpairmentLegacy: '未手工分配（兼容历史归属）', batchImpairmentEdit: '修改归属',
+        batchImpairmentUnavailable: '归属管理组件尚未加载，请刷新页面后重试。',
         batchImpairmentHelp: '至少选择一家店铺，可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
         batchImpairmentEmpty: '尚未选择，请至少选择一家店铺。',
         batchImpairmentRequired: '请至少选择一家跌价归属店铺后再保存。',
@@ -382,7 +387,8 @@
             }
             return [...allocationSelections[prefix]];
         },
-        label: batch => batch.impairment_store_names?.join(' / ') || text('batchImpairmentDefault'),
+        label: batch => batch.impairment_store_names?.join(' / ') || text(batch.impairment_store_history?.some(rule => rule.is_explicit)
+            ? 'batchImpairmentDefault' : 'batchImpairmentLegacy'),
         reset: () => {allocationSerial++; allocationStores = null; allocationSelections.b = []; allocationSelections.eb = [];
             allocationNames.b = []; allocationNames.eb = [];
             allocationMode = 'from_arrival'; allocationHistory = []; allocationHistorySupported = false;},

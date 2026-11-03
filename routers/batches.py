@@ -366,6 +366,7 @@ async def void_batch(
 @router.get("", response_model=list[BatchResponse] | BatchPageResponse)
 async def list_batches(
     product_id: int | None = None,
+    batch_id: int | None = Query(default=None, ge=1),
     keyword: str | None = Query(default=None, max_length=255),
     voided_only: bool = False,
     page: int | None = Query(default=None, ge=1),
@@ -380,6 +381,8 @@ async def list_batches(
     joins_product = False
     if product_id:
         filters.append(InventoryBatch.product_id == product_id)
+    if batch_id is not None:
+        filters.append(InventoryBatch.id == batch_id)
     if keyword and keyword.strip():
         pattern = f"%{keyword.strip()}%"
         joins_product = True

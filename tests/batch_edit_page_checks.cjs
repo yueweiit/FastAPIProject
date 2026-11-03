@@ -27,20 +27,41 @@ function setup(file) {
     resetProductImportPreview: () => {}, resetStoreProfitLossState: () => {},
     clearLegacyAuth: () => {}, showLogin: () => {}});
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
+  const allocationLabel = c.window.PageInteractions.batchStores.label;
   // 本文件验证批次编辑状态机；多店选择器的真实DOM/载入/提交另由浏览器回归验证。
   c.window.PageInteractions.batchStores = {read: () => undefined, edit: () => {}, reset: () => {}, label: () => ''};
   vm.runInContext('let editingBatchId=null,editingBatchVersion=null,batchEditSaving=false,batchEditSessionEpoch=0,currentBatchList=[],CURRENT_USER_ID=7;' +
     'let batchTotal=1,batchPage=1,batchPageSize=20,batchListRequestId=0,visibleBatchColumns=new Set(),selectedBatchIds=new Set();', c);
   for (const name of ['formatApiError', 'handleSessionExpired', 'batchEditBlockedReason', 'renderBatchPage',
-    'setBatchEditStatus', 'resetBatchEditSession', 'openEditBatch', 'closeEditBatch', 'saveEditBatch', 'voidBatch']) {
+    'setBatchEditStatus', 'resetBatchEditSession', 'openEditBatch', 'closeEditBatch', 'saveEditBatch', 'voidBatch', 'openBatchImpairmentStores']) {
     const source = html.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
     assert(source, name); vm.runInContext(source[0], c);
   }
   const setBatch = batch => vm.runInContext(`currentBatchList=[${JSON.stringify(batch)}]`, c);
-  return {html, c, e: element, messages, setBatch};
+  return {html, c, e: element, messages, setBatch, allocationLabel};
 }
 async function verify(file) {
-  const {html, c, e, messages, setBatch} = setup(file);
+  const {html, c, e, messages, setBatch, allocationLabel} = setup(file);
+  equal(allocationLabel({impairment_store_names:[],impairment_store_history:[]}), '未手工分配（兼容历史归属）');
+  equal(allocationLabel({impairment_store_names:[],impairment_store_history:[{is_explicit:false}]}), '未手工分配（兼容历史归属）');
+  equal(allocationLabel({impairment_store_names:[],impairment_store_history:[{is_explicit:true}]}), '待分配');
+  equal(allocationLabel({impairment_store_names:['A','B']}), 'A / B');
+  const allocationCalls=[];
+  c.window.InventoryAllocations={open:async(...args)=>allocationCalls.push(args)};
+  setBatch({...fixture,remaining_quantity:0});c.renderBatchPage();
+  ok(e('batches-tbody').innerHTML.includes('openBatchImpairmentStores(12)'));
+  await c.openBatchImpairmentStores(12);
+  equal(allocationCalls.length,1);equal(allocationCalls[0][0],42);equal(allocationCalls[0][3],12);
+  ok(typeof allocationCalls[0][2]==='function');
+  setBatch({...fixture,voided_at:'2026-10-27T01:00:00'});c.renderBatchPage();
+  ok(!e('batches-tbody').innerHTML.includes('openBatchImpairmentStores(12)'));
+  await c.openBatchImpairmentStores(12);equal(allocationCalls.length,1);
+  setBatch(fixture);c.isOperator=()=>false;c.renderBatchPage();
+  ok(!e('batches-tbody').innerHTML.includes('openBatchImpairmentStores(12)'));
+  await c.openBatchImpairmentStores(12);equal(allocationCalls.length,1);c.isOperator=()=>true;
+  delete c.window.InventoryAllocations;
+  await c.openBatchImpairmentStores(12);
+  equal(messages.at(-1)[0],c.window.PageInteractions.text('batchImpairmentUnavailable'));
   ok(/\[data-batch-column="actions"\][^\n]*position:sticky; right:0/.test(html));
   ok(!html.includes('data-batch-column="actions" style="display:flex'));
   ok(html.includes('id="eb-total-amount" type="number" min="0" step="0.0001" required'));
@@ -59,7 +80,7 @@ async function verify(file) {
   ok(!e('batches-tbody').innerHTML.includes('disabled'));
   ok(!e('batches-tbody').innerHTML.includes('deleteBatch(12)'));
   ok(e('batches-tbody').innerHTML.includes('voidBatch(12)'));
-  ok(e('batches-tbody').innerHTML.includes('openBatchLogs(12)'));
+  ok(!e('batches-tbody').innerHTML.includes('openBatchLogs(12)'));
   await c.openEditBatch(12);equal(vm.runInContext('editingBatchId',c),12);c.closeEditBatch();
   for (const batch of [{...fixture, remaining_quantity: 0}, {...fixture, remaining_quantity: 12}]) {
     setBatch(batch); c.renderBatchPage();
