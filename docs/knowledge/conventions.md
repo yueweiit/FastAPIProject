@@ -28,6 +28,10 @@
 
 ## 修改前必须核实
 
+操作日志验证：[test_operation_logs.py](../../tests/test_operation_logs.py)覆盖权限/组筛选/分页/详情、关闭仍读历史、可选结构及MySQL编译；[test_business_audit.py](../../tests/test_business_audit.py)验证快照、保存点、实际路由、密码排除及失败时FIFO库存/销售/成本回滚。均用隔离SQLite/ASGI；[operation_logs_browser_checks.cjs](../../tests/operation_logs_browser_checks.cjs)检查两份页面、新旧分类、详情、状态、移动端和旧会话响应。不启动main、不连接业务库，不等于真实MySQL/并发验证。见[日志模块](../modules/operation-logs/code-map.md)。
+
+日志HTTP缓存必须另跑`node tests/operation_logs_cache_checks.cjs`：使用现有Python/Uvicorn/Playwright运行时，启动仅绑定127.0.0.1临时端口的隔离夹具，无主应用启动或业务库连接。真实浏览器不拦截网络请求，先以可缓存对照组确认缓存有效，再验证四个实际日志路由的private/no-store响应及降权/退出后的force-cache拒绝。普通页面的模拟API回归不能替代此项；如项目Python不在默认.venv路径，可设置INVENTORY_PYTHON。
+
 1. 检查 Git 状态，识别用户已有修改；从[索引](README.md)读相关模块的 overview、workflow、code-map，再按需读数据库/API。
 2. 沿实际存在的页面、路由、服务、模型和外部依赖定位，不套用不存在的 Controller 或前端组件层。
 3. 核查接口分页兼容、角色/店铺范围、正数数量、非负金额、事务和日期口径。

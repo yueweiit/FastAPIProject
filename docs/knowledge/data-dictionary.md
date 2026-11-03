@@ -1,5 +1,7 @@
 # 核心数据字典导航
 
+扩展操作留痕的模块/操作码、对象及身份快照、前后值、未知旧值和group_id，统一维护于[操作日志字典](../modules/operation-logs/database.md)。新表默认关闭，ORM声明不等于实际库已建表。
+
 本页维护跨模块字段的阅读入口和易混淆语义；完整类型、可空性、默认值、外键和索引只在模块 `database.md` 维护。依据：[models.py](../../models.py)、[schemas.py](../../schemas.py)。ORM 声明不代表历史实库已完成迁移；总体关系见[数据库设计](database.md)。
 
 ## 字段字典归属

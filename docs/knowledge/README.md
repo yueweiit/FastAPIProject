@@ -33,6 +33,7 @@
 | 财务主数据 | 店铺、产品线、店铺 SKU 和平台 SKU 映射 | [finance-masters/overview.md](../modules/finance-masters/overview.md) |
 | 报表与快照 | 存货跌价、店铺损益、产品线、财务附件、OA 取数 | [reports/overview.md](../modules/reports/overview.md) |
 | 财务增强 | 实际成本补差、费用台账、平台分类/回款、不可变月度版本 | [financial-control/overview.md](../modules/financial-control/overview.md) |
+| 操作日志 | 旧业务历史及新增商品/账号/主数据/批次/销售处理/损益事务留痕，统一筛选与前后值详情 | [operation-logs/overview.md](../modules/operation-logs/overview.md) |
 
 ## 复用已有文档
 
@@ -61,7 +62,7 @@
 | 项目 | 已知源码事实 | 待验证内容 |
 | --- | --- | --- |
 | 实际环境 | Docker 声明 Python 3.13；MySQL 为主库 | 本机/服务器 Python、数据库版本、InnoDB、字符集、时区、实际端口和可达性 |
-| 数据库 | ORM 定义28表（8张财务增强表默认关闭）；批次修改新增基础日志表；启动迁移同时含DDL和历史修复 | 正式库字段、索引、外键、启动权限和历史数据；新增日志表结构准备 |
+| 数据库 | ORM定义33表（8张财务增强及1张业务审计默认关闭）；本地审计表已按授权准备，其他环境不能沿用；启动含DDL和历史修复 | 正式库字段/索引/外键与权限；本地服务重启生效及真实页面写入待验证 |
 | EIMS 接入 | 已实现 PKCE/RS256、后端加密 Token、Cookie/CSRF、绑定/启停、刷新与退出；本地验证通过 | 客户端注册/安全配置、正式用户绑定、门户 start 配合、真实撤权/刷新/退出及日志保护，见[接入说明](../modules/auth/eims-sso-setup.md) |
 | 权限 | 商品和平台 SKU 为共享数据；独立存货接口未按店铺过滤 | 这些权限是否符合业务；库存归属是否需要独立店铺字段 |
 | 财务口径 | 07/09/10/12按2026-10-15追加确认采用实际持有期间计提及销售转销，新增三项变动，账面=现存成本−期末准备；异常金额传播null | 真实历史规则/流水完整性、生产更新及其他成本分类；快照保留原算法；新口径、跨店及历史待核对边界见[变更记录](../development/2026-10-15-holding-period-impairment.md) |

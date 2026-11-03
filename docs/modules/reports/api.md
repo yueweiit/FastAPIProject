@@ -11,7 +11,7 @@
 | `PUT /reports/store-profit-loss` | [update_store_profit_loss](../../../routers/reports.py) | admin/operator | StoreProfitLossUpdateRequest | StoreProfitLossResponse |
 | `GET /reports/inventory-impairment` | [inventory_impairment_report](../../../routers/reports.py) | admin/operator/viewer | report_date | 存货明细数组 |
 | `GET /reports/inventory-impairment/summary` | [inventory_impairment_summary](../../../routers/reports.py) | admin/operator/viewer | report_date | 全部截止日批次的 SKU 汇总数组 |
-| `GET /reports/product-line-profit` | [product_line_profit_report](../../../routers/reports.py) | admin/operator/viewer | report_month、report_date、store_id | 产品线汇总数组 |
+| `GET /reports/product-line-profit` | [product_line_profit_report](../../../routers/reports.py) | admin/operator/viewer | report_month、report_date、store_id | 名称保留，按本地商品汇总数组 |
 | `GET /reports/inventory-impairment/export` | [export_inventory_impairment_report](../../../routers/reports.py) | admin/operator/viewer | report_date、view=batch/sku（默认batch） | 批次或 SKU Excel 文件 |
 | `GET /reports/financial-attachments/export` | [export_financial_attachments](../../../routers/reports.py) | admin/operator/viewer | report_date、report_month、store_id | Excel 文件 |
 | `GET /reports/monthly` | [monthly_report](../../../routers/reports.py) | admin/operator/viewer | start_date、end_date | list[MonthlyReportItem] |
@@ -22,6 +22,8 @@
 - inventory-impairment、summary 及独立 export：report_date 必填、不得晚于 date.today，当前没有 store_id/店铺过滤；export 未传 view 保持原有批次导出，非法 view 框架校验422。动态结果排除已作废批次；已保存的旧快照和月度版本不覆盖，关联销售利润待核对。
 - store-profit-loss：report_month 必须当月第一天；store_id 可空，管理员默认首个有效店铺，非管理员固定绑定店铺且不能请求他店。
 - product-line-profit：report_month 必须第一天，report_date 省略则该月末；admin 无 store_id 汇总当前有效店铺，其余通过绑定/选定店铺范围。该入口未采用存货接口同样的未来截止日校验。
+
+product-line-profit已改按本地商品ID分组，不再读取产品线映射决定归类；report_date参数兼容保留，核算期间仍按report_month。保留原name、sku_count及所有金额/比率字段，新增group_by=product、product_id、sku、product_name、row_type和current_quantity。row_type为product/unallocated_settlement/unallocated_fulfillment；后两类商品字段为空，quantity为0。name为“本地SKU · 中文名称”或未归属事项标签。current_quantity为本月实际出库组件件数，不含退款/赔付来源数量；sku_count保留原商品计数含义，不能作为销量使用。金额未知继续null。页面对无group_by=product的旧后端响应提示更新，避免将旧合并行误当逐商品结果。12工作表名称/列数/金额列位置保留，第一、二列分别改为商品编码名称及本月出库数量；汇总数量为出库数合计，公式口径见[流程](workflow.md#产品线跨店汇总与-excel)。无新增表或历史数据改写。
 - financial-attachments/export：report_date 必填不得晚于今天；report_month 可省略，默认截止日所在月份第一天；store_id 通过损益范围解析。
 
 日期参数来自 Query/Pydantic，实际业务规则见 [reports.py](../../../routers/reports.py)。没有独立 public accounting-period 路由。

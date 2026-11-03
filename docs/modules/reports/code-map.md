@@ -8,7 +8,7 @@
 | 存货展示/导出 | loadInventoryImpairment、exportInventoryImpairmentReport | inventory_impairment_report、export_inventory_impairment_report、_load_inventory_impairment_report_rows | 批次、商品、规则、逐笔FIFO明细、销售时间及销售店铺 |
 | 存货 SKU 汇总 | setInventoryImpairmentView、inventoryReportTotals | inventory_impairment_summary、_summarize_inventory_impairment_rows、_build_inventory_impairment_summary_sheet | 全部截止日批次（含已售完）、明细保存单价、规则历史 |
 | 店铺损益 | renderStoreProfitLoss、loadStoreProfitLossStores、loadStoreProfitLoss、saveStoreProfitLoss | get_store_profit_loss、update_store_profit_loss、_store_profit_loss_auto_values、_fifo_cost_components、_build_store_profit_loss_values | stores、sales、保存单件成本明细、批次成本构成、人工报告、OA |
-| 产品线 | loadProductLineProfit | product_line_profit_report、_product_line_profit_data、_product_line_mapping_for_sale | StoreProduct、ProductLine、结算来源SKU、保存单件成本明细 |
+| 产品线毛利（名称保留、逐商品） | loadProductLineProfit；两份页面及PageInteractions局部字典 | product_line_profit_report、_product_line_profit_data、_build_product_line_profit_sheet | Sale.product_id/quantity、Product编码名称、结算组件分摊、FIFO明细、按归属店铺计算的同商品转销；不依赖产品线映射 |
 | 财务附件 | exportFinancialAttachments | export_financial_attachments、_build_inventory_impairment_workbook、_build_store_profit_loss_sheet、_build_store_profit_loss_summary_sheet、_build_product_line_profit_sheet | 存货+店铺损益+产品线 |
 | 月度销量/当前库存 | 当前主要报表导航未发现独立月度页，保留 API | monthly_report | 销售、商品、当前全局库存 |
 | 月末快照 | 无人工页面/公开 API | main.lifespan、_monthly_snapshot_worker、ensure_period_snapshot、create_period_snapshot | accounting_periods、inventory_period_snapshots |
@@ -17,6 +17,8 @@
 | 独立结算/人工期间 | 销售月度、损益/产品线/附件 | unlinked_settlement_events、manual_period_values、derive_manual_periods | services/financial_facts.py；结算、分摊、人工月记录 |
 | 原静态准备余额 | 自动快照及历史辅助 | batch_impairments | 不替代当前持有期间变动服务 |
 | OA 自动费用 | 损益自动项/默认薪资 | office_space_totals_by_application_date、china_salary_totals_by_store_and_application_date、shared_admin_totals_by_application_date | 外部 PostgreSQL |
+
+逐商品毛利回归：[test_product_profit_report.py](../../../tests/test_product_profit_report.py)使用隔离SQLite验证同名不同编码、无映射/旧分类冲突、多订单合并、组合分摊与库存件数、退款/赔付、权限、只读SQL、API/Excel一致、未知金额及公式文本；[product_profit_page_checks.cjs](../../../tests/product_profit_page_checks.cjs)运行两份页面的真实函数与字典，检查数量、查询范围、转义、失败恢复及旧后端防混用。现有[inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)验证两份页面的实际DOM、保留名称、列名、问号、空结果/异常/旧接口提示；[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)继续验证按店铺归属抵减同商品成本、数量不随承担额重分。全部不连接业务库；真实本机后端加载仍需用户重启。
 
 持有期间服务为[inventory_provision_movements.py](../../../services/inventory_provision_movements.py)。[旧静态重建](../../../services/inventory_balance_impairment.py)和[旧逐日完整余额合计](../../../services/inventory_daily_impairment.py)仅保留历史回归。
 
@@ -32,6 +34,7 @@
 | 快照仅一次与无公开会计接口 | [test_accounting_period_snapshots.py](../../../tests/test_accounting_period_snapshots.py)、[test_accounting_period_removal.py](../../../tests/test_accounting_period_removal.py) |
 | 损益公式、入库其他成本、OA默认/人工覆盖、作废前持有费用待核对 | [test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)：VoidedHoldingPeriodTests使用隔离SQLite，覆盖销售前月份、无销售、部分/完全售完、跨年月/UTC日期边界及店铺；产品线成本见[test_provision_reporting.py](../../../tests/test_provision_reporting.py) |
 | 损益加载/保存竞态、条件切换和会话失效（两份页面DOM模拟） | [profit_loss_page_checks.cjs](../../../tests/profit_loss_page_checks.cjs)，`node tests/profit_loss_page_checks.cjs` |
+| 损益问号说明、可展开汇率、重复警示合并、缺失汇率/旧后端提示可见及查询失败清理（两份页面真实DOM） | [inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)，沿用现有Playwright与本地模拟API，不连接业务数据库 |
 | OA 过滤、部门和申请日期 | [test_oa_office_expenses.py](../../../tests/test_oa_office_expenses.py) |
 | 财务附件、汇总、产品线分摊与歧义 | [test_financial_attachments_export.py](../../../tests/test_financial_attachments_export.py) |
 | 非管理员范围 | [test_store_data_isolation.py](../../../tests/test_store_data_isolation.py) |

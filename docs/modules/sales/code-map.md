@@ -4,7 +4,7 @@
 | --- | --- | --- | --- |
 | 手工结算补录 | loadManualSaleStores、createSale → SalesLedger.createManualSettlement | create_manual_settlement | stores、sales_import_batches、settlement_entries；不扣库存 |
 | 补录产品名联想 | initializeManualProductSearch → ProductSearch.bind（static/product-search.js） | products.list_products | 复用库存候选/键盘/会话保护；选择仅填产品名，不改来源SKU或库存关联 |
-| 文件上传/真实进度 | importSalesFile → SalesImportProgress（static/sales-import-progress.js） | import_sales_stream / import_sales_file → _import_sales_file；services/import_progress.py | 同一导入核心、独立会话及单槽进度队列；无新表 |
+| 文件上传/真实进度 | importSalesFile → SalesImportProgress（static/sales-import-progress.js） | import_sales_stream / import_sales_file → _import_sales_file；services/import_progress.py | 同一导入核心、独立会话及单槽进度队列；完成摘要/详情/关闭与成功定时收起仅改变页面，无新表 |
 | 纯金额订单调整 | 导入结果、实际出库数量0的台账行 | _order_settlement_only_reason、_settlement_entry；financial_facts._unlinked_settlement_stmt | raw_data._settlement_only_reason；原数量/交易类型保留，不生成Sale/FIFO，所有财务入口共用 |
 | 产品名识别 | Excel产品名表达式 | _resolve_product_components(strict_names=True)、_resolve_product_name、_product_expression_parts | products、来源产品名；不读取平台映射 |
 | 中文产品名/历史展示 | 台账产品名、详情和Excel | _sale_import_context、_financial_event_response；FinancialEvent.display_product_name | 原始产品名优先，历史缺列用已关联Product.name；保存标题及历史成本不改 |
@@ -36,7 +36,7 @@
 
 订单号搜索回归：[test_sales_order_search.py](../../../tests/test_sales_order_search.py)覆盖原编号/部分编号/空格、同订单多来源SKU、直接旧关联与展示原始编号、内部/手工/CSV回退、独立赔付、数组/分页/月度/全筛选导出一致、月份/product_id/店铺叠加、无绑定拒绝及查询仅SELECT。现有导出VM和浏览器脚本核对两份页面的翻译标签、回车重置分页、同条件统计及无分页导出。
 
-进度回归：[test_sales_import_progress.py](../../../tests/test_sales_import_progress.py)覆盖提交后成功、回滚、店铺/角色边界、幂等、跨月查询及断开视图后任务继续，仅使用隔离SQLite；[sales_import_progress_checks.cjs](../../../tests/sales_import_progress_checks.cjs)验证分块UTF-8、未完整返回、会话隔离及提交阶段；[sales_import_page_checks.cjs](../../../tests/sales_import_page_checks.cjs)运行两份实际页面导入函数；现有[inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)补充两份页面的真实HTTP分块进度、错误恢复、月份说明、移动端及文件名转义，使用本地模拟服务，不连接业务库。
+进度回归：[test_sales_import_progress.py](../../../tests/test_sales_import_progress.py)覆盖提交后成功、回滚、店铺/角色边界、幂等、跨月查询及断开视图后任务继续，仅使用隔离SQLite；[sales_import_progress_checks.cjs](../../../tests/sales_import_progress_checks.cjs)验证分块UTF-8、未完整返回、提交阶段、8秒收起/交互暂停、待核对及错误保留、关闭和新导入/会话旧定时器隔离；[sales_import_page_checks.cjs](../../../tests/sales_import_page_checks.cjs)运行两份实际页面导入函数；现有[inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)补充两份页面的真实HTTP分块进度、结果摘要/键盘展开/关闭/自动收起、错误恢复、月份说明、移动端及文件名转义，使用本地模拟服务，不连接业务库。
 
 验证定位：[test_sales_rules.py](../../../tests/test_sales_rules.py) 覆盖格式、组件、分摊、库存不足、事件键、汇率、月度和 FIFO；[test_fifo_concurrency.py](../../../tests/test_fifo_concurrency.py) 模拟并发锁；[test_store_data_isolation.py](../../../tests/test_store_data_isolation.py) 检查店铺范围。真实 MySQL 脚本会建表/迁移/写入，不在静态文档验证范围。
 

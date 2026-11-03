@@ -25,3 +25,6 @@ SKU唯一；商品类型仅三选一：`stable`（稳健商品，每日1%，先�
 - [数据库字段](database.md)
 - [模块 API](api.md)
 - [知识库总索引](../../knowledge/README.md)
+
+
+业务变更的可选事务留痕已接入BusinessAuditRoute；捕获白名单、同次操作编号、角色/店铺权限、失败回滚及默认关闭的结构准备，统一见[操作日志](../operation-logs/overview.md#新增业务留痕)，不在本页重复维护。读取/导出不新增该类日志，原业务权限和历史接口契约保持。

@@ -1,5 +1,11 @@
 # 入库模块代码映射
 
+跌价归属弹窗由`inventory-allocations.js`组织产品副标题、当前批次高亮、店铺选项卡、生效方式说明及底部操作区；两份首页的`.allocation-*`样式仅作用于该弹窗，桌面双列、窄屏单列，保留原复选/单选控件、键盘焦点及错误提示。排版不更改归属默认值、生效模式、权限或保存请求；浏览器回归同时核对整卡点击、空格切换、当前行高亮和手机宽度无横向溢出。
+
+归属保存后的`InventoryAllocations.refreshSaved`等待弹窗`load`结果和原页面`onSaved`，统一捕获同步/异步刷新失败；`refreshPending`与重试按钮只执行GET，`refreshing`防止重复操作，关闭及会话变化使旧回调失效。`syncRefreshButtons`按最新分页及刷新状态恢复按钮。两份首页`loadBatches/loadBatchSkuOptions`向`api/loadProductOptions`传递`isCurrent`，在API处理旧401及正文前隔离会话。浏览器回归覆盖原列表503、弹窗503、仅刷新重试、重复点击、关闭重开及同账号重登后的旧401；不启动main或连接业务数据库。
+
+入库列表“修改归属”：两份首页`openBatchImpairmentStores`调用`InventoryAllocations.open(productId,title,onSaved,batchId)`；列表精确batch_id参数读取指定活动批次并自动打开归属编辑，保存后`loadBatches`刷新原列表。弹窗挂载在公共容器，可从库存和入库列表打开；复用原归属接口和锁序，不改数量/成本/日期。旧无日规则标签与显式待分配标签由`PageInteractions.batchStores.label`区分。测试覆盖精确读取/只读/角色/不存在或作废、售完旧批次修改，以及两份页面的第二页直达、保存刷新和失效提示。
+
 库存内归属管理由[inventory-allocations.js](../../../static/inventory-allocations.js)提供，两份HTML挂载同一模块，总览/盘点按商品ID打开批次分页列表。GET /batches复用活动批次和内容版本；PUT /batches/{id}/impairment-stores通过`_batch_edit_context`复用父批次→成本层→归属/日规则锁序，仅提交归属ID、生效模式和版本，不接受数量/成本字段，成功同事务留BatchChangeLog。新入库无归属由`initialize_unassigned`写显式空基线；分摊及未知传播由batch_store_allocations.py统一处理。测试见[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)、[浏览器回归](../../../tests/inventory_workspace_browser_checks.cjs)。无新增表，沿用两张日规则表。
 
 库存Excel由[services/inventory_export.py](../../../services/inventory_export.py)格式化，只消费页面共用的overview_row/activity_rows，不连接数据库或另算库存。接口测试核对总览/整月/横向格式、全查询范围、指定商品、跨店权限、未知合计空白、文本/公式安全、上限和分组期间一致性；浏览器测试核对下载文件名/参数、忙时重复点击、失败恢复、无效文件和旧会话响应。
@@ -20,7 +26,7 @@
 | 顶部联想/按商品输入检索 | searchField、bindProductSearch → ProductSearch.bind、applyKeywordQuery、traceProduct | products.list_products；inventory.overview/daily/export(product_id) | product-search.js与销售共用候选20项/键盘/防抖，独立请求状态；精确ID、关键字查询、输入法、取消及会话隔离 |
 | 来源弹窗 | openDetail、loadDetail、closeDetail | inventory.movements | 分页FIFO、到货基数、更正及作废负调整 |
 | 库存/整月/横向Excel导出 | exportInventory；固定条件、会话隔离 | inventory.export_inventory；overview_row、activity_rows | services/inventory_export.py只格式化查询结果，含范围/空值说明 |
-| 搜索/分页 | loadBatches、searchBatches、renderBatchPage | list_batches | 批次、商品 |
+| 批次搜索/分页/导出 | initializeBatchSearch → ProductSearch.bind、batchFilterParams、loadBatches、searchBatches、exportAllBatches | list_batches、export_batches；候选复用products.list_products | 名称/SKU联想，所选商品ID精确筛选；自由输入仍可搜批次号；列表与导出共用条件 |
 | 字段显示 | toggleBatchColumn、applyBatchColumnSelection | 无后端写入 | 浏览器列状态 |
 | 编辑 | batchEditBlockedReason、openEditBatch、saveEditBatch | _locked_batch、update_batch | 库存剩余数、成本调整当前读、InventoryBatch.edit_version |
 | 旧删除兼容入口（停用） | 无页面入口 | delete_batch | 角色校验后固定410 batch_delete_retired，不修改批次 |

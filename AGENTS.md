@@ -5,7 +5,7 @@
 ## 项目与上下文入口
 
 - 系统是跨境电商 FIFO 库存及财务核算单体：FastAPI/Uvicorn、SQLAlchemy 2 异步 ORM、MySQL、Pydantic 2；前端为原生 HTML/CSS/JavaScript，没有独立前端构建项目。
-- `main.py` 注册九组路由（本地认证与 EIMS 各一组，库存工作台含盘点对照记录，批次写入独立）；业务位于 `routers/`，算法/外部服务位于 `services/`，表/契约为 `models.py`、`schemas.py`。ORM含32张表（8张财务增强表默认关闭，实际库需核验）；EIMS认证、OA PostgreSQL只读取数与Frankfurter汇率是外部依赖。
+- `main.py` 注册十组路由（本地认证与 EIMS 各一组，库存工作台含盘点对照记录，批次写入独立，操作日志只读查询）；业务位于 `routers/`，算法/外部服务位于 `services/`，表/契约为 `models.py`、`schemas.py`。ORM含33张表（8张财务增强表及1张扩展业务审计表默认关闭，实际库需核验）；EIMS认证、OA PostgreSQL只读取数与Frankfurter汇率是外部依赖。
 - 先读 [知识库索引](docs/knowledge/README.md)，再按任务读取对应模块的 `overview.md`、`workflow.md`、`code-map.md`，按需补读 `database.md`、`api.md`，不要每次加载全部模块。
 - 字段/状态变更查[数据字典导航](docs/knowledge/data-dictionary.md)，API 变更查[接口总览](docs/knowledge/api-overview.md)，外部调用查[集成关系](docs/knowledge/integrations.md)；公共能力影响范围见[架构](docs/knowledge/architecture.md)。
 - 当前为中文原生页面，尚无统一翻译资源或语言切换；新增可见文本先读[国际化规范](docs/knowledge/internationalization.md)，区分展示标签与状态编码、导入表头、OA 取数名称。按实际任务渐进建设，不默认引入依赖或迁移业务名称字段。
@@ -19,6 +19,7 @@
 | 店铺、产品线、店铺/平台 SKU 映射 | [财务主数据](docs/modules/finance-masters/overview.md) |
 | 存货、损益、产品线、快照、OA、财务 Excel | [报表](docs/modules/reports/overview.md) |
 | 实际成本补差、费用台账、平台分类/回款、不可变月度版本 | [财务增强](docs/modules/financial-control/overview.md) |
+| 统一日志查询、商品/账号/主数据/销售处理/损益变更留痕 | [操作日志](docs/modules/operation-logs/overview.md) |
 
 运行、配置、数据库或部署任务还应阅读 [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md)、[PROJECT_RUNBOOK.md](PROJECT_RUNBOOK.md)，部署另读 [DEPLOYMENT_HANDOFF.md](DEPLOYMENT_HANDOFF.md)。财务主数据、销售结算、成本和报表任务另读 [FINANCIAL_REPORTING_TARGET.md](FINANCIAL_REPORTING_TARGET.md)，区分目标与已实现功能、历史环境与当前状态。
 
@@ -38,6 +39,8 @@
 10. 认证为 local/hybrid/eims，浏览器使用可撤销 Cookie 和 CSRF；EIMS app_user_id 只绑定本地 users.id，角色/店铺仍从本地读取。密码/启停与会话创建统一 User → AuthSession 锁序；刷新临时失败保留已收到的新 Token 为待复核状态，不能跳过验签/绑定。认证锁须在进入库存业务前释放，不记录认证查询。改密/停用撤销 Cookie，传统 Bearer 吊销限制见[认证模块](docs/modules/auth/overview.md)，配置/发布见[接入说明](docs/modules/auth/eims-sso-setup.md)。
 
 ## 验证与知识库维护
+
+- 扩展审计默认FIFO_OPERATION_AUDIT_ENABLED=0；启用前按授权准备business_operation_logs。路由白名单与原业务同事务写入，不能吞掉审计失败后继续提交；保留原权限/锁序。无业务外键，删除对象后保留身份及前后值，不保存密码/哈希/Token。捕获关闭管理员仍可读已存在历史；统一日志和兼容批次日志查询仅RequireAdmin，运营/查看者的业务操作仍照常留痕。见[日志模块](docs/modules/operation-logs/code-map.md)。
 
 - 财务增强默认FIFO_FINANCIAL_CONTROLS_ENABLED=0；已售晚到成本追溯原销售月，原批次/FIFO成本不改写，旧月度版本不覆盖。新增结构/启动与关闭开关的影响见[运行步骤](PROJECT_RUNBOOK.md#财务增强结构与启用)；不得用启动服务代替预检。费用manual/ledger互斥，保存损益不得覆盖ledger科目的人工备选值。
 

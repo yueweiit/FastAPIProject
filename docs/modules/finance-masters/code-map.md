@@ -11,8 +11,8 @@
 | 店铺 SKU CRUD | 当前模板未发现独立维护页面，API 已存在 | list_store_products、create_store_product、update_store_product、delete_store_product | store_products |
 | 店铺修改 | API 能力 | update_store | stores |
 | 导入匹配 | 销售上传 | _resolve_platform_sku_components | 平台 SKU |
-| 产品线归属 | 产品线报表 | _product_line_mapping_for_sale | 店铺 SKU、生效时间、来源 SKU |
+| 旧产品线归属 | 历史兼容函数；现行毛利不调用 | _product_line_mapping_for_sale | 旧店铺SKU/日期匹配函数保留，现行_product_line_profit_data按本地商品ID分组 |
 
 页面：[templates/index.html](../../../templates/index.html)。后端：[routers/finance_masters.py](../../../routers/finance_masters.py)，请求/响应：[schemas.py](../../../schemas.py)，模型：[models.py](../../../models.py)。
 
-下游：[routers/sales.py](../../../routers/sales.py) 的导入与 _sale_import_context；[routers/reports.py](../../../routers/reports.py) 的产品线归属。权限相关测试为 [test_product_feature_permissions.py](../../../tests/test_product_feature_permissions.py)、[test_store_data_isolation.py](../../../tests/test_store_data_isolation.py)，产品线匹配测试见 [test_financial_attachments_export.py](../../../tests/test_financial_attachments_export.py)。
+下游：[routers/sales.py](../../../routers/sales.py) 的历史导入与_sale_import_context保留店铺推断；[routers/reports.py](../../../routers/reports.py)现行毛利按商品读取，不以该映射归类。权限测试为[test_product_feature_permissions.py](../../../tests/test_product_feature_permissions.py)、[test_store_data_isolation.py](../../../tests/test_store_data_isolation.py)，旧匹配兼容测试见[test_financial_attachments_export.py](../../../tests/test_financial_attachments_export.py)，逐商品回归见[test_product_profit_report.py](../../../tests/test_product_profit_report.py)。
