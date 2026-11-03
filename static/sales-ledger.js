@@ -10,11 +10,14 @@
         impairment:'本行出库跌价', whole:'完整订单汇总', lines:'订单出库明细',
         category:'科目', raw:'原始分项金额（元）', shown:'本行金额（元）', unit:'单件成本（元/件）',
         calculation:'本行代入', batch:'批次号', quantity:'出库件数', unitCost:'有效单价（元）',
-        total:'成本合计（元）', impairmentUnits:'准备转销折算数量', impairmentAmount:'转销金额（元）',
+        total:'成本合计（元）', impairmentAmount:'跌价金额（元）',
+        arrivalDate:'入库日期', orderDate:'订单建立日期', ageDays:'相隔天数',
+        productType:'订单日商品类型', dailyRate:'日比例', batchOrderCost:'本批订单成本（元）',
+        stableType:'稳健商品', newType:'新品', noImpairmentType:'不跌价商品',
         purchase:'采购', head_shipping:'头程', last_mile:'尾程', other:'其他入库',
         rowHelp:'单件用未舍入分项除实际库存出库件数，显示4位；各金额按分展示并分配尾差。代入金额最多显示8位，计算仍用服务端原精度。跨批次单价为本次出库加权平均，不能用显示单价反算订单金额。',
         batchHelp:'保存的FIFO单价和数量是成本依据，分项按原始/冻结构成分配，叠加启用的对应成本补差；不是按最新采购价重算历史出库。',
-        impairmentHelp:'各出库库存层的准备转销折算数量乘对应有效单位成本后相加。销售当天先计提后转销；跌价单列，不重复加进成本或扣减毛利，也不代表销售店铺的承担额。',
+        impairmentHelp:'按实际FIFO批次分别计算后汇总：稳健商品＝相隔自然日数×1%×本批订单成本；新品＝相隔自然日数×0.5%×本批订单成本；不跌价商品＝0。类型取订单建立当天生效记录，入库当天为0天，不扣安全库存、不设90%上限。订单成本含当前有效的采购、头程、尾程和其他入库成本；跌价单列，不重复计入成本或扣毛利，也不是报表的准备转销金额。',
         wholeHelp:'按同店铺原内部订单分组的全部授权出库明细汇总，不受当前商品、月份和页面筛选限制。导入订单按订单ID+来源SKU分组，组合组件归在同组；显示原始订单号不会将不同来源SKU合并。不同商品的单价不相加；本行和汇总金额不可重复合计。',
         basis:'数量口径：本地库存实际出库件数；组合商品按组件行展示，不等同于平台销售套数。',
         count:'出库明细数', wholeCost:'整单销售成本（元）', wholeImpairment:'整单出库跌价（元）',
@@ -22,7 +25,7 @@
         sourceRowHelp:'来源整行原币金额，用于对照Excel；组合各组件重复展示，不参与合计。人民币收入和费用仍按已保存的组件份额及汇率计算。',
         sourceBackendUnavailable:'后端待更新',
         sourceBackendUpdate:'当前后端尚未加载原币核对字段。请重启后端服务后刷新页面；已导入的记录仍会保留，无需重新导入Excel。',
-        noBatches:'没有可核对的FIFO批次。', noImpairment:'没有可回放的出库跌价明细。',
+        noBatches:'没有可核对的FIFO批次。', noImpairment:'没有可核对的出库跌价明细。',
         localSku:'本地SKU', localProduct:'本地商品', sourceQuantity:'来源数量', sourceProduct:'来源产品名',
         fixedField:'固定字段', noFixedField:'不固定', clearFixedFields:'清空固定',
         pinnedCount:'已固定 {count} 列', pinLimitedSummary:'固定 {active} / {selected} 列',
@@ -55,6 +58,8 @@
     const current = token => token.epoch === epoch && token.user === userId();
     const money = (value, places = 2) => value == null || !Number.isFinite(Number(value)) ? t('pending') : `¥${Number(value).toFixed(places)}`;
     const preciseMoney = value => money(value,8).replace(/(\.\d{2}\d*?)0+$/, '$1');
+    const rateLabel = value => value == null || !Number.isFinite(Number(value)) ? t('pending')
+        : Number(value).toLocaleString(document.documentElement.lang || 'zh-CN',{style:'percent',maximumFractionDigits:4});
     const unknownSum = values => values.some(v => v == null || !Number.isFinite(Number(v))) ? null : values.reduce((s,v) => s + Number(v), 0);
     const totalCost = row => row.order_total_cost_cny ?? row.total_cost;
     const orderNumber = row => row.display_order_no || row.order_no;
@@ -298,13 +303,17 @@
             return `<tr><td>${h(key === 'total' ? t('total') : t(key))}</td><td>${preciseMoney(original)}</td><td>${money(shown)}</td><td>${money(unit,4)}</td><td>${original == null || unit == null ? t('pending') : `${preciseMoney(original)} ÷ ${h(sale.quantity)} = ${money(unit,4)}`}</td></tr>`;
         });
         const costBatches = data.cost_batches.map(batch => `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td><td>${money(batch.unit_cost,4)}</td>${categories.map(key=>`<td>${preciseMoney(batch[key+'_cost_cny'])}</td>`).join('')}<td>${money(batch.total_cost_cny,4)}</td></tr>`);
-        const impairments = data.impairment_batches.map(batch=>`<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td><td>${batch.impairment_units == null ? t('pending') : h(batch.impairment_units)}</td><td>${money(batch.unit_cost,4)}</td><td>${money(batch.impairment_cny)}</td><td>${batch.impairment_units == null ? t('pending') : `${h(batch.impairment_units)} × ${money(batch.unit_cost,4)} = ${money(batch.impairment_cny)}`}</td></tr>`);
+        const impairments = data.impairment_batches.map(batch=>{
+            const known = batch.age_days != null && batch.daily_rate != null && batch.total_cost_cny != null && batch.impairment_cny != null;
+            const kind = {stable:'stableType',safe_stock:'stableType',new:'newType',no_impairment:'noImpairmentType'}[batch.product_type];
+            return `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.arrival_date || t('pending'))}</td><td>${h(batch.order_date || t('pending'))}</td><td>${h(batch.age_days ?? t('pending'))}</td><td>${h(kind ? t(kind) : t('pending'))}</td><td>${h(rateLabel(batch.daily_rate))}</td><td>${preciseMoney(batch.total_cost_cny)}</td><td>${money(batch.impairment_cny)}</td><td>${known ? `${h(batch.age_days)} × ${h(rateLabel(batch.daily_rate))} × ${preciseMoney(batch.total_cost_cny)} = ${money(batch.impairment_cny)}` : t('pending')}</td></tr>`;
+        });
         const order = data.order_summary;
         return `<p class="sales-calculation-identity">${h(data.sku)} · ${h(data.product_name)} · ${h(orderNumber(sale))}</p><p class="sales-calculation-identity">${h(t('sourceProduct'))}：${h(sale.source_product_name || t('na'))} · ${h(t('sourceQuantity'))}：${h(sale.source_quantity ?? t('na'))} · ${h(sale.transaction_type || '')}</p><p data-help-tip data-help-anchor="#sales-calc-title">${h(t('basis'))}</p>
             ${notes.map(note=>`<p class="msg msg-err" role="alert">${h(note)}</p>`).join('')}
             ${section('row',t('row'),t('rowHelp'),table([t('category'),t('raw'),t('shown'),t('unit'),t('calculation')],lines))}
             ${section('batches',t('batches'),t('batchHelp'),costBatches.length ? table([t('batch'),t('quantity'),t('unitCost'),...categories.map(t),t('total')],costBatches) : `<p>${h(t('noBatches'))}</p>`)}
-            ${section('impairment',t('impairment'),t('impairmentHelp'),`<strong>${money(sale.impairment_cny)}</strong>`+(impairments.length ? table([t('batch'),t('quantity'),t('impairmentUnits'),t('unitCost'),t('impairmentAmount'),t('calculation')],impairments) : `<p>${h(t('noImpairment'))}</p>`))}
+            ${section('impairment',t('impairment'),t('impairmentHelp'),`<strong>${money(sale.impairment_cny)}</strong>`+(impairments.length ? table([t('batch'),t('arrivalDate'),t('orderDate'),t('ageDays'),t('productType'),t('dailyRate'),t('batchOrderCost'),t('impairmentAmount'),t('calculation')],impairments) : `<p>${h(t('noImpairment'))}</p>`))}
             ${section('whole',t('whole'),t('wholeHelp'),`<dl class="sales-order-totals"><div><dt>${h(t('count'))}</dt><dd>${h(order.line_count)}</dd></div><div><dt>${h(t('wholeCost'))}</dt><dd>${money(order.total_cost_cny)}</dd></div><div><dt>${h(t('wholeImpairment'))}</dt><dd>${money(order.impairment_cny)}</dd></div></dl>` + table([t('localSku'),t('localProduct'),t('quantity'),t('total'),t('impairmentAmount')],data.order_lines.map(row=>`<tr><td>${h(row.display_sku)}</td><td>${h(row.display_name)}</td><td>${h(row.quantity)}</td><td>${row.cost_status === 'needs_review' ? t('pending') : money(totalCost(row))}</td><td>${money(row.impairment_cny)}</td></tr>`)))} `;
     }
     function ensureDialog() {

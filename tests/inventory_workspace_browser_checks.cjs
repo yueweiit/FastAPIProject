@@ -458,7 +458,7 @@ async function main() {
         let productProfitRows=[],productProfitStatus=200;const productProfitQueries=[];
         let profitLossFixture = null, profitLossStatus = 200;
         let salesRows = [];
-        let calculationGate=null,calculationStatus=200;
+        let calculationGate=null,calculationStatus=200,calculationMissingOrderDate=false;
         let fieldHelpStatus=200;
         let pendingStatus=200;
         const manualSettlementCalls=[];let manualStatus=200;
@@ -546,11 +546,12 @@ async function main() {
                 const status=calculationStatus;
                 if(calculationGate){const held=calculationGate;calculationGate=null;await held.promise;}
                 if(status!==200)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({detail:{code:'sale_cost_not_found',message:'读取失败测试'}})});
-                const sale={...salesRows[0],display_sku:'CW0001',display_name:'狗狗咀嚼玩具'};
+                const missingDate=calculationMissingOrderDate;
+                const sale={...salesRows[0],display_sku:'CW0001',display_name:'狗狗咀嚼玩具',...(missingDate?{impairment_cny:null,impairment_review_reason:'订单创建日期缺失，不能使用结算日期计算出库跌价'}:{})};
                 return fulfill({sale,sku:'CW0001',product_name:'狗狗咀嚼玩具',quantity_basis:'inventory_units',
                     cost_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,total_cost_cny:20,purchase_cost_cny:8,head_shipping_cost_cny:4,last_mile_cost_cny:2,other_cost_cny:6}],
-                    impairment_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,impairment_units:'.09',impairment_cny:'.9'}],
-                    order_summary:{order_no:sale.order_no,store_id:7,store_name:'店铺A',line_count:2,complete:true,total_cost_cny:25,impairment_cny:'1.1'},
+                    impairment_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,impairment_units:missingDate?null:'.09',impairment_cny:missingDate?null:'.9',arrival_date:'2026-09-01',order_date:missingDate?null:'2026-09-10',age_days:missingDate?null:9,product_type:missingDate?null:'new',daily_rate:missingDate?null:'.005',total_cost_cny:20}],
+                    order_summary:{order_no:sale.order_no,store_id:7,store_name:'店铺A',line_count:2,complete:true,total_cost_cny:25,impairment_cny:missingDate?null:'1.1'},
                     order_lines:[sale,{...sale,id:101,display_sku:'COMPONENT-OFF-PAGE',display_name:'筛选外组合组件',quantity:1,order_total_cost_cny:5,impairment_cny:'.2'}]});
             }
             if (url.pathname === '/sales') {salesListQueries.push(Object.fromEntries(url.searchParams));return fulfill({items: salesRows, total: salesRows.length, page: 1, page_size: 20});}
@@ -1313,8 +1314,23 @@ async function main() {
             check(await page.locator('#sales-calc-body .sales-calculation-identity').first().innerText().then(v=>v.includes('00042-ORDER-COST')&&!v.includes('SOURCE-SKU')),true);
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('COST-BATCH')&&v.includes('COMPONENT-OFF-PAGE')&&v.includes('25.00')),true);
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('¥4.0000')),true);
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('9 × 0.5% × ¥20.00 = ¥0.90')),true);
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('2026-09-01')&&v.includes('2026-09-10')&&v.includes('订单日商品类型')),true);
             check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('来源产品名：Juguete para Perro')&&v.includes('狗狗咀嚼玩具')),true);
             check(await page.locator('#sales-calc-body script, #sales-calc-body img').count(),0);
+            // 缺失来源创建日时不伪造日期或代入算式，但保留已知的本批成本。
+            await page.locator('[data-sales-calc-close]').click();calculationMissingOrderDate=true;
+            await firstSale.locator('[data-sale-calculation]').click();
+            await page.locator('#sales-calc-body').getByText('订单创建日期缺失，不能使用结算日期计算出库跌价',{exact:true}).waitFor();
+            const pendingImpairment=page.locator('.sales-calculation-section').filter({has:page.locator('#sales-calc-impairment')}).locator('tbody tr').first().locator('td');
+            check(await pendingImpairment.nth(2).innerText(),'待核对');
+            check(await pendingImpairment.nth(3).innerText(),'待核对');
+            check(await pendingImpairment.nth(6).innerText(),'¥20.00');
+            check(await pendingImpairment.nth(7).innerText(),'待核对');
+            check(await pendingImpairment.nth(8).innerText(),'待核对');
+            await page.locator('[data-sales-calc-close]').click();calculationMissingOrderDate=false;
+            await firstSale.locator('[data-sale-calculation]').click();
+            await page.locator('#sales-calc-body .sales-order-totals').waitFor();
             // 浏览器旧close事件晚到时，不得取消同一事件循环内新打开的计算明细。
             await page.evaluate(()=>{document.getElementById('sales-calc-dialog').close();document.querySelector('[data-sale-calculation]').click();});
             await page.locator('#sales-calc-body .sales-order-totals').waitFor();
