@@ -35,7 +35,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123'} =
     vm.runInContext(`let storeProfitLossReport=null, storeProfitLossRequestId=0;
         let storeProfitLossLoading=false, storeProfitLossSavePromise=null;`, context);
     for (const name of ['escapeHtml', 'defaultProfitLossMonth', 'profitLossSelectionMatches',
-        'profitLossPolicyReady', 'updateProfitLossSaveState', 'resetStoreProfitLossState', 'loadStoreProfitLossStores',
+        'profitLossPolicyReady', 'updateProfitLossSaveState', 'clearProfitLossContext', 'resetStoreProfitLossState', 'loadStoreProfitLossStores',
         'loadStoreProfitLoss', 'saveStoreProfitLoss']) {
         const match = source.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(match, `Missing ${name}`);
@@ -53,18 +53,20 @@ function renderManualCell(file, manualValue, inputSource = 'manual') {
     const source = fs.readFileSync(file, 'utf8');
     const elements = new Map();
     const element = id => {
-        if (!elements.has(id)) elements.set(id, {style: {}, innerHTML: '', textContent: ''});
+        if (!elements.has(id)) elements.set(id, {style: {}, innerHTML: '', textContent: '',
+            classList: {toggle() {}}, setAttribute() {}, removeAttribute() {}, getAttribute() {return null;}});
         return elements.get(id);
     };
     const context = vm.createContext({
         window: {PageInteractions: {text: key => {
-            const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新'};
+            const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新',
+                profitLossPeriodCurrent:'本月',profitLossPeriodPrevious:'上月',profitLossPeriodYtd:'本年累计',profitLossPeriodSeparator:'、'};
             equal(Object.hasOwn(labels,key),true);return labels[key];
         }}},
         document: {getElementById: element},
         formatProfitLossAmount: value => value == null ? '—' : String(value),
     });
-    for (const name of ['escapeHtml', 'profitLossPolicyReady', 'renderStoreProfitLoss']) {
+    for (const name of ['escapeHtml', 'profitLossPolicyReady', 'compactProfitLossWarnings', 'renderStoreProfitLoss']) {
         const match = source.match(new RegExp('^function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(match, `Missing ${name}`);
         vm.runInContext(match[0], context);
@@ -79,6 +81,25 @@ function renderManualCell(file, manualValue, inputSource = 'manual') {
 }
 
 async function verify(file) {
+    {
+        const ui = setup(file);
+        ui.element('profit-loss-updated').textContent = '旧店铺';
+        ui.element('profit-loss-warnings').innerHTML = '旧警示';
+        ui.element('profit-loss-warnings').hidden = false;
+        ui.element('profit-loss-fx').textContent = '旧汇率';
+        ui.element('profit-loss-fx-details').open = true;
+        ui.element('profit-loss-fx-details').hidden = false;
+        const loading = ui.load(); await flush();
+        equal(ui.element('profit-loss-updated').textContent, '');
+        equal(ui.element('profit-loss-warnings').innerHTML, '');
+        equal(ui.element('profit-loss-warnings').hidden, true);
+        equal(ui.element('profit-loss-fx').textContent, '');
+        equal(ui.element('profit-loss-fx-details').open, false);
+        equal(ui.element('profit-loss-fx-details').hidden, true);
+        ui.queries()[0].reject(new Error('读取失败')); await loading;
+        equal(ui.element('profit-loss-warnings').hidden, true);
+        equal(ui.element('profit-loss-fx-details').hidden, true);
+    }
     {
         const ui=setup(file);const loading=ui.load();await flush();
         const legacy=report();delete legacy.calculation_policy;

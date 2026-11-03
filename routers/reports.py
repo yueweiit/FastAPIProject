@@ -925,6 +925,16 @@ def _workbook_bytes_with_formula_cache(
 FINANCIAL_ATTACHMENT_SHEET = "09-店铺损益表"
 STORE_PROFIT_LOSS_SUMMARY_SHEET = "10-各店铺损益汇总表"
 PRODUCT_LINE_PROFIT_SHEET = "12-各产品线毛利分析表"
+PRODUCT_PROFIT_TEXT = {"zh-CN": {
+    "product": "商品编码 / 名称", "quantity": "本月出库数量",
+    "missing_product": "商品资料缺失，需核对本地商品编码与名称。",
+    "settlement": "未分配商品（结算调整/赔付）",
+    "settlement_note": "无可靠本地商品关联的结算调整和赔付单独列示，不根据平台SKU或标题推定商品。",
+    "writeoff_note": "按批次跌价归属店铺抵减销售转销；出库数量仍按实际销售店铺统计。",
+    "writeoff_pending": "批次跌价归属或历史流水待核对，相关成本和毛利暂缺。",
+    "period_note": "核算期间：{year}年{month}月；收入及销售费用按各核算月末汇率换算，成本包含采购、头尾程及入库其他成本、销售费用和分摊成本，扣除已确认销售转销准备；未知金额及不完整合计留空。",
+    "allocation_note": "按本地商品汇总，不依赖产品线映射；店铺收入及费用沿用各店原分摊规则，代发成本逐月分摊后累计。无可靠商品关联的结算调整/赔付单独列示。",
+}}
 PRODUCT_LINE_ALLOCATED_REVENUE_KEYS = ("shipping_revenue", "other_revenue")
 PRODUCT_LINE_ALLOCATED_COST_KEYS = (
     "customs_import_tax", "local_logistics_cost", "fulfillment_cost",
@@ -1258,6 +1268,7 @@ def _allocate_monthly_fulfillment_cost(
             if not revenues or (not sum(revenues.values(), Decimal(0)) and not revenue_unknown):
                 item = line_data.setdefault("unallocated_fulfillment", {
                     "name": "未分配产品线（代发成本）", "sku_ids": set(),
+                    "row_type": "unallocated_fulfillment", "current_quantity": 0,
                     **{p: {"revenue": Decimal(0), "cost": Decimal(0)} for p in periods},
                     "note": "实际履约订单产生代发成本，但该店铺当月收入为0，未按收入分摊。"})
                 for period in selected_periods:
@@ -1286,14 +1297,20 @@ async def _product_line_profit_data(
     periods = _month_periods(report_month)
     ytd_start, ytd_end = periods["ytd"]
     read_start = min(start for start, _end in periods.values())
-    mapping_rows = (await db.execute(
-        select(StoreProduct, ProductLine, Product)
-        .join(ProductLine, ProductLine.id == StoreProduct.product_line_id)
-        .join(Product, Product.id == StoreProduct.product_id)
-        .where(StoreProduct.store_id.in_(store_ids))
-    )).all() if store_ids else []
-    mappings_by_store_product: dict[tuple[int, int], list[tuple[StoreProduct, ProductLine, Product]]] = defaultdict(list)
-    line_data: dict[int | None, dict] = {}
+    # 路由/报表名称保留；分组以已保存的本地商品ID为准，不再依赖店铺SKU产品线映射。
+    line_data: dict[int | str, dict] = {}
+    labels = PRODUCT_PROFIT_TEXT["zh-CN"]
+
+    def product_item(product_id: int | None) -> dict:
+        key = product_id if product_id is not None else "unallocated_settlement"
+        return line_data.setdefault(key, {
+            "name": "" if product_id is not None else labels["settlement"],
+            "product_id": product_id, "sku": None, "product_name": None,
+            "row_type": "product" if product_id is not None else "unallocated_settlement",
+            "current_quantity": 0, "sku_ids": {product_id} if product_id is not None else set(),
+            **{period: {"revenue": Decimal(0), "cost": Decimal(0)} for period in periods},
+            "note": "" if product_id is not None else labels["settlement_note"],
+        })
     revenue_by_store_line: defaultdict[
         int, defaultdict[int | None, dict[str, Decimal]]
     ] = defaultdict(lambda: defaultdict(
@@ -1302,19 +1319,6 @@ async def _product_line_profit_data(
     unknown_store_periods = defaultdict(set)
     monthly_revenues = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: Decimal(0))))
     unknown_store_months = set()
-    for mapping, product_line, product in mapping_rows:
-        mappings_by_store_product[(mapping.store_id, mapping.product_id)].append((mapping, product_line, product))
-        if _mapping_effective_on(mapping, report_date):
-            item = line_data.setdefault(product_line.id, {
-                "name": product_line.name,
-                "sku_ids": set(),
-                "current": {"revenue": Decimal("0"), "cost": Decimal("0")},
-                "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
-                "ytd": {"revenue": Decimal("0"), "cost": Decimal("0")},
-                "note": "",
-            })
-            item["sku_ids"].add(product.id)
-
     sales = list((await db.execute(
         select(Sale, User.store_id)
         .outerjoin(User, User.id == Sale.user_id)
@@ -1333,39 +1337,6 @@ async def _product_line_profit_data(
 
         import_context_by_sale, _ = await _sale_import_context(db, [sale for sale, _user_store_id in sales])
 
-    sale_ids = [sale.id for sale, _user_store_id in sales]
-    source_skus_by_sale: defaultdict[int, set[str]] = defaultdict(set)
-    if sale_ids:
-        source_sku_rows = await db.execute(
-            select(SettlementEntryAllocation.sale_id, SettlementEntry.platform_sku_id)
-            .join(
-                SettlementEntry,
-                SettlementEntry.id == SettlementEntryAllocation.settlement_entry_id,
-            )
-            .where(
-                SettlementEntryAllocation.sale_id.in_(sale_ids),
-                SettlementEntry.platform_sku_id.is_not(None),
-            )
-        )
-        for sale_id, platform_sku_id in source_sku_rows.all():
-            if platform_sku_id:
-                source_skus_by_sale[sale_id].add(platform_sku_id)
-
-    def line_for(sale: Sale, user_store_id: int | None):
-        store_id = sale.store_id or user_store_id
-        mapping = _product_line_mapping_for_sale(
-            mappings_by_store_product,
-            store_id,
-            sale.product_id,
-            sale.sold_at.date(),
-            source_skus_by_sale.get(sale.id),
-        )
-        if mapping is None:
-            if source_skus_by_sale.get(sale.id):
-                return None, "未分配产品线（来源 SKU 未匹配或产品线映射冲突）"
-            return None, "未分配产品线（缺少来源 SKU 或产品线映射冲突）"
-        return mapping[1].id, mapping[1].name
-
     from services.report_exchange_rates import monthly_report_rates, rate_key, convert_report_amount, fulfillment_orders
     fulfillment = fulfillment_orders([sale for sale, _ in sales], import_context_by_sale,
                                      {sale.id: sale.store_id or owner for sale, owner in sales})
@@ -1375,16 +1346,10 @@ async def _product_line_profit_data(
     sale_line_by_id: dict[int, int | None] = {}
     for sale, user_store_id in sales:
         sale_store_id = sale.store_id or user_store_id
-        line_id, line_name = line_for(sale, user_store_id)
-        item = line_data.setdefault(line_id, {
-            "name": line_name,
-            "sku_ids": set(),
-            "current": {"revenue": Decimal("0"), "cost": Decimal("0")},
-            "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},
-            "ytd": {"revenue": Decimal("0"), "cost": Decimal("0")},
-            "note": "销售记录未匹配到有效店铺 SKU 产品线映射" if line_id is None else "",
-        })
-        item["sku_ids"].add(sale.product_id)
+        line_id = sale.product_id
+        item = product_item(line_id)
+        if periods["current"][0] <= sale.sold_at.date() < periods["current"][1]:
+            item["current_quantity"] += sale.quantity
         sale_line_by_id[sale.id] = line_id
         context = import_context_by_sale.get(sale.id, {})
         rate = monthly_rates[rate_key(context.get("currency"), sale.sold_at.date())]
@@ -1446,29 +1411,32 @@ async def _product_line_profit_data(
                         line_data[line_id][period]["cost"] -= adjustment
 
     # 手工归属的销售转销按批次店铺均分，未销售的归属店铺也有该抵减。
-    # 没有可靠的销售SKU映射，不猜测产品线，单独保留均分转销行。
+    # 批次具有可靠本地商品ID，按同商品归集各授权店铺份额，不改变店铺承担额。
     if store_ids:
         assigned_rows, _assigned_sales, assigned_replay = await _load_inventory_provision_data(db, ytd_end - timedelta(days=1))
-        shares = []
         for batch, *_ in assigned_rows:
             if not (batch.impairment_stores or batch.allocation_rules):
                 continue
             owners = {s["id"] for r in ([rule_at(batch, date.min)] + batch.allocation_rules) for s in r.stores}
+            shares = []
             for owner in owners:
                 if owner not in store_ids:
                     continue
                 shares.append({period: allocated_provision_period(assigned_replay, batch, owner, start, end,
                                                                   writeoff=True, explicit_only=True)
                     for period, (start, end) in periods.items()})
-        if shares:
-            item = line_data.setdefault("impairment_store_allocation", {
-                "name": "未分配产品线（跌价均分转销）", "sku_ids": set(),
-                **{p: {"revenue": Decimal(0), "cost": Decimal(0)} for p in STORE_PROFIT_LOSS_PERIODS},
-                "note": "按批次跌价归属店铺均分销售转销，不按店铺实际销量分摊，也不推定产品线。"})
+            amounts = {period: _sum_known(share[period] for share in shares) for period in periods}
+            if not shares or all(amount == 0 for amount in amounts.values()):
+                continue
+            item = product_item(batch.product_id)
+            if labels["writeoff_note"] not in item["note"]:
+                item["note"] = f"{item['note']}；{labels['writeoff_note']}".strip("；")
             for period in periods:
-                amount = _sum_known(share[period] for share in shares)
+                amount = amounts[period]
                 if amount is None:
                     item.setdefault("_unknown_cost_periods", set()).add(period)
+                    if labels["writeoff_pending"] not in item["note"]:
+                        item["note"] = f"{item['note']}；{labels['writeoff_pending']}".strip("；")
                 else:
                     item[period]["cost"] -= amount
 
@@ -1478,17 +1446,8 @@ async def _product_line_profit_data(
         rate = monthly_rates[rate_key(event.currency, event.occurred_at.date())]
         event_revenue = convert_report_amount(event.original_revenue, rate)
         event_expense = convert_report_amount(event.original_expense, rate)
-        candidates = mappings_by_store_product.get((event.store_id, event.product_id), [])
-        mapping = _product_line_mapping_for_sale(
-            {(event.store_id, event.product_id): candidates}, event.store_id, event.product_id,
-            event.occurred_at.date(), {event.platform_sku_id} if event.platform_sku_id else set(),
-        ) if event.product_id else None
-        line_id = mapping[1].id if mapping else None
-        item = line_data.setdefault(line_id, {
-            "name": mapping[1].name if mapping else "未分配产品线（结算调整）", "sku_ids": set(),
-            **{p: {"revenue": Decimal(0), "cost": Decimal(0)} for p in STORE_PROFIT_LOSS_PERIODS},
-            "note": "" if mapping else "无可靠组件/产品线分摊的结算调整保留于未分配组。",
-        })
+        line_id = event.product_id if event.product_id is not None else "unallocated_settlement"
+        item = product_item(event.product_id)
         month = event.occurred_at.date().replace(day=1)
         monthly_revenues[event.store_id][month][line_id] += event_revenue if event_revenue is not None else Decimal(0)
         if event_revenue is None or event_expense is None:
@@ -1521,14 +1480,28 @@ async def _product_line_profit_data(
         unknown_store_periods,
     )
 
+    product_ids = {key for key in line_data if isinstance(key, int)}
+    products = {product.id: product for product in (await db.execute(
+        select(Product.id, Product.sku, Product.name).where(Product.id.in_(product_ids))
+    )).all()} if product_ids else {}
+    for product_id in product_ids:
+        item = line_data[product_id]
+        product = products.get(product_id)
+        if product is not None:
+            item.update(sku=product.sku, product_name=product.name, name=f"{product.sku} · {product.name}")
+        else:
+            item["name"] = str(product_id)
+            item["note"] = f"{item['note']}；{labels['missing_product']}".strip("；")
     rows = []
-    for item in sorted(line_data.values(), key=lambda value: value["name"]):
+    for item in sorted(line_data.values(), key=lambda value: (value.get("product_id") is None, value.get("sku") or value["name"])):
         for period in item.get("_unknown_revenue_periods", set()):
             item[period]["revenue"] = None
         for period in item.get("_unknown_cost_periods", set()):
             item[period]["cost"] = None
         rows.append({
             "name": item["name"],
+            **{key: item.get(key, 0 if key == "current_quantity" else None)
+               for key in ("product_id", "sku", "product_name", "row_type", "current_quantity")},
             "sku_count": len(item["sku_ids"]),
             "sku_ids": item["sku_ids"],
             "current": item["current"],
@@ -1545,7 +1518,8 @@ def _build_product_line_profit_sheet(
     report_month: date,
 ) -> None:
     sheet = workbook.create_sheet(PRODUCT_LINE_PROFIT_SHEET)
-    headers = ["产品线/品类", "SKU数量", "本月营业收入", "本月营业成本", "本月毛利", "本月毛利率", "上月毛利率", "环比变化", "本年累计收入", "本年累计毛利", "累计毛利率", "备注"]
+    labels = PRODUCT_PROFIT_TEXT["zh-CN"]
+    headers = [labels["product"], labels["quantity"], "本月营业收入", "本月营业成本", "本月毛利", "本月毛利率", "上月毛利率", "环比变化", "本年累计收入", "本年累计毛利", "累计毛利率", "备注"]
     sheet.append(headers)
     totals = {
         period: {"revenue": _sum_known(row[period]["revenue"] for row in rows), "cost": _sum_known(row[period]["cost"] for row in rows)}
@@ -1559,7 +1533,7 @@ def _build_product_line_profit_sheet(
         previous_margin = _margin_known(previous_gross, row["previous"]["revenue"])
         ytd_margin = _margin_known(ytd_gross, row["ytd"]["revenue"])
         sheet.append([
-            row["name"], row["sku_count"], _excel_number(row["current"]["revenue"]), _excel_number(row["current"]["cost"]),
+            row["name"], row.get("current_quantity", 0), _excel_number(row["current"]["revenue"]), _excel_number(row["current"]["cost"]),
             _excel_number(current_gross), _excel_number(current_margin), _excel_number(previous_margin),
             _excel_number(current_margin - previous_margin if current_margin is not None and previous_margin is not None else None),
             _excel_number(row["ytd"]["revenue"]), _excel_number(ytd_gross), _excel_number(ytd_margin), row["note"],
@@ -1571,7 +1545,7 @@ def _build_product_line_profit_sheet(
     total_previous_margin = _margin_known(total_previous_gross, totals["previous"]["revenue"])
     total_ytd_margin = _margin_known(total_ytd_gross, totals["ytd"]["revenue"])
     sheet.append([
-        "合计", len(set().union(*(row["sku_ids"] for row in rows))) if rows else 0,
+        "合计", sum(row.get("current_quantity", 0) for row in rows),
         _excel_number(totals["current"]["revenue"]), _excel_number(totals["current"]["cost"]), _excel_number(total_current_gross),
         _excel_number(total_current_margin), _excel_number(total_previous_margin),
         _excel_number(total_current_margin - total_previous_margin if total_current_margin is not None and total_previous_margin is not None else None),
@@ -1579,6 +1553,8 @@ def _build_product_line_profit_sheet(
     ])
     _style_financial_sheet(sheet, headers)
     for row_number in range(2, sheet.max_row + 1):
+        for column in (1, 12):
+            sheet.cell(row_number, column).data_type = "s"
         for column in (3, 4, 5, 9, 10):
             sheet.cell(row_number, column).number_format = '¥#,##0.00'
         for column in (6, 7, 8, 11):
@@ -1589,8 +1565,8 @@ def _build_product_line_profit_sheet(
                 cell.fill = PatternFill("solid", fgColor="EEF3F8")
     note_row = sheet.max_row + 2
     sheet.cell(note_row, 1, "说明")
-    sheet.cell(note_row, 2, f"核算期间：{report_month.year}年{report_month.month}月；收入沿用销售记录口径，成本包含可归属的采购、头程尾程及销售费用，并扣除已确认的销售转销准备；待核对成本不计不完整合计。")
-    sheet.cell(note_row + 1, 2, "店铺损益表中的运费收入、其他收入、关税及进口税费、本地物流配送成本、代发成本，按各店铺同期间产品线商品销售收入占比分摊；未匹配产品线的销售单独列示。")
+    sheet.cell(note_row, 2, labels["period_note"].format(year=report_month.year, month=report_month.month))
+    sheet.cell(note_row + 1, 2, labels["allocation_note"])
     for row_number in (note_row, note_row + 1):
         sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == note_row)
         sheet.cell(row_number, 2).font = Font(name="等线", size=9, color="666666")
@@ -1954,7 +1930,7 @@ async def inventory_impairment_summary(
 @router.get("/product-line-profit")
 async def product_line_profit_report(
     report_month: date = Query(..., description="核算月份第一天"),
-    report_date: date | None = Query(default=None, description="映射截止日"),
+    report_date: date | None = Query(default=None, description="兼容保留的报告截止日；核算期间按report_month"),
     store_id: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
@@ -1984,6 +1960,8 @@ async def product_line_profit_report(
         result.append({
             "name": item["name"],
             "sku_count": item["sku_count"],
+            "group_by": "product",
+            **{key: item[key] for key in ("product_id", "sku", "product_name", "row_type", "current_quantity")},
             "current_revenue": item["current"]["revenue"],
             "current_cost": item["current"]["cost"],
             "current_gross": current_gross,

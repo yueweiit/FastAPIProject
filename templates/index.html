@@ -271,6 +271,10 @@
         .inventory-report-actions select { padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
         @media (max-width:900px) { .reports-layout { grid-template-columns:1fr; } .reports-sidebar { position:static; display:flex; overflow-x:auto; } .reports-sidebar button { width:auto; min-width:max-content; border-left:0; border-bottom:3px solid transparent; } .reports-sidebar button.active { border-bottom-color:var(--accent); } }
         .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
+        .profit-loss-warnings { margin:10px 0; padding:10px 12px; border:1px solid #f1cf88; border-radius:6px; background:#fff8e8; color:#854d0e; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+        .profit-loss-fx-details { margin:10px 0; color:var(--muted); font-size:13px; }
+        .profit-loss-fx-details summary { cursor:pointer; width:fit-content; }
+        .profit-loss-fx-details p { margin:8px 0; white-space:pre-line; overflow-wrap:anywhere; }
         .product-import-dialog { width:min(1080px,94vw); max-height:88vh; margin:auto; padding:24px; border:0; border-radius:12px; color:var(--ink); box-shadow:0 20px 70px rgba(17,30,50,.25); }
         .page-action-dialog { width:min(520px,94vw); box-sizing:border-box; }
         .page-action-dialog [hidden] { display:none; }
@@ -888,15 +892,17 @@
                     <div id="inventory-summary-scroll" class="table-scroll" hidden><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>入库批次数</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-summary-tbody"></tbody><tfoot id="inventory-summary-tfoot"></tfoot></table></div>
                 </div>
                 <div id="report-pane-profit-loss" class="report-pane card">
-                    <div class="flex-between"><h3>店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
+                    <div class="flex-between"><h3 id="profit-loss-title">店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
                     <div class="profit-loss-controls"><div class="form-row"><div id="profit-loss-store-group" class="form-group"><label for="profit-loss-store">店铺</label><select id="profit-loss-store" onchange="loadStoreProfitLoss()"></select></div><div class="form-group"><label for="profit-loss-month">核算月份</label><input id="profit-loss-month" type="month" onchange="loadStoreProfitLoss()"></div><div class="form-group" style="justify-content:flex-end"><button class="btn btn-secondary" type="button" onclick="loadStoreProfitLoss()">查询</button></div></div><div id="profit-loss-updated" class="profit-loss-updated"></div></div>
-                    <p id="profit-loss-policy" data-profit-loss-text="profitLossPolicy" style="font-size:12px;color:#64748b;margin:8px 0"></p>
-                    <p id="profit-loss-fx" style="font-size:12px;color:#64748b"></p>
+                    <div id="profit-loss-warnings" class="profit-loss-warnings" role="status" hidden></div>
+                    <p id="profit-loss-policy" data-help-tip data-help-anchor="#profit-loss-title" data-profit-loss-text="profitLossPolicy" style="font-size:13px;color:#64748b;margin:8px 0"></p>
+                    <details id="profit-loss-fx-details" class="profit-loss-fx-details" hidden><summary data-profit-loss-text="profitLossExchangeDetails"></summary><p id="profit-loss-fx"></p></details>
                     <div class="table-scroll profit-loss-table"><table><thead><tr><th>项目</th><th>本月金额</th><th data-profit-loss-text="profitLossYtd"></th><th>备注</th></tr></thead><tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody></table></div>
                 </div>
                 <div id="report-pane-product-line" class="report-pane card">
-                    <div class="flex-between"><h3>各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
-                    <div class="table-scroll"><table class="report-data-table"><thead><tr><th>产品线/品类</th><th>SKU数量</th><th>本月营业收入</th><th>本月营业成本</th><th>本月毛利</th><th>本月毛利率</th><th>上月毛利率</th><th>环比变化</th><th>本年累计收入</th><th>本年累计毛利</th><th>累计毛利率</th><th>备注</th></tr></thead><tbody id="product-line-profit-tbody"></tbody></table></div>
+                    <div class="flex-between"><h3 id="product-line-profit-title">各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
+                    <p data-help-tip data-help-anchor="#product-line-profit-title" data-profit-loss-text="productProfitHelp"></p>
+                    <div class="table-scroll"><table class="report-data-table"><thead><tr><th data-profit-loss-text="productProfitProduct"></th><th data-profit-loss-text="productProfitQuantity"></th><th>本月营业收入</th><th>本月营业成本</th><th>本月毛利</th><th>本月毛利率</th><th>上月毛利率</th><th>环比变化</th><th>本年累计收入</th><th>本年累计毛利</th><th>累计毛利率</th><th>备注</th></tr></thead><tbody id="product-line-profit-tbody"></tbody></table></div>
                 </div>
             </div>
         </div>
@@ -3135,7 +3141,34 @@ function resetStoreProfitLossState() {
     storeProfitLossRequestId++;
     storeProfitLossReport = null;
     storeProfitLossLoading = false;
+    clearProfitLossContext();
     updateProfitLossSaveState();
+}
+
+function clearProfitLossContext() {
+    document.getElementById('profit-loss-updated').textContent = '';
+    const warnings = document.getElementById('profit-loss-warnings');
+    warnings.innerHTML = '';
+    warnings.hidden = true;
+    document.getElementById('profit-loss-fx').textContent = '';
+    const details = document.getElementById('profit-loss-fx-details');
+    details.open = false;
+    details.hidden = true;
+}
+
+function compactProfitLossWarnings(warnings) {
+    const text = key => window.PageInteractions?.text(key) || '';
+    const periods = ['Current', 'Previous', 'Ytd'].map(key => text(`profitLossPeriod${key}`)).filter(Boolean);
+    const groups = new Map();
+    // 只合并相同展示文案的期间前缀，不以提示文本判定业务状态；未知提示保留全文。
+    for (const warning of new Set((warnings || []).filter(value => typeof value === 'string' && value.trim()))) {
+        const period = periods.find(label => warning.startsWith(label));
+        const body = period ? warning.slice(period.length) : warning;
+        const key = JSON.stringify([Boolean(period), body]);
+        if (!groups.has(key)) groups.set(key, {periods: [], body});
+        if (period) groups.get(key).periods.push(period);
+    }
+    return Array.from(groups.values(), group => group.periods.join(text('profitLossPeriodSeparator')) + group.body);
 }
 
 function formatProfitLossAmount(value, row) {
@@ -3173,16 +3206,32 @@ function renderStoreProfitLoss(report) {
     saveButton.style.display = editable ? '' : 'none';
     const policy = document.getElementById('profit-loss-policy');
     if (policy) {
-        policy.textContent = window.PageInteractions?.text(profitLossPolicyReady(report) ? 'profitLossPolicy' : 'profitLossBackendUpdate') || '';
-        policy.className = profitLossPolicyReady(report) ? '' : 'msg msg-err';
+        const ready = profitLossPolicyReady(report);
+        policy.textContent = window.PageInteractions?.text(ready ? 'profitLossPolicy' : 'profitLossBackendUpdate') || '';
+        policy.classList.toggle('msg', !ready);
+        policy.classList.toggle('msg-err', !ready);
+        if (!ready) policy.setAttribute('role', 'alert');
+        else if (policy.getAttribute('role') === 'alert') policy.removeAttribute('role');
+        window.HelpTips?.setInline(policy, !ready);
     }
+    const text = key => window.PageInteractions?.text(key) || '';
     updated.textContent = report.updated_at
-        ? `${report.store_name} · ${report.period_label} · 上次保存 ${String(report.updated_at).replace('T', ' ').slice(0, 19)}`
+        ? `${report.store_name} · ${report.period_label} · ${text('profitLossLastSaved').replace('{time}', String(report.updated_at).replace('T', ' ').slice(0, 19))}`
         : `${report.store_name} · ${report.period_label}`;
-    if (report.warnings?.length) updated.textContent += ` · 待核对：${report.warnings.join('；')}`;
+    const warningLines = compactProfitLossWarnings(report.warnings);
+    if ((report.exchange_rates || []).some(item => item.rate_to_cny == null)) {
+        const pending = text('profitLossRatePending');
+        if (!warningLines.includes(pending)) warningLines.push(pending);
+    }
+    const warnings = document.getElementById('profit-loss-warnings');
+    warnings.innerHTML = warningLines.map(line => `<div>${escapeHtml(line)}</div>`).join('');
+    warnings.hidden = !warningLines.length;
     const fx = document.getElementById('profit-loss-fx');
     if (fx) fx.textContent = (report.exchange_rates || []).map(item =>
-        `${item.report_month} · 1 ${item.currency} = ${item.rate_to_cny ?? window.PageInteractions?.text('profitLossRatePending')} CNY · ${item.rate_date || '—'} · ${item.source || '—'}`).join('；');
+        `${item.report_month} · 1 ${item.currency} = ${item.rate_to_cny ?? text('profitLossRatePending')} CNY · ${item.rate_date || '—'} · ${item.source || '—'}`).join('\n');
+    const fxDetails = document.getElementById('profit-loss-fx-details');
+    fxDetails.open = false;
+    fxDetails.hidden = !(report.exchange_rates || []).length;
     tbody.innerHTML = report.rows.map(row => {
         const readOnlyClass = row.is_auto ? 'profit-loss-auto' : 'profit-loss-formula';
         const amountCells = ['current','ytd'].map(period => {
@@ -3210,7 +3259,7 @@ async function loadStoreProfitLoss() {
     storeProfitLossReport = null;
     storeProfitLossLoading = true;
     updateProfitLossSaveState();
-    document.getElementById('profit-loss-updated').textContent = '';
+    clearProfitLossContext();
     tbody.innerHTML = '<tr><td colspan="3" class="empty">正在加载...</td></tr>';
     try {
         // 同一表保存完成后再查询，避免读到保存前的数据并覆盖界面。
@@ -3228,7 +3277,7 @@ async function loadStoreProfitLoss() {
     } catch (e) {
         if (requestId !== storeProfitLossRequestId) return;
         storeProfitLossReport = null;
-        document.getElementById('profit-loss-updated').textContent = '';
+        clearProfitLossContext();
         tbody.innerHTML = `<tr><td colspan="3" class="empty">${escapeHtml(e.message)}</td></tr>`;
     } finally {
         if (requestId === storeProfitLossRequestId) {
@@ -3375,19 +3424,21 @@ async function loadInventoryImpairment() {
 
 async function loadProductLineProfit() {
     const tbody = document.getElementById('product-line-profit-tbody');
+    const text = key => window.PageInteractions?.text(key) || key;
     const month = defaultProfitLossMonth();
     const params = new URLSearchParams({report_month: `${month}-01`, report_date: document.getElementById('inventory-impairment-date').value});
     if (isAdmin()) {
         const storeId = document.getElementById('profit-loss-store').value;
         if (storeId) params.set('store_id', storeId);
     }
-    tbody.innerHTML = '<tr><td colspan="12" class="empty">正在加载...</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(text('productProfitLoading'))}</td></tr>`;
     try {
         const rows = await api('GET', `/reports/product-line-profit?${params.toString()}`);
+        if (rows.some(row => row.group_by !== 'product')) throw new Error(text('productProfitUnavailable'));
         tbody.innerHTML = rows.length ? rows.map(row => `<tr>
-            <td class="text-left"><strong>${escapeHtml(row.name)}</strong></td><td>${row.sku_count}</td><td>${reportMoney(row.current_revenue)}</td><td>${reportMoney(row.current_cost)}</td><td>${reportMoney(row.current_gross)}</td>
+            <td class="text-left"><strong>${escapeHtml(row.name)}</strong></td><td>${Number(row.current_quantity).toLocaleString(document.documentElement.lang)}</td><td>${reportMoney(row.current_revenue)}</td><td>${reportMoney(row.current_cost)}</td><td>${reportMoney(row.current_gross)}</td>
             <td>${reportPercent(row.current_margin)}</td><td>${reportPercent(row.previous_margin)}</td><td>${reportPercent(row.margin_change)}</td><td>${reportMoney(row.ytd_revenue)}</td><td>${reportMoney(row.ytd_gross)}</td><td>${reportPercent(row.ytd_margin)}</td><td class="text-left">${escapeHtml(row.note || '')}</td>
-        </tr>`).join('') : '<tr><td colspan="12" class="empty">当前月份无产品线数据</td></tr>';
+        </tr>`).join('') : `<tr><td colspan="12" class="empty">${escapeHtml(text('productProfitEmpty'))}</td></tr>`;
     } catch (e) { tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(e.message)}</td></tr>`; }
 }
 

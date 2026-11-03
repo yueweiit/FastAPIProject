@@ -138,6 +138,7 @@ class FinancialAttachmentsWorkbookTests(unittest.TestCase):
             {
                 "name": "宠物玩具",
                 "sku_count": 2,
+                "current_quantity": 2,
                 "sku_ids": {1, 2},
                 "current": {"revenue": Decimal("100"), "cost": Decimal("40")},
                 "previous": {"revenue": Decimal("80"), "cost": Decimal("40")},
@@ -147,6 +148,7 @@ class FinancialAttachmentsWorkbookTests(unittest.TestCase):
             {
                 "name": "未分配产品线",
                 "sku_count": 1,
+                "current_quantity": 1,
                 "sku_ids": {3},
                 "current": {"revenue": Decimal("20"), "cost": Decimal("5")},
                 "previous": {"revenue": Decimal("0"), "cost": Decimal("0")},

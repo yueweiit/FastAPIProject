@@ -145,8 +145,8 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def test_product_line_fulfillment_ytd_is_sum_of_monthly_allocations(self):
         self.add_august_product_line()
         rows={row['name']:row for row in await self.product_lines()}
-        self.assertEqual(rows['A']['current']['cost'],D('47.4'))
-        self.assertEqual(rows['B']['previous']['cost'],D('1.6'))
+        self.assertEqual(rows['P10 · 测试商品']['current']['cost'],D('47.4'))
+        self.assertEqual(rows['P11 · Second']['previous']['cost'],D('1.6'))
         for row in rows.values():
             self.assertEqual(row['ytd']['cost'],row['current']['cost']+row['previous']['cost'])
         from io import BytesIO
@@ -157,8 +157,8 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
         data=BytesIO();book.save(data);data.seek(0)
         exported=load_workbook(data,data_only=True).worksheets[-1]
         exported_profit={row[0].value:row[9].value for row in exported.iter_rows(min_row=2)}
-        self.assertEqual(exported_profit['A'],2.6)
-        self.assertEqual(exported_profit['B'],38.4)
+        self.assertEqual(exported_profit['P10 · 测试商品'],2.6)
+        self.assertEqual(exported_profit['P11 · Second'],38.4)
 
     async def test_zero_revenue_month_keeps_its_fee_unallocated_in_ytd(self):
         self.add_august_product_line(zero_revenue=True)
@@ -166,7 +166,7 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
         unallocated=rows['未分配产品线（代发成本）']
         self.assertEqual(unallocated['previous']['cost'],D('1.6'))
         self.assertEqual(unallocated['ytd']['cost'],D('1.6'))
-        self.assertEqual(rows['A']['ytd']['cost'],rows['A']['current']['cost'])
+        self.assertEqual(rows['P10 · 测试商品']['ytd']['cost'],rows['P10 · 测试商品']['current']['cost'])
 
     async def test_missing_monthly_fee_does_not_pollute_other_month_product_line(self):
         self.add_august_product_line()
@@ -175,10 +175,10 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
                 for currency,day in requirements if (currency,day)!=( 'MXN',date(2026,8,31))}
         with patch('services.report_exchange_rates.get_cny_rates',new=rates):
             rows={row['name']:row for row in await self.product_lines()}
-        self.assertIsNone(rows['B']['previous']['cost'])
-        self.assertIsNone(rows['B']['ytd']['cost'])
-        self.assertEqual(rows['A']['ytd']['cost'],rows['A']['current']['cost'])
-        self.assertEqual(rows['A']['ytd']['cost'],D('47.4'))
+        self.assertIsNone(rows['P11 · Second']['previous']['cost'])
+        self.assertIsNone(rows['P11 · Second']['ytd']['cost'])
+        self.assertEqual(rows['P10 · 测试商品']['ytd']['cost'],rows['P10 · 测试商品']['current']['cost'])
+        self.assertEqual(rows['P10 · 测试商品']['ytd']['cost'],D('47.4'))
 
     async def test_missing_fee_rate_keeps_known_zero_product_line_share_zero(self):
         self.add_august_product_line(zero_revenue=True)
@@ -190,9 +190,9 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
                     for currency,day in requirements if currency!='MXN'}
         with patch('services.report_exchange_rates.get_cny_rates',new=rates):
             rows={row['name']:row for row in await self.product_lines()}
-        self.assertIsNone(rows['A']['current']['cost'])
-        self.assertEqual(rows['B']['current']['cost'],D(0))
-        self.assertEqual(rows['B']['ytd']['cost'],D(0))
+        self.assertIsNone(rows['P10 · 测试商品']['current']['cost'])
+        self.assertEqual(rows['P11 · Second']['current']['cost'],D(0))
+        self.assertEqual(rows['P11 · Second']['ytd']['cost'],D(0))
 
     async def test_each_month_uses_own_month_end_and_keeps_saved_daily_fx(self):
         self.session.add(Sale(id=2,product_id=10,user_id=1,store_id=7,order_no='AUG',quantity=1,
