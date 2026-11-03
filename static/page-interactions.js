@@ -3,6 +3,7 @@
     'use strict';
     const messages = {'zh-CN': {
         helpTip: '查看说明',
+        operationLogsTitle: '操作日志', operationLogsUnavailable:'操作日志模块尚未加载，请重启后端并刷新页面。',
         confirm: '确认', cancel: '取消', reason: '更正原因', requiredReason: '请填写更正原因。',
         longReason: '更正原因不能超过1000字。', rollbackTitle: '撤销导入',
         rollbackMessage: '确认撤销这次导入？销售记录将删除，已扣库存会恢复。',
@@ -128,6 +129,7 @@
     document.querySelectorAll?.('[data-profit-loss-text]')?.forEach(node => {
         node.textContent = text(node.dataset.profitLossText);
     });
+    document.querySelectorAll?.('[data-operation-nav]')?.forEach(node => {node.textContent=text('operationLogsTitle');});
 
     // MySQL DateTime/API 是无时区的业务时间；不能经过 Date/UTC 转换。
     const batchDateTimeInput = value => String(value || '').slice(0, 16);
@@ -243,6 +245,7 @@
         logDialog.addEventListener('cancel', event => { event.preventDefault(); closeBatchLogs(); });
     }
     async function loadBatchLogs(page) {
+        if(typeof isAdmin!=='function'||!isAdmin()){closeBatchLogs();return;}
         const serial = ++logSerial, target = logTarget;
         logNode('[data-log-status]').textContent = text('batchLogLoading');
         logNode('[data-log-entries]').innerHTML = '';
@@ -250,8 +253,9 @@
         logNode('[data-log-previous]').disabled = true;
         logNode('[data-log-next]').disabled = true;
         try {
-            const result = await api('GET', `/batches/${target}/logs?page=${page}&page_size=20`);
-            if (serial !== logSerial || target !== logTarget || !logDialog.open) return;
+            const result = await api('GET', `/batches/${target}/logs?page=${page}&page_size=20`, null,
+                {cache:'no-store',isCurrent: () => isAdmin() && serial === logSerial && target === logTarget && logDialog.open});
+            if (!isAdmin() || serial !== logSerial || target !== logTarget || !logDialog.open) return;
             logPage = result.page; logTotal = result.total;
             const fields = text('batchLogFields');
             logNode('[data-log-entries]').innerHTML = result.items.map(row => {
@@ -267,12 +271,12 @@
             logNode('[data-log-previous]').disabled = logPage <= 1;
             logNode('[data-log-next]').disabled = logPage * result.page_size >= logTotal;
         } catch (error) {
-            if (serial !== logSerial || target !== logTarget || !logDialog.open) return;
+            if (!isAdmin() || serial !== logSerial || target !== logTarget || !logDialog.open) return;
             logNode('[data-log-status]').textContent = `${text('batchLogFailed')} ${error.message}`;
         }
     }
     async function batchLogs(id, batchNo) {
-        if (!isOperator()) return;
+        if(typeof isAdmin!=='function'||!isAdmin()){closeBatchLogs();return;}
         initializeBatchLogs();
         if (!logDialog.open) logFocus = document.activeElement;
         logTarget = id;

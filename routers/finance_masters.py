@@ -34,7 +34,9 @@ from schemas import (
     StoreResponse,
 )
 
-router = APIRouter(prefix="/finance-masters", tags=["财务主数据"])
+from services.business_audit import BusinessAuditRoute
+
+router = APIRouter(prefix="/finance-masters", tags=["财务主数据"], route_class=BusinessAuditRoute)
 
 
 def _normalized(value: str | None) -> str | None:

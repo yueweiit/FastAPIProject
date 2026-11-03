@@ -16,6 +16,7 @@ from routers import products, batches, sales, reports, auth, finance_masters
 from routers import eims_auth
 from routers import financial_control
 from routers import inventory
+from routers import operation_logs
 from auth import seed_users
 from services.accounting_periods import ensure_period_snapshot, previous_month_end
 from services.auth_sessions import store as auth_session_store
@@ -104,6 +105,7 @@ app.include_router(reports.router)
 app.include_router(finance_masters.router)
 app.include_router(financial_control.router)
 app.include_router(inventory.router)
+app.include_router(operation_logs.router)
 
 uploads_dir = BASE_DIR / "uploads"
 uploads_dir.mkdir(exist_ok=True)
@@ -119,6 +121,12 @@ async def root():
 @app.get("/page-interactions.js", include_in_schema=False)
 async def page_interactions_script():
     return FileResponse(BASE_DIR / "static" / "page-interactions.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
+@app.get("/operation-logs.js", include_in_schema=False)
+async def operation_logs_script():
+    return FileResponse(BASE_DIR / "static" / "operation-logs.js", media_type="text/javascript",
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 

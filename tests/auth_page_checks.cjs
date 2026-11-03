@@ -37,6 +37,10 @@ async function verify(file) {
     assert.equal(recorded.options.headers['X-CSRF-Token'],'fixture-csrf');
     assert.equal(recorded.options.credentials,'same-origin');
     assert.equal(recorded.options.headers.Authorization,undefined);
+    assert.equal(recorded.options.cache,undefined);
+    await vm.runInContext(`api('GET','/operation-logs',null,{cache:'no-store',isCurrent:()=>true})`,context);
+    assert.equal(recorded.options.cache,'no-store');
+    assert.equal(recorded.options.credentials,'same-origin');
     await vm.runInContext(`productImportRequest('/products/import/preview',new FormData())`,context);
     assert.equal(recorded.options.method,'POST');
     assert.equal(recorded.options.headers['X-CSRF-Token'],'fixture-csrf');

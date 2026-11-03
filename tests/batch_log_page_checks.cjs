@@ -13,7 +13,7 @@ const dialog={open:false,setAttribute(){},querySelector:node,listeners:{},
   addEventListener(type,handler){this.listeners[type]=handler;},
   showModal(){this.open=true;},close(){this.open=false;}};
 const context=vm.createContext({window:{},document:{documentElement:{lang:'zh-CN'},
-  body:{appendChild(){}},createElement:()=>dialog,activeElement:null},isOperator:()=>true,
+  body:{appendChild(){}},createElement:()=>dialog,activeElement:null},isAdmin:()=>true,isOperator:()=>true,
   api:async()=>{throw Error('Unexpected request');},Date});
 vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),context);
 const history=context.window.PageInteractions;
@@ -21,7 +21,7 @@ const row=(id,name='operator')=>({id,actor_id:7,actor_username:name,created_at:'
   before_values:{quantity:13,total_amount:'34.0054',dingtalk_order_no:'OLD'},
   after_values:{quantity:14,total_amount:'35.0001',dingtalk_order_no:null}});
 (async()=>{
-  let urls=[];context.api=async(_method,url)=>{urls.push(url);return {items:[row(1,'<img src=x>')],page:1,page_size:20,total:21};};
+  let urls=[];context.api=async(_method,url,_body,options)=>{equal(options.cache,'no-store');urls.push(url);return {items:[row(1,'<img src=x>')],page:1,page_size:20,total:21};};
   await history.batchLogs(12,'<批次>');
   equal(dialog.open,true);equal(urls[0],'/batches/12/logs?page=1&page_size=20');
   ok(node('#batch-log-title').textContent.includes('<批次>'));
@@ -45,9 +45,9 @@ const row=(id,name='operator')=>({id,actor_id:7,actor_username:name,created_at:'
   history.cancel();equal(dialog.open,false);const content=node('[data-log-entries]').innerHTML;
   logout.resolve({items:[row(5)],page:1,page_size:20,total:1});await inFlight;
   equal(node('[data-log-entries]').innerHTML,content);
-  context.isOperator=()=>false;let calls=0;context.api=async()=>{calls++;};
+  context.isAdmin=()=>false;let calls=0;context.api=async()=>{calls++;};
   await history.batchLogs(12,'hidden');equal(calls,0);equal(dialog.open,false);
-  context.isOperator=()=>true;context.api=async()=>{throw Error('<server error>');};
+  context.isAdmin=()=>true;context.api=async()=>{throw Error('<server error>');};
   await history.batchLogs(12,'B12');ok(node('[data-log-status]').textContent.includes('<server error>'));
   equal(node('[data-log-next]').disabled,true);
   context.api=async()=>({items:[],page:1,page_size:20,total:0});

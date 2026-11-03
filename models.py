@@ -44,6 +44,34 @@ class User(Base):
     )
 
 
+class BusinessOperationLog(Base):
+    """追加式业务变更审计；身份/对象均保存快照，无删除级联外键。"""
+    __tablename__ = "business_operation_logs"
+    __table_args__ = (
+        Index("ix_business_operation_logs_time", "recorded_at", "id"),
+        Index("ix_business_operation_logs_scope", "module", "store_id", "recorded_at", "id"),
+        Index("ix_business_operation_logs_entity", "entity_type", "entity_id", "id"),
+        Index("ix_business_operation_logs_group", "group_id"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    module: Mapped[str] = mapped_column(String(32))
+    action: Mapped[str] = mapped_column(String(32))
+    entity_type: Mapped[str] = mapped_column(String(64))
+    entity_id: Mapped[int] = mapped_column(Integer)
+    entity_label: Mapped[str] = mapped_column(String(512))
+    product_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    store_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    actor_id: Mapped[int] = mapped_column(Integer)
+    actor_username: Mapped[str] = mapped_column(String(64))
+    actor_role: Mapped[str] = mapped_column(String(16))
+    group_id: Mapped[str] = mapped_column(String(32))
+    before_values: Mapped[dict] = mapped_column(JSON, default=dict)
+    after_values: Mapped[dict] = mapped_column(JSON, default=dict)
+    unknown_before_fields: Mapped[list] = mapped_column(JSON, default=list)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+
+
 class AuthLoginTransaction(Base):
     """Only hashes of browser/state credentials and encrypted temporary data."""
     __tablename__ = "auth_login_transactions"

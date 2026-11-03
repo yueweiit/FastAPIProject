@@ -176,6 +176,7 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.actor.username = 'renamed-operator'
         await self.save(total_amount='36.0001')
         self.actor.id = 99
+        self.actor.role = 'admin'
         response = await self.request('GET', '/batches/12/logs?page_size=1')
         self.assertEqual(response.status_code, 200, response.text)
         data = response.json()
@@ -198,15 +199,34 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(logs['total'], 3)
         self.assertEqual([row['action'] for row in logs['items']], ['void', 'update', 'update'])
 
-    async def test_viewer_cannot_read_logs_or_change_them(self):
+    async def test_non_admin_cannot_read_logs_and_logs_remain_read_only(self):
         await self.save()
-        self.actor.role = 'viewer'
-        self.assertEqual((await self.request('GET', '/batches/12/logs')).status_code, 403)
+        for role in ('operator','viewer'):
+            self.actor.role = role
+            for store_id in (None,7):
+                self.actor.store_id = store_id
+                self.assertEqual((await self.request('GET', '/batches/12/logs')).status_code, 403)
         self.actor.role = 'admin'
         for method in ('PUT', 'DELETE', 'POST'):
             self.assertEqual((await self.request(method, '/batches/12/logs')).status_code, 405)
         self.assertEqual((await self.request('GET', '/batches/999/logs')).json()['items'], [])
         self.assertEqual((await self.request('GET', '/batches/12/logs?page_size=101')).status_code, 422)
+
+    async def test_legacy_log_cache_policy_does_not_change_other_batch_responses(self):
+        self.actor.role='admin'
+        response=await self.request('GET','/batches/12/logs')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.headers.get('cache-control'),'private, no-store')
+        self.assertIsNone((await self.request('GET','/batches')).headers.get('cache-control'))
+        for role in ('operator','viewer'):
+            self.actor.role=role
+            response=await self.request('GET','/batches/12/logs')
+            self.assertEqual(response.status_code,403)
+            self.assertEqual(response.headers.get('cache-control'),'private, no-store')
+        self.actor.role='admin'
+        response=await self.request('GET','/batches/12/logs?page_size=101')
+        self.assertEqual(response.status_code,422)
+        self.assertEqual(response.headers.get('cache-control'),'private, no-store')
 
     async def test_cost_adjustment_invalidates_an_older_batch_edit_version(self):
         os.environ['FIFO_FINANCIAL_CONTROLS_ENABLED'] = '1'

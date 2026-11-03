@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import InventoryBatch, Product, User, Sale, SaleCostDetail, Store, BatchChangeLog
 from schemas import BatchCreate, BatchUpdate, BatchVoidRequest, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse, BatchImpairmentUpdate
-from auth import get_current_user, RequireOperator, RequireAnyRole
+from auth import get_current_user, RequireAdmin, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch
 from services.finance_config import financial_controls_enabled
 from services.batch_edits import freeze_cost_basis, restate_costs
@@ -24,7 +24,9 @@ from services.batch_store_allocations import (AssignedBatch, load_batch_store_al
                                               validate_stores)
 from services.batch_impairment_history import load_rules, save_change, initialize_unassigned
 
-router = APIRouter(prefix="/batches", tags=["入库管理"])
+from services.business_audit import BusinessAuditRoute
+
+router = APIRouter(prefix="/batches", tags=["入库管理"], route_class=BusinessAuditRoute)
 BASE_DIR = Path(__file__).parent.parent
 MAX_BATCH_MONEY = Decimal("99999999.9999")
 
@@ -302,9 +304,9 @@ async def list_batch_change_logs(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(RequireOperator),
+    user: User = Depends(RequireAdmin),
 ):
-    """运营/管理员只读查看共享批次修改记录，批次删除后日志仍保留。"""
+    """管理员只读兼容接口；页面统一从操作日志查看，历史记录保留。"""
     total = await db.scalar(select(func.count()).select_from(BatchChangeLog).where(
         BatchChangeLog.batch_id == batch_id))
     page = min(page, max(1, (total + page_size - 1) // page_size))

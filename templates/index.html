@@ -374,6 +374,43 @@
             .inventory-filters .form-group input, .inventory-filters .form-group select { width:100%; }
             .inventory-workspace { padding:16px; }
         }
+        .ol-workspace { padding:24px; }
+        .ol-filters { display:grid; grid-template-columns:repeat(4,minmax(140px,1fr)); gap:14px; align-items:end; margin-top:20px; }
+        .ol-filters input, .ol-filters select { width:100%; }
+        .ol-keyword { grid-column:span 2; }
+        .ol-filter-actions { display:flex; gap:8px; }
+        .ol-status { min-height:22px; margin:14px 0 8px; color:var(--muted); font-size:13px; }
+        .ol-table-scroll { max-height:600px; overflow:auto; border:1px solid #dbe3ec; border-radius:8px; }
+        .ol-table-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        .ol-table-scroll .ol-table { min-width:1060px; width:100%; table-layout:fixed; }
+        .ol-table thead { position:sticky; top:0; z-index:2; }
+        .ol-table th:nth-child(1) { width:195px; }.ol-table th:nth-child(2) { width:145px; }
+        .ol-table th:nth-child(4) { width:260px; }.ol-table th:last-child { width:80px; }
+        .ol-table td { overflow-wrap:anywhere; }.ol-time { font-size:12px; font-variant-numeric:tabular-nums; }
+        .ol-subject { margin-top:5px; color:var(--muted); font-size:12px; }
+        .ol-badge { display:inline-block; padding:4px 8px; border-radius:5px; font-size:12px; font-weight:700; background:#eef3f8; color:#44566b; }
+        .ol-batch { background:#e9f2fb; color:#244a72; }.ol-stock_count { background:#e8f5ef; color:#17634e; }
+        .ol-sales_import { background:#fff4dd; color:#875b12; }.ol-sales_rollback { background:#fff0f3; color:#a92e4b; }
+        .ol-products { background:#e9f2fb; color:#244a72; }.ol-accounts { background:#f3edfb; color:#66458a; }
+        .ol-masters { background:#fff4dd; color:#875b12; }.ol-batch_create { background:#e8f5ef; color:#17634e; }
+        .ol-sales_operations { background:#e9f2fb; color:#244a72; }.ol-report_changes, .ol-finance { background:#f3edfb; color:#66458a; }
+        .ol-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:16px; font-size:13px; }
+        .ol-pagination>span { margin-right:auto; }.ol-pagination label { display:flex; align-items:center; gap:8px; }
+        .ol-pagination select { width:70px; padding:6px; }
+        .ol-dialog { width:1100px; max-width:calc(100vw - 32px); max-height:90vh; overflow:auto; margin:auto; padding:24px; border:1px solid #dbe3ec; border-radius:12px; color:var(--ink); }
+        .ol-dialog::backdrop { background:rgba(15,27,49,.4); }
+        .ol-detail-meta { margin:18px 0; line-height:1.8; font-size:13px; }.ol-detail-meta p { overflow-wrap:anywhere; }
+        .ol-detail-note { padding:10px 14px; margin:12px 0; background:#f4f7fa; border-left:3px solid #aac9dd; white-space:pre-wrap; font-size:13px; }
+        .ol-detail-table { min-width:580px; width:100%; table-layout:fixed; margin:12px 0; }
+        .ol-detail-table th, .ol-detail-table td { white-space:pre-wrap; overflow-wrap:anywhere; vertical-align:top; }
+        .ol-detail-table tbody th { width:25%; font-weight:600; color:var(--muted); }
+        .ol-before { background:#fff8fa; }.ol-after { background:#f3faf6; }
+        .ol-full { margin-top:20px; }.ol-full summary { padding:8px 0; cursor:pointer; font-size:13px; }
+        @media(max-width:760px) {
+            .ol-workspace { padding:16px; }.ol-filters { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+            .ol-pagination { flex-wrap:wrap; }.ol-pagination>span { flex-basis:100%; }
+            .ol-dialog { padding:16px; }.ol-detail-table { min-width:500px; }
+        }
     </style>
 </head>
 <body>
@@ -409,13 +446,16 @@
     <button onclick="switchTab('gallery')">产品图册</button>
     <button onclick="switchTab('sales')">销售记录</button>
     <button onclick="switchTab('reports')">报表</button>
+    <button onclick="switchTab('operation-logs')" id="nav-operation-logs" data-operation-nav style="display:none"></button>
     <button onclick="switchTab('users')" id="nav-users" style="display:none">用户管理</button>
 </div>
 
 <div class="container">
     <div id="msg"></div>
 
-    <div id="sec-inventory" class="section"><div id="inventory-workspace-root"></div><div id="inventory-assessment-root" hidden></div><div id="inventory-allocations-root"></div></div>
+    <div id="sec-inventory" class="section"><div id="inventory-workspace-root"></div><div id="inventory-assessment-root" hidden></div></div>
+    <div id="inventory-allocations-root"></div>
+    <div id="sec-operation-logs" class="section"><div id="operation-logs-root"></div></div>
 
     <!-- ========== 商品管理 ========== -->
     <div id="sec-products" class="section active">
@@ -955,6 +995,7 @@ async function api(method, url, body, requestOptions = {}) {
     };
     ensureCurrent();
     const opts = {method, headers: authHeaders(), credentials: 'same-origin'};
+    if (requestOptions.cache) opts.cache = requestOptions.cache;
     if (body) {
         opts.headers['Content-Type'] = 'application/json';
         opts.body = JSON.stringify(body);
@@ -1087,6 +1128,7 @@ function handleSessionExpired() {
     resetBatchEditSession();
     resetBatchExportSession();
     window.PageInteractions?.cancel();
+    window.OperationLogs?.reset();
     if (document.getElementById('product-import-dialog').open) {
         document.getElementById('product-import-dialog').close();
     }
@@ -1107,6 +1149,7 @@ function handleSessionExpired() {
     document.getElementById('curr-user').textContent = '未登录';
     document.getElementById('curr-role').textContent = '';
     document.getElementById('nav-users').style.display = 'none';
+    document.getElementById('nav-operation-logs').style.display = 'none';
     document.getElementById('l-pass').value = '';
     document.getElementById('l-err').style.display = 'none';
 }
@@ -1117,6 +1160,8 @@ function updateUserBar() {
     document.getElementById('curr-role').textContent = CURRENT_ROLE === 'admin' ? '管理员' : CURRENT_ROLE === 'operator' ? '运营' : '查看者';
     document.getElementById('curr-role').className = 'tag ' + (CURRENT_ROLE === 'admin' ? 'tag-red' : CURRENT_ROLE === 'operator' ? 'tag-blue' : 'tag-green');
     document.getElementById('nav-users').style.display = isAdmin() ? '' : 'none';
+    document.getElementById('nav-operation-logs').style.display = isAdmin() ? '' : 'none';
+    if (!isAdmin()) { window.OperationLogs?.reset(); window.PageInteractions?.cancel(); }
 }
 
 function isAdmin() { return CURRENT_ROLE === 'admin'; }
@@ -1270,6 +1315,7 @@ function showLogin() {
 
 // ========== Tab切换 ==========
 function switchTab(name) {
+    if (name === 'operation-logs' && !isAdmin()) { window.OperationLogs?.reset(); return; }
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
     document.getElementById('sec-' + name).classList.add('active');
@@ -1277,6 +1323,10 @@ function switchTab(name) {
     if (name === 'products') loadProducts();
     if (name === 'batches') loadBatches();
     if (name === 'inventory') window.InventoryWorkspace?.open();
+    if (name === 'operation-logs') {
+        if (window.OperationLogs) window.OperationLogs.open();
+        else document.getElementById('operation-logs-root').textContent = window.PageInteractions?.text('operationLogsUnavailable') || 'operationLogsUnavailable';
+    }
     if (name === 'gallery') loadGallery();
     if (name === 'sales') {
         if (!salesMonth) setSalesMonthToCurrent();
@@ -2206,7 +2256,6 @@ function renderBatchPage() {
             <td data-batch-column="actions"><div class="batch-row-actions">
                 <button class="btn btn-secondary" onclick="exportBatch(${b.id})" title="${text('batchExport')}">${text('batchExport')}</button>
                 ${isOperator() && !b.voided_at ? `<span title="${escapeHtml(editReason || text('batchEdit'))}" ${editReason ? 'tabindex="0"' : ''}><button class="btn btn-secondary" onclick="openEditBatch(${b.id})" ${editReason ? 'disabled' : ''}>✏️ ${text('batchEdit')}</button></span>` : ''}
-                ${isOperator() ? `<button class="btn btn-secondary" onclick="openBatchLogs(${b.id})">${text('batchLogs')}</button>` : ''}
                 ${canVoid ? `<button class="btn btn-secondary" style="color:#e94560" onclick="voidBatch(${b.id})" title="${text('batchForceDelete')}" aria-label="${text('batchForceDelete')}" ${batchVoidBusy ? 'disabled' : ''}>${text('batchForceDelete')}</button>` : ''}
             </div>
             </td>
@@ -2275,10 +2324,6 @@ async function loadBatches() {
 }
 
 // ========== 批次编辑/作废 ==========
-function openBatchLogs(id) {
-    const batch = currentBatchList.find(item => item.id === id);
-    if (batch && isOperator()) return window.PageInteractions.batchLogs(id, batch.batch_no);
-}
 
 function setBatchEditStatus(message, error = true) {
     const status = document.getElementById('batch-edit-status');
@@ -3352,6 +3397,7 @@ document.getElementById('inventory-impairment-date').value = new Date().toLocale
 initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
+<script src="/operation-logs.js" defer></script>
 <script src="/sales-import-progress.js" defer></script>
 <script src="/product-search.js" defer></script>
 <script src="/sales-ledger.js" defer></script>

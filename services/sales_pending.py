@@ -1,11 +1,11 @@
 """待确认分类、范围与重新处理；复用原始来源，不重建结算行。"""
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
-from sqlalchemy import case, delete, or_, select
+from sqlalchemy import case, or_, select
 
 from models import Product, Sale, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, Store, StoreProduct
 from schemas import PendingComponent
@@ -101,6 +101,9 @@ async def retry_pending(db, user, data):
     allocations = (await db.execute(select(SettlementEntryAllocation).where(
         SettlementEntryAllocation.settlement_entry_id.in_(ids)).order_by(SettlementEntryAllocation.settlement_entry_id,
         SettlementEntryAllocation.id).with_for_update().execution_options(populate_existing=True))).scalars().all()
+    allocations_by_entry = defaultdict(list)
+    for allocation in allocations:
+        allocations_by_entry[allocation.settlement_entry_id].append(allocation)
     linked = {row.settlement_entry_id for row in allocations if row.sale_id is not None}
     from services.finance_config import financial_controls_enabled
     financial_linked = set()
@@ -213,7 +216,12 @@ async def retry_pending(db, user, data):
         entry.mapping_status = "pending_confirmation" if error else "confirmed"
         # 已关联销售的异常来源必须保留其关系，不能删除后再次扣库。
         if entry.sale_id is None and entry.id not in linked and entry.id not in financial_linked:
-            await db.execute(delete(SettlementEntryAllocation).where(SettlementEntryAllocation.settlement_entry_id == entry.id))
+            # 复用此前已按序锁定的对象，让事务审计保留旧组件删除前的字段。
+            for allocation in allocations_by_entry[entry.id]:
+                await db.delete(allocation)
+            if allocations_by_entry[entry.id]:
+                # 先删除再新增，避免ORM先INSERT触发来源/商品唯一约束。
+                await db.flush()
             parts = candidate["components"]
             entry.product_id = parts[0]["product"].id if len(parts) == 1 else None
             entry.sale_id = next(iter(sales.values())).id if len(sales) == 1 else None

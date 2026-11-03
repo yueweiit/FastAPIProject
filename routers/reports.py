@@ -64,7 +64,9 @@ from services.inventory_impairment import (
     batch_impairments,
 )
 
-router = APIRouter(prefix="/reports", tags=["报表"])
+from services.business_audit import BusinessAuditRoute
+
+router = APIRouter(prefix="/reports", tags=["报表"], route_class=BusinessAuditRoute)
 
 INVENTORY_IMPAIRMENT_SHEET = "07-存货跌价准备明细表"
 INVENTORY_IMPAIRMENT_HEADERS = [

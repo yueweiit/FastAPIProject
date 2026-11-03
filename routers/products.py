@@ -44,8 +44,9 @@ from services.product_import import (
     preview_product_import,
 )
 from services.product_images import read_product_image
+from services.business_audit import BusinessAuditRoute
 
-router = APIRouter(prefix="/products", tags=["商品管理"])
+router = APIRouter(prefix="/products", tags=["商品管理"], route_class=BusinessAuditRoute)
 
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)

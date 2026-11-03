@@ -67,7 +67,9 @@ from services.sales_costs import attach_sale_impairment
 from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
 from auth import RequireOperator, RequireAnyRole
 
-router = APIRouter(prefix="/sales", tags=["销售管理"])
+from services.business_audit import BusinessAuditRoute
+
+router = APIRouter(prefix="/sales", tags=["销售管理"], route_class=BusinessAuditRoute)
 
 ORDER_DETAIL_SHEET = "订单详情"
 ORDER_DETAIL_HEADERS = {

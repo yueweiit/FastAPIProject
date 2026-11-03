@@ -34,9 +34,11 @@ async def get_db():
 
 async def init_db():
     from services.finance_config import FINANCE_TABLES, financial_controls_enabled
+    from services.business_audit import TABLE_NAME, enabled as operation_audit_enabled
     from sqlalchemy import inspect, select
     tables = [table for table in Base.metadata.sorted_tables
-              if financial_controls_enabled() or table.name not in FINANCE_TABLES]
+              if (financial_controls_enabled() or table.name not in FINANCE_TABLES)
+              and (operation_audit_enabled() or table.name != TABLE_NAME)]
     def guard_disabled(connection):
         if financial_controls_enabled():
             return

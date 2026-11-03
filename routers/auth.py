@@ -13,8 +13,9 @@ from schemas import LoginRequest, LoginResponse, UserResponse
 from auth import hash_password, verify_password, create_token, get_current_user, RequireAdmin
 from services.auth_sessions import check_origin, cookie_name, revoke_user_sessions, set_cookie, store
 from services.eims_sso import get_settings
+from services.business_audit import BusinessAuditRoute
 
-router = APIRouter(prefix="/auth", tags=["认证"])
+router = APIRouter(prefix="/auth", tags=["认证"], route_class=BusinessAuditRoute)
 
 
 class UpdateRoleRequest(BaseModel):

@@ -31,6 +31,7 @@ class Facade:
     async def refresh(self, row): self.session.refresh(row)
     async def commit(self): self.session.commit()
     async def rollback(self): self.session.rollback()
+    async def delete(self, row): self.session.delete(row)
 
 
 def order_file(product_expression="商品"):
