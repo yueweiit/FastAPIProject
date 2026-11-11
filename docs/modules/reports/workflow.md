@@ -1,5 +1,7 @@
 # 报表流程、公式与快照
 
+2026-11-10分类修复：按店铺/平台SKU明确配置的non_inventory结算保留原金额、费用和币种，作为独立财务事件取数，排除实物履约计费。明确标记的opening_deduction不进入销量、采购/FIFO销售成本、产品线实际出库和履约订单；库存与准备使用扣减后的数量基线，原凭据及成本不改。07原入库−期初扣减−真实已售=现存，期初扣减写入comparison_note供核对。真正历史销售的缺失店铺/时序异常继续传播null；不能用初始化分类推断其归属。见[销售分类](../sales/workflow.md#非实物结算与初始化扣减2026-11-10)和[库存基线](../inventory/workflow.md#初始化历史扣减)。
+
 2026-11-02确认的店铺损益口径：外币按各核算月月末当天或之前最近可用汇率换算，沿用Frankfurter/ECB，不改销售保存的逐日汇率。履约订单按店铺及原始订单ID去重（跨SKU/组合只计一次），每单8 MXN；退款、调整、赔付及待确认行不新增履约费。销售费用包含薪资、广告、样品、平台月费/年费、仓储、配送和平台罚款/赔偿。跌价计提/转销/归属算法保留。营业外收支及所得税标记暂未接入，净利润暂按营业利润计算；历史人工代发及预留金额保留且保存时不覆盖。人工费用按人民币录入。
 
 本年累计按1月至核算月逐月事实汇总，各月各用自己的月末汇率；不再采用旧人工ytd覆盖累计。页面显示本月与本年累计（累计只读），API及Excel保留上月字段兼容；旧月度版本仅读原payload，无新样品行的旧版不补行或重算。取不到月末汇率或月份尚未结束时，受影响人民币金额和利润留空并警示，已知零不误报；查询无数据库写入。月度汇率、实际日期/来源及履约订单数随响应返回，新保存版本一并留档。实现：[月末汇率服务](../../../services/report_exchange_rates.py)、[报表路由](../../../routers/reports.py)；回归：[月度损益口径](../../../tests/test_monthly_profit_policy.py)。
@@ -86,7 +88,7 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 | 存货跌价准备 | 对应期间每天实际新增准备合计 |
 | 销售转销跌价准备 | 已售商品对应准备抵减营业成本，不改保存的FIFO成本 |
 | 房租+水电+网费 | OA 指定部门租金/电费，按当前启用店铺数均分 |
-| 分摊人事财务 | OA 同名非零组件，按当前启用店铺数均分 |
+| 分摊人事财务 | 按审批的费用所属年月归期，每张审批向明细中每家匹配店铺计入一次同名组件原金额 |
 | 人员薪资 | OA 部门名精确匹配店铺名；已保存人工值优先 |
 
 批次数量/成本经历史编辑更正后，原FIFO单价不改写；_fifo_cost_components通过base_cost_components读取cost_basis冻结的原构成，再叠加各类差额。不能改用当前数量和最近目标费用重新分配旧FIFO成本，否则会重复或错配成本。当前查询追溯原销售月，旧FinancialReportVersion.payload保持原值；规则及结构前提见[库存流程](../inventory/workflow.md#编辑与删除)。
@@ -109,15 +111,13 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 
 ## OA 来源
 
+OA 只读取未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance。办公费用和薪资按表单申请日期筛选，分别按指定部门或明细店铺取数。
+
+分摊管理费用先读取含同名金额组件的有效审批，再按费用所属年月归期，因此晚提交或次年申请的审批也能进入原费用月。优先读取表单的「费用所属月份」，支持年月、ISO 日期或形如「2026年10月」的值。该字段空缺时，从「事项说明」识别唯一的完整中文年月。同一审批内各明细部门去重，名称匹配的店铺各计一份原金额。所属年月无法确定时，相关店铺的报表和附件提示待核对，自动金额只合计可确定归属的单据。代码见 [oa_office_expenses.py](../../../services/oa_office_expenses.py) 的 `shared_admin_expenses_by_store_and_month` 和 [reports.py](../../../routers/reports.py) 的 `_store_profit_loss_auto_values`。
+
 配置 `OA_EXPENSE_API_BASE_URL` 后，FIFO 每次请求向新 OA 的 `GET /api/v1/reporting/operating-expenses` 读取三类费用的人民币月度汇总，并校验企业、月份和返回结构。企业与服务凭据通过 `OA_EXPENSE_API_CORP_ID` 和 `OA_EXPENSE_API_TOKEN` 配置。HTTP 查询或校验失败抛出 `OaExpenseSourceError`。地址留空时使用原 `OA_DB_*` 直连，直连配置缺失时沿用空数据和警告。OA 更新会影响实时重算，当前有效店铺数量参与办公费用均分。依据：[HTTP 取数](../../../services/oa_operating_expenses.py)、[直连取数](../../../services/oa_office_expenses.py)。
 
-HTTP 模式下，平摊人事财务费用按 OA 费用所属月份与店铺明细归属。直连模式沿用原有申请日期与有效店铺均摊口径。
-
 HTTP 模式下，OA 的申请月份和币种待核对记录随已确认金额返回。FIFO 按审批去重并显示核对提示，办公费用提示适用于参与均摊的报表，工资和分摊费用提示按店铺匹配。异常金额待核对，确认金额继续按现有口径汇总。上线时先更新能识别新警示码的 FIFO，再启用新版 OA 响应。
-
-_approved_forms_by_expense 查询未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance，按申请日期左闭右开过滤，只执行 SELECT。办公明细只取指定部门的租金/电费，工资按明细部门名归属，分摊管理费按精确组件名取数。代码固定流程/组件/部门标识，实际 OA 表单契约待验证。
-
-OA_DB 必要配置缺少或不完整时返回空数据并记录警告；完整配置但连接/查询失败抛 OaExpenseSourceError，没有统一转换为专用业务响应。数据是直接读取，没有稳定期间缓存，OA 更新和当前有效店铺数量变化会影响重算。依据：[oa_office_expenses.py](../../../services/oa_office_expenses.py)。
 
 单店损益读取、保存后的响应及财务附件导出先读取当前有效店铺数，结束只读 MySQL 事务后再等待 OA 取数。OA 结果在同一请求内复用，财务附件的跨店汇总不逐店重复请求 OA。OA 返回后才重新读取 MySQL 报表和销售数据，避免等待外部读取时占用 MySQL 连接。保存接口先提交人工值，再执行上述读取。OA 失败仍按原有错误传播，已提交人工值不回滚。此分段读取不提供跨 MySQL/OA 的一致快照，金额仍应按业务核对。依据：[reports.py](../../../routers/reports.py) 的 `_prepare_profit_loss_oa_values`、`_store_profit_loss_auto_values`。
 

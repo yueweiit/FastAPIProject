@@ -1,5 +1,13 @@
 # 销售、导入与撤销流程
 
+## 非实物结算与初始化扣减（2026-11-10）
+
+`non_inventory_sku_rules`按店铺ID及平台SKU ID明确标记非实物，不依据中文名称、零售价或旧CSV格式猜测。导入和原记录重试共用此规则，写入`raw_data._settlement_only_reason=non_inventory`，不创建商品、Sale或FIFO明细；保留来源数量、原币销售额/结算额、费用、日期及汇率。公共财务事件正常计收入和费用，实物履约订单不增加。普通无规则商品仍按原名称解析及库存校验。当前规则由授权维护脚本配置，不新增页面/写入API。
+
+`sales.business_metadata.kind=opening_deduction`仅用于业务明确确认的初始化历史扣减，记录维护编号、原因、操作人及真实UTC时间；NULL兼容普通销售。原Sale、FIFO明细、数量、单价、总成本、原日期、店铺及剩余库存均保留。普通销售台账/导出/月度及损益/产品线/履约统计排除该分类；单条`GET /sales/{id}`保留原凭据并返回`business_kind`。库存与准备基线见[库存流程](../inventory/workflow.md#初始化历史扣减)。真正缺失店铺的销售不自动归到批次创建人店铺，仍待核对；旧月度版本不覆盖。
+
+入口：`services/sales_classification.py`、`routers/sales.py`、`services/sales_pending.py`、`services/financial_facts.py`。`migrate.PENDING_MAPPING_REPAIR_SQL`保留已确认的独立结算标记，防止重启后重新待确认。结构及部署步骤见[运行说明](../../../PROJECT_RUNBOOK.md#非实物结算与初始化分类2026-11-10)。
+
 管理员或运营作废错误历史批次后，lock_fifo_batches排除voided_at非空的批次；既有Sale和SaleCostDetail保留。销售列表仍展示原成本供追溯，cost_status为needs_review、人民币利润留空；月度毛利留空并计数，待人工核对原销售分配。普通文件撤销若恢复到已作废批次，只修改历史剩余字段，不让其重新参与FIFO。详见[库存作废规则](../inventory/workflow.md#编辑与删除)。
 
 ## 手工销售

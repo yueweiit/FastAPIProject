@@ -1,5 +1,7 @@
 # 销售模块代码映射
 
+非实物/期初分类共用`services/sales_classification.py`；名称导入及重试读取`non_inventory_sku_rules`，独立结算沿用`financial_facts.SETTLEMENT_ONLY_REASONS`。`inventory_sales_condition`统一排除明确的opening_deduction，`report_exchange_rates.fulfillment_orders`另作内存兜底；`migrate.PENDING_MAPPING_REPAIR_SQL`保证重启不恢复为待确认。`tests/test_sales_classification.py`覆盖规则店铺隔离、停用、正金额结算、原记录重试/幂等、未来批次、数量/成本不变、正常异常保留、库存日结与准备/销售列表/月度/成本解释一致。结构见[离线 DDL](../../../migrations/add_sales_classification.py)，发布核对见[运行说明](../../../PROJECT_RUNBOOK.md#非实物结算与初始化分类2026-11-10)。
+
 销售跌价日期由`services/sales_costs.py:_sale_order_dates`统一读取获准销售的分摊/直接履约来源，沿用`financial_facts.is_fulfillment_settlement`排除退款及纯结算来源；实际来源创建日缺失或冲突保留null，legacy_csv/手工显式日期兼容，不改销售归属期。`attach_sale_impairment`比较成本差额的四位HALF_UP结果，避免先舍入总额的中点误判。`test_sales_costs`覆盖正负微小补差、真实差额拒绝、缺日期的列表/解释/Excel、直接/重复/冲突关联、来源日期与销售归属期不同、退款排除及旧CSV。
 
 | 功能 | 页面函数 | 后端/服务函数 | 核心数据 |

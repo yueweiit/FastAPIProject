@@ -19,7 +19,7 @@ flowchart LR
     U -->|"授权与退出跳转"| EI
     R --> DB["database.py / AsyncSession"]
     S --> DB
-    DB --> M["外置 MySQL：31张ORM表，8张需显式启用"]
+    DB --> M["外置 MySQL：34张ORM表，8张财务增强及1张审计需显式启用"]
     S -->|"HTTPS 历史汇率"| FX["Frankfurter"]
     S -->|"SELECT，只读"| OA["外置 OA PostgreSQL"]
     A --> W["asyncio 月末快照检查"]

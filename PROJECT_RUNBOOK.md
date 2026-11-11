@@ -1,5 +1,17 @@
 # FastAPIProject 运行与维护说明
 
+## 非实物结算与初始化分类（2026-11-10）
+
+新增基础表non_inventory_sku_rules及sales.business_metadata JSON NULL，不依赖财务增强开关；普通销售默认兼容。业务用途、字段及范围见[销售分类](docs/modules/sales/workflow.md#非实物结算与初始化扣减2026-11-10)、[销售字典](docs/modules/sales/database.md#non_inventory_sku_rules)、[库存基线](docs/modules/inventory/workflow.md#初始化历史扣减)。当前ORM为34表。新增稳定分类，不改既有库存数量、FIFO单价/成本、真实入库日或旧版本。
+
+1. 离线生成供审核的DDL：`python migrations/add_sales_classification.py --write-sql output/sales_classification.sql`。先核实目标库/父表/外键/唯一键/引擎、备份并停止所有FIFO写入进程，再执行。已有同名列/表须逐项核对；DDL不受后续DML事务回滚保护，不删除新增结构来回退。
+2. 按 Git 发布流程同步后端代码、migrate.py 和 inventory-workspace.js。migrate新增业务元数据兼容列，且启动修复保留已确认的non_inventory/运费/退款/金额调整标记。启动仍有原建表、历史兼容和快照副作用，不能替代迁移预检。Compose先停止所有FIFO写入进程，再应用代码并build；结构/数据准备后仅重新创建web，不重建或删除数据库/卷。
+3. 历史维护只处理业务已确认的记录。写入前匹配结算和销售标识、店铺、SKU、批次、原日期及金额，在同一事务内核对库存数量、FIFO 明细、原始结算和未涉及的记录。已确认的原凭据与成本随分类保留。
+4. 发布后核对销售台账、库存变动、07 存货跌价及 09 店铺损益。重点确认期初扣减只影响库存和准备基线，非实物结算只进入财务统计。对真实销售的归属或流水异常保留待核对提示。
+5. 保存目标库的私有备份和维护日志。回退使用理解业务分类的兼容版本，保留分类元数据、非实物规则及历史报表版本。
+
+回归：`FIFO_OPERATION_AUDIT_ENABLED=0 python -m unittest tests.test_sales_classification tests.test_sales_name_import tests.test_sales_pending tests.test_inventory_workspace tests.test_batch_store_allocations tests.test_provision_reporting tests.test_inventory_assessment tests.test_sales_export -v`，使用独立SQLite/ASGI及现有测试汇率，不启动业务服务。默认关闭审计的夹具使用该环境值，审计功能由专用测试单独开启验证，不修改生产审计配置。临时MySQL影子表验证仅覆盖维护DML、幂等及失败保护，不代替目标DDL外键和真实并发验证。
+
 > 强制约定：以后每次运行、部署、排障或修改本项目之前，先完整阅读本文件。代码、配置或部署方式变化后，同步更新本文件。
 
 > 财务报表改造：涉及店铺、TikTok Shop 同步、订单/结算/费用、库存成本或四张财务 Excel 导出时，还必须阅读 `FINANCIAL_REPORTING_TARGET.md`。该文件定义目标模板、字段映射、待确认财务口径和实施顺序。
@@ -239,7 +251,7 @@ Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执�
 
 `database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `127.0.0.1` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。浏览器使用可撤销的24小时Cookie会话；local/hybrid兼容无Cookie的HS256 Bearer。Compose 已要求 JWT_SECRET 并传入认证配置，生产显式使用强随机值。EIMS 参数与回调注册见[接入说明](docs/modules/auth/eims-sso-setup.md)。
 
-`services/oa_office_expenses.py` 使用独立的 `OA_DB_*` 配置以只读方式连接 OA PostgreSQL。它只统计流程 `PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B` 中申请日期落在报表期间、状态为已完成且同意的记录。管理支出为“办公场地总费用”时，仅取 `LatínGo拉丁购`（部门 ID `1089990115`）的租金和电费明细，合计后均分给当前有效店铺；管理支出为“工资中国Salario en China”时，按明细中的部门名称与系统店铺名称精确匹配并带入“人员薪资”，该值仍可人工修改并保存，已保存人工值优先；顶层组件“平摊人事+财务管理费用”非零时，按当前有效店铺数均分并带入报表同名行，该字段只允许自动取数，不允许人工修改。OA 配置缺失时，本地开发报表对应自动值为 0；配置存在但读取失败时接口必须报错，不能以 0 掩盖生产连接故障。
+`services/oa_office_expenses.py` 使用独立的 `OA_DB_*` 配置以只读方式连接 OA PostgreSQL，统计流程 `PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B` 中状态为已完成且同意的记录。办公场地总费用和工资中国按表单申请日期归期。前者取 `LatínGo拉丁购`（部门 ID `1089990115`）的租金和电费，合计后均分给当前有效店铺。后者按明细部门与店铺名称精确匹配，填入“人员薪资”，已保存人工值优先。“平摊人事+财务管理费用”按费用所属年月归期，每张审批向明细中每家匹配店铺计入一次原金额。字段识别和待核对规则见[报表 OA 来源](docs/modules/reports/workflow.md#oa-来源)。OA 配置缺失时本地开发报表自动值为 0，配置存在但读取失败时接口报错。
 
 ## 文件职责
 
@@ -270,7 +282,7 @@ docker-compose.yml      web 服务、8006:8000、uploads 挂载、MySQL 环境�
 
 ## 数据模型与业务规则
 
-数据库 ORM 定义了 29 张表（8 张财务增强表默认关闭）。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
+数据库 ORM 定义了 34 张表（8 张财务增强表及1张扩展业务审计表默认关闭）。以下五张是 FIFO 核心表，其余用于店铺、导入、结算、财务报表与认证状态；完整字典见[数据库总览](docs/knowledge/database.md)：
 
 - `users`：用户名唯一、密码哈希、角色 `admin`、`operator`、`viewer`，非管理员可绑定一个店铺。
 - `products`：SKU 唯一、名称、图片路径。

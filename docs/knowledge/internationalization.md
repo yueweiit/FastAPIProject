@@ -1,5 +1,7 @@
 # 国际化现状与渐进扩展约定
 
+初始化扣减的来源编码opening_deduction在inventory-workspace.js的zh-CN字典集中展示；API business_kind使用inventory_sale/opening_deduction/settlement，规则匹配使用店铺ID和平台SKU，不判断中文名称。准备回放说明及维护原因沿用既有后端中文备注契约；无新语言/依赖。分类数量冲突返回稳定码opening_deduction_quantity_invalid。
+
 待确认分类、筛选/清空/所选及筛选重试、单条商品/组合确认、倍数换算、结果/错误、只读降级等文案集中在[static/sales-pending.js](../../static/sales-pending.js)的局部zh-CN字典，复用ProductSearch的候选状态，按页面lang回退中文。API以reason_code及稳定错误码表达状态，组件按product_id/multiplier传递，前端不解析中文做业务判断；原始名称、文件及原因文本转义展示。分类兼容旧自由文本由[services/sales_pending.py](../../services/sales_pending.py)统一识别，Excel分类中文标签集中于同文件REASON_LABELS，沿用现有中文导出契约；无新增支持语言或依赖。
 
 ## 当前能力

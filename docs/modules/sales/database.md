@@ -1,5 +1,11 @@
 # 销售与结算数据表
 
+## non_inventory_sku_rules
+
+来源：`models.NonInventorySkuRule`，基础结构，不依赖财务增强开关。`id` INT主键；`store_id` INT非空/索引/关联stores；`platform_sku_id` VARCHAR(128)非空；两者以`uq_non_inventory_store_sku`唯一。`is_active` BOOL非空/默认1，`reason` VARCHAR(500)非空；`created_by` INT非空关联users，`created_at` DATETIME非空默认当前时间。匹配使用店铺ID和平台SKU ID，不用原因或自然语言名称作业务分类。当前仅授权维护脚本写规则，无新增前端配置接口。有规则的店铺删除返回409 store_has_non_inventory_rules，可停用；被规则引用的创建人沿用用户删除的外键409保护。
+
+离线DDL：`migrations/add_sales_classification.py --write-sql <path>`。已有数据库须先核验并增加`sales.business_metadata JSON NULL`及规则表，再加载新版。生产DDL不能通过事务回滚，不能启动应用替代预检；回退需保留分类并使用兼容代码。
+
 本模块维护销售、FIFO 明细、文件导入、原始结算和组件分摊。字段类型/默认基于 ORM，实际数据库约束需核验。通用关系见[数据库总览](../../knowledge/database.md)。
 
 名称识别不新增结构：Sale.product_id及SaleCostDetail仍保存实际出库组件；SettlementEntry保存来源SKU ID、产品名、交易类型和来源数量，原始商品标题等仍在raw_data。响应source_sku_id/source_product_name/source_quantity/source_type及transaction_type为派生字段，不回填历史数据。
@@ -8,7 +14,7 @@
 
 非赔付退款/调整识别成功时沿用SettlementEntry.product_id（仅单一商品）及SettlementEntryAllocation.product_id/multiplier/quantity保存归属，sale_id为空，组件数量保留来源符号；不创建Sale或SaleCostDetail，不改变批次剩余数。识别失败不保留部分关联；多商品退款无金额分摊时保持未分配产品线。此关联用于查询归属，不能作为库存恢复依据，历史空归属不自动回填。
 
-新导入的正来源数量纯运费/退款冲账在SettlementEntry.raw_data追加应用元字段_settlement_only_reason，值为shipping_adjustment/goods_refund/amount_adjustment。它只区分库存影响，不覆盖原始交易类型或来源数量；sale_id及组件sale_id为空，不生成FIFO成本。公开响应仍使用既有settlement_adjustment类型、实际出库数量0；公共财务事实查询/计数读取同一标记。文件提供的下划线字段会被移除，不能指定该内部标记；无新表、DDL、历史补写或旧关联变更。识别边界见[导入流程](workflow.md#文件导入)。
+新导入的正来源数量纯运费/退款冲账在 SettlementEntry.raw_data 保存应用元字段 `_settlement_only_reason`，值为 shipping_adjustment、goods_refund 或 amount_adjustment。命中店铺非实物规则时写入 non_inventory。标记用于区分库存影响，保留原始交易类型和来源数量。此类行的 sale_id 及组件 sale_id 为空，公开响应沿用 settlement_adjustment 类型，实际出库数量为 0。公共财务事实查询及计数使用同一标记。导入时由系统生成该标记，文件中的下划线字段会被移除。识别边界见[导入流程](workflow.md#文件导入)。
 
 手工补录复用SalesImportBatch（file_type=manual_settlement）及SettlementEntry，来源product_id/sale_id为空且不生成分摊。source_key使用manual:店铺ID:request_key占用现有唯一键，raw_data保存_manual_settlement及_manual_fingerprint用于来源识别与幂等内容校验；来源数量不等于出库数量，响应出库数为0。未新增表、字段或迁移。
 
@@ -26,6 +32,7 @@
 | `store_id` | `Integer` | 是 | 店铺关联；具体归属见模块规则 | 索引；ForeignKey('stores.id') |
 | `order_no` | `String(64)` | 否 | 销售订单标识 | 索引 |
 | `order_claim` | `String(64)` | 是 | 新订单首条明细的全局占位；等于order_no，组合后续明细/历史记录为NULL | 唯一约束uq_sales_order_claim |
+| `business_metadata` | `JSON` | 是 | 经确认的初始化分类及维护追溯；kind=opening_deduction，含maintenance_id/actor_id/at_utc/reason/previous_metadata | NULL兼容普通销售；不修改数量成本 |
 | `quantity` | `Integer` | 否 | 数量；业务含义见本表说明 | — |
 | `selling_price` | `DECIMAL(12, 4)` | 否 | 销售单价 | — |
 | `total_cost` | `DECIMAL(12, 4)` | 否 | FIFO 销售总成本 | — |
