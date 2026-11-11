@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import case, func, select
 
 from models import BatchChangeLog, InventoryBatch, Sale, SaleCostDetail
+from services.sales_classification import inventory_sales_condition
 
 BUSINESS_ZONE = ZoneInfo("Asia/Shanghai")
 MAX_SOURCE_ROWS = 10000
@@ -58,7 +59,8 @@ async def load_activity_sources(db, product_ids, start, end, sale_scope=None):
         func.sum(SaleCostDetail.quantity).label("quantity"),
         func.min(Sale.sold_at).label("first_sale"),
         func.max(Sale.sold_at).label("last_sale"),
-    ).join(Sale, Sale.id == SaleCostDetail.sale_id).where(SaleCostDetail.batch_id.in_(ids))
+    ).join(Sale, Sale.id == SaleCostDetail.sale_id).where(
+        SaleCostDetail.batch_id.in_(ids), inventory_sales_condition())
     if sale_scope is not None:
         query = query.where(sale_scope)
     # 当月内逐日读取；更早记录只按批次汇总，避免把多年日流水整体加载。
@@ -71,10 +73,13 @@ async def load_activity_sources(db, product_ids, start, end, sale_scope=None):
         SaleCostDetail.batch_id.label("batch_id"),
         func.sum(SaleCostDetail.quantity).label("quantity"),
         func.sum(case(
-            (Sale.sold_at < datetime.combine(start, time.min), SaleCostDetail.quantity), else_=0,
+            ((Sale.sold_at < datetime.combine(start, time.min)) & inventory_sales_condition(), SaleCostDetail.quantity), else_=0,
         )).label("opening_outbound"),
-        func.min(Sale.sold_at).label("first_sale"),
-        func.max(Sale.sold_at).label("last_sale"),
+        func.sum(case(((~inventory_sales_condition()) &
+            (Sale.sold_at < datetime.combine(end + timedelta(days=1), time.min)),
+            SaleCostDetail.quantity), else_=0)).label("opening_deduction"),
+        func.min(case((inventory_sales_condition(), Sale.sold_at), else_=None)).label("first_sale"),
+        func.max(case((inventory_sales_condition(), Sale.sold_at), else_=None)).label("last_sale"),
         func.sum(case((SaleCostDetail.quantity <= 0, 1), else_=0)).label("invalid_quantities"),
     ).join(Sale, Sale.id == SaleCostDetail.sale_id).where(
         SaleCostDetail.batch_id.in_(ids), *([sale_scope] if sale_scope is not None else []),
@@ -133,11 +138,14 @@ def build_activity(batches, changes, sales, totals, start, end, *, full_scope, i
         receipt_known = not invalid
         receipt = (original + sum(delta for at, delta, _id in updates if at < batch.arrived_at)) if not cancelled_before_receipt else 0
         total = total_by_batch.get(batch.id)
+        opening_deduction = int(getattr(total, "opening_deduction", 0) or 0) if total else 0
         outbound_before = int(total.opening_outbound) if total else 0
+        if opening_deduction < 0 or opening_deduction > receipt:
+            invalid = True
         if total and total.invalid_quantities:
             invalid = True
         if full_scope and total:
-            if total.first_sale.date() < arrival or (void_time and total.last_sale > void_time):
+            if (total.first_sale and total.first_sale.date() < arrival) or (void_time and total.last_sale and total.last_sale > void_time):
                 invalid = True
             if batch.quantity - int(total.quantity) != batch.remaining_quantity:
                 invalid = True
@@ -154,6 +162,13 @@ def build_activity(batches, changes, sales, totals, start, end, *, full_scope, i
                            "batch_no": batch.batch_no, "kind": "inbound", "occurred_at": batch.arrived_at,
                            "quantity": receipt if receipt_known else None, "reference": batch.dingtalk_order_no or ""})
         adjustments = defaultdict(int)
+        if opening_deduction and not cancelled_before_receipt:
+            adjustments[arrival] -= opening_deduction
+            if start <= arrival <= end and full_scope:
+                events.append({"product_id": batch.product_id, "source_id": batch.id,
+                    "batch_id": batch.id, "batch_no": batch.batch_no, "kind": "opening_deduction",
+                    "occurred_at": batch.arrived_at, "quantity": -opening_deduction,
+                    "reference": "opening_deduction"})
         for at, delta, source_id in updates:
             if at >= batch.arrived_at and not cancelled_before_receipt:
                 adjustments[at.date()] += delta
@@ -162,7 +177,7 @@ def build_activity(batches, changes, sales, totals, start, end, *, full_scope, i
                                    "batch_id": batch.id, "batch_no": batch.batch_no,
                                    "kind": "quantity_correction", "occurred_at": at,
                                    "quantity": delta, "reference": ""})
-        balance = (original + sum(delta for at, delta, _id in updates if at.date() < start)
+        balance = (original - opening_deduction + sum(delta for at, delta, _id in updates if at.date() < start)
                    - outbound_before) if arrival < start else 0
         if void_day and void_day < start:
             balance = 0

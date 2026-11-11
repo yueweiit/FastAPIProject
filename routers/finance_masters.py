@@ -317,6 +317,10 @@ async def delete_store(
     store = await db.get(Store, store_id)
     if not store:
         raise HTTPException(status_code=404, detail="店铺不存在")
+    from models import NonInventorySkuRule
+    if await db.scalar(select(NonInventorySkuRule.id).where(NonInventorySkuRule.store_id == store_id).limit(1)):
+        raise HTTPException(409, detail={"code":"store_has_non_inventory_rules",
+            "message":"店铺被非实物结算规则引用，不能删除；可停用店铺。"})
     if (await db.scalar(select(BatchImpairmentStore.batch_id).where(
         BatchImpairmentStore.store_id == store_id).limit(1)) or await db.scalar(
         select(BatchImpairmentRuleStore.rule_id).where(BatchImpairmentRuleStore.store_id == store_id).limit(1))):

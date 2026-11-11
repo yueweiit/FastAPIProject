@@ -14,7 +14,7 @@ from models import (
 
 COMPENSATION_TYPES = {"物流赔付", "平台赔付", "物料赔付"}
 SETTLEMENT_ONLY_KEY = "_settlement_only_reason"
-SETTLEMENT_ONLY_REASONS = ("shipping_adjustment", "goods_refund", "amount_adjustment")
+SETTLEMENT_ONLY_REASONS = ("shipping_adjustment", "goods_refund", "amount_adjustment", "non_inventory")
 ZERO = Decimal("0")
 
 

@@ -27,7 +27,7 @@
         loading: '正在读取库存…', failed: '读取失败，请重试：', empty: '没有匹配的商品，请调整名称或 SKU。',
         noMovements: '当天没有此类有效记录。', detail: '来源明细', close: '关闭', batch: '批次号',
         occurred: '业务时间', quantity: '变动数量', reference: '来源单号', kind: '类型',
-        quantity_correction: '数量更正', void: '批次作废', previous: '上一页', next: '下一页',
+        quantity_correction: '数量更正', opening_deduction: '期初扣减', void: '批次作废', previous: '上一页', next: '下一页',
         pagination: '共 {total} 个商品 · 第 {page} / {pages} 页', pageSize: '每页商品数',
         detailPagination: '共 {total} 条 · 第 {page} / {pages} 页',
         dataScope: '每日统计为本页商品合计', equation: '期末 = 期初 + 入库 − 出库 + 调整',

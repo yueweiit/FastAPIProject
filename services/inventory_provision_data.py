@@ -2,6 +2,7 @@
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
+from fastapi import HTTPException
 
 from sqlalchemy import func, or_, select
 from models import InventoryBatch, Product, ProductImpairmentRule, Sale, SaleCostDetail, Store, User
@@ -10,6 +11,7 @@ from services.batch_store_allocations import AssignedBatch, load_batch_store_all
 from services.batch_impairment_history import load_rules
 from services.inventory_impairment import ImpairmentRule, InventoryLayer
 from services.inventory_provision_movements import ProvisionSale, replay_inventory_provisions
+from services.sales_classification import inventory_sales_condition, OPENING_DEDUCTION
 
 
 async def load_inventory_provision_data(db, report_date: date, *, product_ids=None):
@@ -20,7 +22,8 @@ async def load_inventory_provision_data(db, report_date: date, *, product_ids=No
     if isinstance(cache, dict) and key in cache:
         return cache[key]
     cutoff = datetime.combine(report_date + timedelta(days=1), time.min)
-    sold_batch_ids = select(SaleCostDetail.batch_id).join(Sale, Sale.id == SaleCostDetail.sale_id).where(Sale.sold_at < cutoff)
+    sold_batch_ids = select(SaleCostDetail.batch_id).join(Sale, Sale.id == SaleCostDetail.sale_id).where(
+        Sale.sold_at < cutoff, inventory_sales_condition())
     batch_rows = (await db.execute(
         select(InventoryBatch, Product.sku, Product.name.label("product_name"),
                Store.name.label("store_name"), Product.product_type, Product.safe_stock_quantity, User.store_id)
@@ -47,7 +50,7 @@ async def load_inventory_provision_data(db, report_date: date, *, product_ids=No
         select(SaleCostDetail.id.label("detail_id"), SaleCostDetail.sale_id,
                SaleCostDetail.batch_id, SaleCostDetail.quantity.label("report_quantity"),
                SaleCostDetail.unit_cost.label("saved_unit_cost"), Sale.sold_at,
-               func.coalesce(Sale.store_id, User.store_id).label("sale_store_id"))
+               func.coalesce(Sale.store_id, User.store_id).label("sale_store_id"), Sale.business_metadata)
         .join(Sale, Sale.id == SaleCostDetail.sale_id)
         .outerjoin(User, User.id == Sale.user_id)
         .where(SaleCostDetail.batch_id.in_(batch_ids), Sale.sold_at < cutoff)
@@ -66,14 +69,23 @@ async def load_inventory_provision_data(db, report_date: date, *, product_ids=No
                              batch.quantity, kind, safe, tuple(rules[batch.product_id]))
               for batch, _sku, _name, _store, kind, safe, owner in batch_rows]
     sales = [ProvisionSale(row.detail_id, row.sale_id, row.batch_id, row.sold_at,
-                           int(row.report_quantity), row.sale_store_id) for row in sale_rows]
+                           int(row.report_quantity), row.sale_store_id,
+                           isinstance(getattr(row, "business_metadata", None), dict)
+                           and row.business_metadata.get("kind") == OPENING_DEDUCTION)
+             for row in sale_rows]
     previous_end = (report_date.replace(day=1) - timedelta(days=1))
     balance_dates = [previous_end, (previous_end.replace(day=1) - timedelta(days=1)), date(report_date.year - 1, 12, 31)]
     boundary_dates = {row[0].id: [rule.effective_date - timedelta(days=1)
                       for rule in row[0].allocation_rules[1:] if rule.effective_date > date.min]
                       for row in batch_rows if row[0].allocation_rules}
-    replay = replay_inventory_provisions(layers, sales, report_date, balance_dates=balance_dates,
-                                         batch_balance_dates=boundary_dates)
+    try:
+        replay = replay_inventory_provisions(layers, sales, report_date, balance_dates=balance_dates,
+                                             batch_balance_dates=boundary_dates)
+    except ValueError as exc:
+        if not str(exc).startswith("opening_deduction_quantity_invalid:"):
+            raise
+        raise HTTPException(409, detail={"code": "opening_deduction_quantity_invalid",
+            "message": "期初扣减数量与批次数量不符，请核对分类及原凭据。"}) from exc
     result = (batch_rows, sale_rows, replay)
     if isinstance(cache, dict):
         cache[key] = result

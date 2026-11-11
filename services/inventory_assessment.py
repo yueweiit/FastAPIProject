@@ -112,9 +112,10 @@ async def assessment_rows(db, products, as_of, *, sale_scope=None, store_id=None
                     {"store_id": None, "store_name": "待分配", "impairment_amount": None}]
     own_outbound = {}
     if not full_scope:
+        from services.sales_classification import inventory_sales_condition
         own_outbound = dict((await db.execute(select(Sale.product_id, func.sum(SaleCostDetail.quantity))
             .join(SaleCostDetail, SaleCostDetail.sale_id == Sale.id)
-            .where(Sale.product_id.in_(ids), sale_scope, Sale.sold_at >= datetime.combine(as_of.replace(day=1), time.min),
+            .where(Sale.product_id.in_(ids), inventory_sales_condition(), sale_scope, Sale.sold_at >= datetime.combine(as_of.replace(day=1), time.min),
                    Sale.sold_at < datetime.combine(as_of + timedelta(days=1), time.min))
             .group_by(Sale.product_id))).all())
     by_id = {p.id: p for p in products}

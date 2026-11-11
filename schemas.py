@@ -364,6 +364,7 @@ class SaleResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    business_kind: Literal["inventory_sale", "opening_deduction", "settlement"] = "inventory_sale"
     product_id: int | None = None
     user_id: int | None = None
     order_no: str

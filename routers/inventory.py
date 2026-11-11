@@ -219,7 +219,8 @@ async def movements(
     if not product:
         raise HTTPException(404, detail={"code": "inventory_product_missing", "message": "商品不存在。"})
     if kind == "outbound":
-        conditions = [InventoryBatch.product_id == product_id,
+        from services.sales_classification import inventory_sales_condition
+        conditions = [inventory_sales_condition(), InventoryBatch.product_id == product_id,
                       Sale.sold_at >= datetime.combine(day, time.min),
                       Sale.sold_at < datetime.combine(day + timedelta(days=1), time.min)]
         if scope is not None:

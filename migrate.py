@@ -3,6 +3,19 @@ import asyncio
 from sqlalchemy import text
 
 from database import engine
+from services.financial_facts import SETTLEMENT_ONLY_REASONS
+
+
+# 启动兼容修复不得把已确认的独立结算重新改成待确认。
+_SETTLEMENT_ONLY_SQL = ",".join(f"'{reason}'" for reason in SETTLEMENT_ONLY_REASONS)
+PENDING_MAPPING_REPAIR_SQL = f"""
+UPDATE settlement_entries se
+SET se.mapping_status = 'pending_confirmation'
+WHERE se.product_id IS NULL AND se.sale_id IS NULL AND se.mapping_status = 'confirmed'
+ AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(se.raw_data,'$._settlement_only_reason')),'') NOT IN ({_SETTLEMENT_ONLY_SQL})
+ AND NOT EXISTS (SELECT 1 FROM settlement_entry_allocations allocation
+                 WHERE allocation.settlement_entry_id = se.id AND allocation.sale_id IS NOT NULL)
+"""
 
 
 MIGRATIONS = (
@@ -22,6 +35,7 @@ MIGRATIONS = (
     ("users", "is_active", "BOOLEAN NOT NULL DEFAULT TRUE"),
     ("sales", "user_id", "INT NULL"),
     ("sales", "store_id", "INT NULL"),
+    ("sales", "business_metadata", "JSON NULL"),
     ("sales", "order_claim", "VARCHAR(64) NULL"),
     ("products", "image", "VARCHAR(500) NULL"),
     ("products", "product_type", "VARCHAR(16) NOT NULL DEFAULT 'stable'"),
@@ -337,23 +351,7 @@ async def migrate() -> None:
             )
         )
 
-        await connection.execute(
-            text(
-                """
-                UPDATE settlement_entries se
-                SET se.mapping_status = 'pending_confirmation'
-                WHERE se.product_id IS NULL
-                  AND se.sale_id IS NULL
-                  AND se.mapping_status = 'confirmed'
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM settlement_entry_allocations allocation
-                    WHERE allocation.settlement_entry_id = se.id
-                      AND allocation.sale_id IS NOT NULL
-                  )
-                """
-            )
-        )
+        await connection.execute(text(PENDING_MAPPING_REPAIR_SQL))
 
         await connection.execute(
             text(

@@ -72,8 +72,9 @@ def convert_report_amount(amount, rate):
 def fulfillment_orders(sales, contexts, store_ids_by_sale=None):
     """按店铺、原始订单号及销售月去重，不按SKU或组合组件重复收取。"""
     result = {}
+    from services.sales_classification import is_opening_deduction
     for sale in sales:
-        if sale.quantity <= 0:
+        if sale.quantity <= 0 or is_opening_deduction(sale):
             continue
         context = contexts.get(sale.id, {})
         if context.get("is_fulfillment_order") is False:

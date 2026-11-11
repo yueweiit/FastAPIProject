@@ -300,6 +300,8 @@ class Sale(Base):
     order_no: Mapped[str] = mapped_column(String(64), index=True)
     # 每个订单只由首条明细占位；组合明细和未回填的历史记录保持NULL。
     order_claim: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 显式分类及维护追溯；NULL兼容原实物销售，不按日期/金额猜测历史用途。
+    business_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer)
     selling_price: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # 销售单价
     total_cost: Mapped[Decimal] = mapped_column(DECIMAL(12, 4))  # FIFO算出的总成本
@@ -542,6 +544,22 @@ class StoreProduct(Base):
     store: Mapped["Store"] = relationship(back_populates="store_products")
     product: Mapped["Product"] = relationship(back_populates="store_products")
     product_line: Mapped["ProductLine"] = relationship(back_populates="store_products")
+
+
+class NonInventorySkuRule(Base):
+    """指定店铺的平台非实物结算规则，不生成商品或库存。"""
+    __tablename__ = "non_inventory_sku_rules"
+    __table_args__ = (
+        UniqueConstraint("store_id", "platform_sku_id", name="uq_non_inventory_store_sku"),
+        {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"},
+    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    platform_sku_id: Mapped[str] = mapped_column(String(128))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    reason: Mapped[str] = mapped_column(String(500))
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class PlatformSkuMapping(Base):

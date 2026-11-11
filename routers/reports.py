@@ -68,6 +68,7 @@ from services.inventory_impairment import (
 )
 
 from services.business_audit import BusinessAuditRoute
+from services.sales_classification import inventory_sales_condition
 
 router = APIRouter(prefix="/reports", tags=["报表"], route_class=BusinessAuditRoute)
 
@@ -403,6 +404,7 @@ async def _store_profit_loss_auto_values(
     _year_start, ytd_end = periods["ytd"]
     read_start = min(start for start, _end in periods.values())
     sales = list((await db.execute(select(Sale).outerjoin(User, User.id == Sale.user_id).where(
+        inventory_sales_condition(),
         _store_sale_scope(store_id), Sale.sold_at >= datetime.combine(read_start, time.min),
         Sale.sold_at < datetime.combine(ytd_end, time.min),
     ))).scalars().all())
@@ -1353,6 +1355,7 @@ async def _product_line_profit_data(
         select(Sale, User.store_id)
         .outerjoin(User, User.id == Sale.user_id)
         .where(
+            inventory_sales_condition(),
             Sale.sold_at >= datetime.combine(read_start, time.min),
             Sale.sold_at < datetime.combine(ytd_end, time.min),
             or_(
@@ -1768,9 +1771,14 @@ async def _load_inventory_impairment_report_rows(
     previous_end = _previous_month_end(report_date)
     month_start, end = report_date.replace(day=1), report_date + timedelta(days=1)
     sold, costs = defaultdict(int), defaultdict(lambda: Decimal("0"))
+    opening_units = defaultdict(int)
     mismatched_cost = set()
     batch_costs = {row[0].id: row[0].unit_cost for row in batch_rows}
     for sale in sales:
+        metadata = getattr(sale, "business_metadata", None)
+        if isinstance(metadata, dict) and metadata.get("kind") == "opening_deduction":
+            opening_units[sale.batch_id] += int(sale.report_quantity)
+            continue
         sold[sale.batch_id] += int(sale.report_quantity)
         costs[sale.batch_id] += int(sale.report_quantity) * sale.saved_unit_cost
         if sale.saved_unit_cost != batch_costs[sale.batch_id]:
@@ -1797,6 +1805,8 @@ async def _load_inventory_impairment_report_rows(
         else:
             note = "本月新增批次，上月账面价值为0" if batch.arrived_at.date() > previous_end else ""
         note = "；".join(filter(None, [note, replay.notes.get(batch.id, "")]))
+        if opening_units[batch.id]:
+            note += f"；原入库数量减期初扣减{opening_units[batch.id]}件再减实际销售数量等于当前数量"
         if batch.id in mismatched_cost:
             note += "；销售成本与当前批次单价不同，保留保存成本，准备按批次成本计算"
         if configured:
@@ -2156,6 +2166,7 @@ async def monthly_report(
             func.sum(Sale.quantity).label("sold_quantity"),
         )
         .where(
+            inventory_sales_condition(),
             Sale.sold_at >= start_at,
             Sale.sold_at < end_at,
         )

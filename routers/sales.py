@@ -68,6 +68,8 @@ from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, bu
 from auth import RequireOperator, RequireAnyRole
 
 from services.business_audit import BusinessAuditRoute
+from services.sales_classification import (NON_INVENTORY, inventory_sales_condition,
+    is_opening_deduction, non_inventory_skus)
 
 router = APIRouter(prefix="/sales", tags=["销售管理"], route_class=BusinessAuditRoute)
 
@@ -136,7 +138,8 @@ def _quantity_value(value, allow_negative: bool = False) -> int:
     return int(quantity)
 
 
-def _order_settlement_only_reason(row: dict, net_sales: Decimal, settlement_total: Decimal) -> str | None:
+def _order_settlement_only_reason(row: dict, net_sales: Decimal, settlement_total: Decimal,
+                                  *, non_inventory: bool = False) -> str | None:
     """商品净额为零时，区分货品交易与退款/纯金额调整；缺少货品依据时不猜测。"""
     def amount(name):
         value = _decimal_value(row.get(name))
@@ -144,6 +147,10 @@ def _order_settlement_only_reason(row: dict, net_sales: Decimal, settlement_tota
             raise ValueError(f"金额不是有效数字: {row.get(name)}")
         return value
 
+    if not net_sales.is_finite() or not settlement_total.is_finite():
+        raise ValueError("金额不是有效数字，请核对净商品销售额及结算总金额")
+    if non_inventory:
+        return NON_INVENTORY
     if net_sales != 0:
         return None
     if amount("商品退款") < 0:
@@ -857,6 +864,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
         raise HTTPException(status_code=400, detail="文件中没有可导入的数据行")
 
     await report("validating", 0, len(rows))
+    non_stock_skus = await non_inventory_skus(db, {import_store.id}) if source_kind == "order_detail" else set()
     products = list((await db.execute(select(Product).order_by(Product.id))).scalars().all())
     store_products: list[StoreProduct] = []
     if source_kind != "order_detail":
@@ -941,7 +949,8 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
                 net_product_sales = _decimal_value(row.get("净商品销售额"))
                 settlement_total = _decimal_value(row.get("结算总金额"))
                 if transaction_type == "订单":
-                    settlement_only_reason = _order_settlement_only_reason(row, net_product_sales, settlement_total)
+                    settlement_only_reason = _order_settlement_only_reason(row, net_product_sales, settlement_total,
+                        non_inventory=(import_store.id, _text_value(row.get("SKU ID"))) in non_stock_skus)
                     if settlement_only_reason:
                         is_inventory_sale = False
             except ValueError as exc:
@@ -980,7 +989,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
 
         if source_kind == "order_detail":
             is_compensation = transaction_type in COMPENSATION_TRANSACTION_TYPES
-            if is_compensation:
+            if is_compensation or settlement_only_reason == NON_INVENTORY:
                 components, mapping_error = [], None
                 is_inventory_sale = False
             else:
@@ -1378,6 +1387,7 @@ def _build_sale_response(
         display_sku=(source_context or {}).get("source_sku_id"),
         display_name=(source_context or {}).get("display_product_name") or (source_context or {}).get("source_product_name"),
         id=sale.id,
+        business_kind="opening_deduction" if is_opening_deduction(sale) else "inventory_sale",
         product_id=sale.product_id,
         user_id=sale.user_id,
         order_no=sale.order_no,
@@ -1954,7 +1964,7 @@ def _sale_filter_values(
     month: str | None,
     user: User,
 ):
-    conditions = []
+    conditions = [inventory_sales_condition()]
     normalized_keyword = keyword.strip() if keyword and keyword.strip() else None
     if product_id:
         conditions.append(Sale.product_id == product_id)
@@ -2157,6 +2167,7 @@ def _financial_event_response(event, store_name, local_product_name=None):
         profit_cny=event.revenue-event.expense if event.revenue is not None and event.expense is not None else None,
         store_name=store_name, sold_at=event.occurred_at,
         created_at=event.created_at or event.occurred_at,
+        business_kind="settlement",
         record_type="compensation_income" if event.transaction_type in COMPENSATION_TRANSACTION_TYPES else "manual_settlement" if event.source_type == "manual_settlement" else "settlement_adjustment",
         display_sku=event.platform_sku_id or "-",
         display_name=event.display_product_name or local_product_name or event.product_name or "-",
@@ -2233,7 +2244,7 @@ async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include
     scope = _sale_store_scope(user)
     owner = aliased(User)
     store = func.coalesce(Sale.store_id, owner.store_id)
-    filters = [Sale.id.in_({sale.id for sale in seeds})]
+    filters = [inventory_sales_condition(), Sale.id.in_({sale.id for sale in seeds})]
     if scope is not None:
         filters.append(scope)
     scoped = (await db.execute(select(Sale, store).outerjoin(owner, owner.id == Sale.user_id)
@@ -2246,7 +2257,7 @@ async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include
         shops = defaultdict(list)
         for sid, number in grouped_keys[offset:offset + 500]:
             shops[sid].append(number)
-        conditions = [or_(*(and_(store == sid, Sale.order_no.in_(numbers)) for sid, numbers in shops.items()))]
+        conditions = [inventory_sales_condition(), or_(*(and_(store == sid, Sale.order_no.in_(numbers)) for sid, numbers in shops.items()))]
         if scope is not None:
             conditions.append(scope)
         rows = (await db.execute(select(Sale, store).outerjoin(owner, owner.id == Sale.user_id)
@@ -2302,7 +2313,7 @@ async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include
 
 @router.get("/{sale_id}/cost-breakdown", response_model=SaleCostExplanationResponse)
 async def sale_cost_breakdown(sale_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole)):
-    conditions = [Sale.id == sale_id]
+    conditions = [inventory_sales_condition(), Sale.id == sale_id]
     scope = _sale_store_scope(user)
     if scope is not None:
         conditions.append(scope)

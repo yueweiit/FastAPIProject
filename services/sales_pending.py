@@ -10,6 +10,7 @@ from sqlalchemy import case, or_, select
 from models import Product, Sale, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, Store, StoreProduct
 from schemas import PendingComponent
 from services.financial_facts import COMPENSATION_TYPES, SETTLEMENT_ONLY_KEY, SETTLEMENT_ONLY_REASONS
+from services.sales_classification import NON_INVENTORY, non_inventory_skus
 
 MAX_RETRY_ROWS = 200
 REASON_PATTERNS = (
@@ -117,6 +118,7 @@ async def retry_pending(db, user, data):
     if data.components is not None and any(c.product_id not in by_id for c in data.components):
         raise HTTPException(422, detail={"code": "pending_component_invalid", "message": "确认的本地商品已不存在，请重新选择。"})
     store_ids = {entry.store_id for entry in entries if entry.store_id is not None}
+    non_stock_skus = await non_inventory_skus(db, store_ids)
     active_stores = set((await db.execute(select(Store.id).where(Store.id.in_(store_ids), Store.is_active.is_(True)))).scalars().all()) if store_ids else set()
     store_products = (await db.execute(select(StoreProduct).where(StoreProduct.is_active.is_(True)))).scalars().all() if any(
         header.file_type == "legacy_csv" for header in headers.values()) else []
@@ -144,7 +146,8 @@ async def retry_pending(db, user, data):
                 if header.file_type == "order_detail":
                     settlement_only = row.get(SETTLEMENT_ONLY_KEY) if row.get(SETTLEMENT_ONLY_KEY) in SETTLEMENT_ONLY_REASONS else None
                     if not settlement_only and (entry.transaction_type or "订单") == "订单":
-                        settlement_only = _order_settlement_only_reason(row, entry.net_product_sales, entry.settlement_total)
+                        settlement_only = _order_settlement_only_reason(row, entry.net_product_sales, entry.settlement_total,
+                            non_inventory=(entry.store_id, entry.platform_sku_id) in non_stock_skus)
                     is_inventory = (entry.transaction_type or "订单") == "订单" and entry.quantity > 0 and entry.net_product_sales >= 0 and not settlement_only
                 else:
                     is_inventory = True
@@ -153,7 +156,7 @@ async def retry_pending(db, user, data):
             except (ValueError, TypeError):
                 error = "待确认来源金额或数量不合法，请核对原始来源。"
         components, manual = [], None
-        if not error:
+        if not error and settlement_only != NON_INVENTORY:
             manual = [c.model_dump() for c in data.components] if data.components is not None else saved_components(entry)
             if manual:
                 try:

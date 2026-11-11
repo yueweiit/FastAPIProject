@@ -3,7 +3,7 @@
 from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -23,6 +23,7 @@ class ProvisionSale:
     sold_at: datetime
     quantity: int
     store_id: int | None = None
+    is_opening_deduction: bool = False
 
 
 @dataclass(frozen=True)
@@ -151,15 +152,34 @@ def replay_inventory_provisions(
             if day <= as_of:
                 partial_dates[day].add(batch_id)
     month_start = as_of.replace(day=1)
-    layers = {layer.batch_id: layer for layer in original_layers}
     notes: defaultdict[int, set[str]] = defaultdict(set)
     invalid_from: dict[int, date] = {}
+    # 经明确确认的期初扣减已消耗实物，保留原凭据，但不是销售/准备转销。
+    # 基线随真实入库生效，不把8月1日占位日期当作实际销售日期。
+    opening = defaultdict(int)
+    invalid_opening = set()
+    for sale in sales:
+        if sale.is_opening_deduction and sale.sold_at.date() <= as_of:
+            opening[sale.batch_id] += sale.quantity
+            if sale.quantity <= 0:
+                invalid_opening.add(sale.batch_id)
+    adjusted_layers = []
+    for layer in original_layers:
+        deducted = opening[layer.batch_id]
+        if deducted or layer.batch_id in invalid_opening:
+            notes[layer.batch_id].add(f"经确认的期初扣减{deducted}件，保留原记录及成本，不计销售转销")
+        if deducted < 0 or deducted > layer.quantity or layer.batch_id in invalid_opening:
+            raise ValueError(f"opening_deduction_quantity_invalid:{layer.batch_id}")
+        adjusted_layers.append(replace(layer, quantity=layer.quantity - deducted))
+    original_layers = adjusted_layers
+    layers = {layer.batch_id: layer for layer in original_layers}
     invalid_sale_days: set[tuple[int, date]] = set()
     by_product: defaultdict[int, list[InventoryLayer]] = defaultdict(list)
     for layer in original_layers:
         by_product[layer.product_id].append(layer)
     eligible_sales = sorted(
-        (sale for sale in sales if sale.sold_at.date() <= as_of and sale.batch_id in layers),
+        (sale for sale in sales if not sale.is_opening_deduction
+         and sale.sold_at.date() <= as_of and sale.batch_id in layers),
         key=lambda sale: (sale.sold_at, sale.sale_id, sale.detail_id),
     )
     totals: defaultdict[int, int] = defaultdict(int)
