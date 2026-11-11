@@ -219,14 +219,14 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
 
         db = SimpleNamespace(scalar=count_stores, commit=release_mysql)
         office = {date(2026, 9, 8): Decimal('100')}
-        shared = {date(2026, 9, 9): Decimal('20')}
+        shared = {'测试店铺': {date(2026, 9, 1): Decimal('20')}}
         salaries = {'测试店铺': {date(2026, 9, 22): Decimal('30')}}
 
         async def office_reader(*_):
             return await read_oa('office', office)
 
         async def shared_reader(*_):
-            return await read_oa('shared', shared)
+            return await read_oa('shared', (shared, {}))
 
         async def salary_reader(*_):
             return await read_oa('salary', salaries)
@@ -234,7 +234,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch('routers.reports.office_space_totals_by_application_date',
                   new=office_reader),
-            patch('routers.reports.shared_admin_totals_by_application_date',
+            patch('routers.reports.shared_admin_expenses_by_store_and_month',
                   new=shared_reader),
             patch('routers.reports.china_salary_totals_by_store_and_application_date',
                   new=salary_reader),
@@ -242,7 +242,9 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             count, values = await _prepare_profit_loss_oa_values(db, report_month, True)
         self.assertEqual(events, ['mysql_count', 'mysql_commit', 'office', 'shared', 'salary'])
         self.assertEqual(count, 2)
-        self.assertEqual(values, {'office': office, 'shared_admin': shared, 'salaries': salaries})
+        self.assertEqual(values, {
+            'office': office, 'shared_admin': shared, 'salaries': salaries, 'shared_admin_unresolved': {},
+        })
 
     async def test_prefetched_oa_values_do_not_reopen_external_connection(self):
         db = _AutoValuesDb([], [])
@@ -250,7 +252,8 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                 for key in ('inventory_impairment', 'inventory_writeoff')}
         oa_values = {
             'office': {date(2026, 9, 8): Decimal('100')},
-            'shared_admin': {date(2026, 9, 9): Decimal('20')},
+            'shared_admin': {'测试店铺': {date(2026, 9, 1): Decimal('1217.33')}},
+            'shared_admin_unresolved': {'测试店铺': 1},
             'salaries': {'测试店铺': {date(2026, 9, 22): Decimal('30')}},
         }
         with (
@@ -258,7 +261,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             patch('routers.reports.unlinked_settlement_events', new=AsyncMock(return_value=[])),
             patch('routers.reports.office_space_totals_by_application_date',
                   new=AsyncMock(side_effect=AssertionError('unexpected OA read'))),
-            patch('routers.reports.shared_admin_totals_by_application_date',
+            patch('routers.reports.shared_admin_expenses_by_store_and_month',
                   new=AsyncMock(side_effect=AssertionError('unexpected OA read'))),
             patch('routers.reports.china_salary_totals_by_store_and_application_date',
                   new=AsyncMock(side_effect=AssertionError('unexpected OA read'))),
@@ -267,9 +270,16 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                 db, 7, date(2026, 9, 1), '测试店铺',
                 oa_values=oa_values, active_store_count=2,
             )
+            unlisted = await _store_profit_loss_auto_values(
+                _AutoValuesDb([], []), 8, date(2026, 9, 1), '其他店铺',
+                oa_values=oa_values, active_store_count=2,
+            )
         self.assertEqual(values['rent_utilities']['current'], Decimal('50'))
-        self.assertEqual(values['shared_admin']['current'], Decimal('10'))
+        self.assertEqual(values['shared_admin']['current'], Decimal('1217.33'))
         self.assertEqual(values['salary']['current'], Decimal('30'))
+        self.assertEqual(unlisted['shared_admin']['current'], Decimal('0'))
+        self.assertTrue(any('所属年月待核对' in note for note in values['_warnings']))
+        self.assertFalse(any('所属年月待核对' in note for note in unlisted['_warnings']))
 
     async def _save_manual_report(self, saved, **payload):
         report = SimpleNamespace(manual_values=saved) if saved is not None else None
@@ -337,7 +347,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         with patch("routers.sales._sale_import_context", new=AsyncMock(return_value=({},{}))), \
              patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=zero)), \
              patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})), \
-             patch("routers.reports.shared_admin_totals_by_application_date", new=AsyncMock(return_value={})):
+             patch("routers.reports.shared_admin_expenses_by_store_and_month", new=AsyncMock(return_value=({}, {}))):
             auto = await _store_profit_loss_auto_values(db, 7, date(2026,9,1))
         values = _build_store_profit_loss_values(auto,{})
         self.assertEqual(auto["inventory_other_cost"]["current"], Decimal(100))
@@ -373,7 +383,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         with patch("routers.sales._sale_import_context", new=AsyncMock(return_value=({},{}))), \
              patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=zero)), \
              patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})), \
-             patch("routers.reports.shared_admin_totals_by_application_date", new=AsyncMock(return_value={})):
+             patch("routers.reports.shared_admin_expenses_by_store_and_month", new=AsyncMock(return_value=({}, {}))):
             auto = await _store_profit_loss_auto_values(db, 7, date(2026,9,1))
         values = _build_store_profit_loss_values(auto, {})
         self.assertEqual(auto["inventory_other_cost"]["current"], Decimal(0))
@@ -484,11 +494,13 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                 }),
             ),
             patch(
-                "routers.reports.shared_admin_totals_by_application_date",
-                new=AsyncMock(return_value={
-                    date(2026, 8, 8): Decimal("30"),
-                    date(2026, 7, 18): Decimal("10"),
-                }),
+                "routers.reports.shared_admin_expenses_by_store_and_month",
+                new=AsyncMock(return_value=({
+                    "测试店铺": {
+                        date(2026, 8, 1): Decimal("30"),
+                        date(2026, 7, 1): Decimal("10"),
+                    },
+                }, {})),
             ),
         ):
             values = await _store_profit_loss_auto_values(
@@ -534,9 +546,9 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "ytd": Decimal("120"),
         })
         self.assertEqual(values["shared_admin"], {
-            "current": Decimal("15"),
-            "previous": Decimal("5"),
-            "ytd": Decimal("20"),
+            "current": Decimal("30"),
+            "previous": Decimal("10"),
+            "ytd": Decimal("40"),
         })
         self.assertEqual(impairment_totals.await_args.args[2], _month_periods(date(2026, 8, 1)))
 

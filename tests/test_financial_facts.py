@@ -106,7 +106,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
     async def auto_values(self):
         with patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=self.zero_provisions())), \
              patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})), \
-             patch("routers.reports.shared_admin_totals_by_application_date", new=AsyncMock(return_value={})):
+             patch("routers.reports.shared_admin_expenses_by_store_and_month", new=AsyncMock(return_value=({}, {}))):
             return await _store_profit_loss_auto_values(self.db, 7, date(2026, 9, 1))
 
     async def test_unlinked_events_exclude_linked_sale_pending_orders_and_other_stores(self):

@@ -450,7 +450,7 @@ class FinancialControlsTests(facts.FinancialFactsTests):
     async def test_old_version_and_export_remain_unchanged_after_restatement(self):
         patchers = [patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=self.zero_provisions())),
                     patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})),
-                    patch("routers.reports.shared_admin_totals_by_application_date", new=AsyncMock(return_value={})),
+                    patch("routers.reports.shared_admin_expenses_by_store_and_month", new=AsyncMock(return_value=({}, {}))),
                     patch("routers.reports.china_salary_totals_by_store_and_application_date", new=AsyncMock(return_value={}))]
         for patcher in patchers:
             patcher.start()
@@ -605,12 +605,15 @@ class FinancialControlsTests(facts.FinancialFactsTests):
             oa_reads.append(True)
             return {}
 
+        async def read_shared_admin(*args):
+            return await read_oa(*args), {}
+
         body = FinancialVersionRequest(request_key="version-prefetch-001", store_id=7,
                                        report_month=date(2026, 9, 1)).model_dump(mode="json")
         with patch("routers.reports._store_provision_financial_values",
                    new=AsyncMock(return_value=self.zero_provisions())), \
              patch("routers.reports.office_space_totals_by_application_date", new=read_oa), \
-             patch("routers.reports.shared_admin_totals_by_application_date", new=read_oa), \
+             patch("routers.reports.shared_admin_expenses_by_store_and_month", new=read_shared_admin), \
              patch("routers.reports.china_salary_totals_by_store_and_application_date", new=read_oa), \
              patch("services.financial_versions.today", return_value=date(2026, 10, 27)), \
              patch.object(controls, "today", return_value=date(2026, 10, 27)):

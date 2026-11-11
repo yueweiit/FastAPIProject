@@ -48,7 +48,7 @@ class BatchRestatementTests(unittest.IsolatedAsyncioTestCase):
         self.app.dependency_overrides[get_db] = db
         for name, value in (('_store_provision_financial_values', self.zero_provisions()),
                             ('office_space_totals_by_application_date', {}),
-                            ('shared_admin_totals_by_application_date', {}),
+                            ('shared_admin_expenses_by_store_and_month', ({}, {})),
                             ('china_salary_totals_by_store_and_application_date', {})):
             patcher = patch.object(reports, name, new=AsyncMock(return_value=value))
             patcher.start()

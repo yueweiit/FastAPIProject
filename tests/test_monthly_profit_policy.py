@@ -72,7 +72,7 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
             ('services.report_exchange_rates.get_cny_rates',rates),
             ('routers.reports._store_provision_financial_values',AsyncMock(return_value=facts.FinancialFactsTests.zero_provisions(self))),
             ('routers.reports.office_space_totals_by_application_date',AsyncMock(return_value={})),
-            ('routers.reports.shared_admin_totals_by_application_date',AsyncMock(return_value={})),
+            ('routers.reports.shared_admin_expenses_by_store_and_month',AsyncMock(return_value=({}, {}))),
             ('routers.reports.china_salary_totals_by_store_and_application_date',AsyncMock(return_value={})),
         ]:
             item=patch(target,new=value);item.start();self.addCleanup(item.stop)

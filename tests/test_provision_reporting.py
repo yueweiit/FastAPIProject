@@ -177,7 +177,7 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
                 for key in ("inventory_impairment", "inventory_writeoff")}
         with patch("routers.reports._store_provision_financial_values", new_callable=AsyncMock, return_value=zero), \
              patch("routers.reports.office_space_totals_by_application_date", new_callable=AsyncMock, return_value={}) as office, \
-             patch("routers.reports.shared_admin_totals_by_application_date", new_callable=AsyncMock, return_value={}), \
+             patch("routers.reports.shared_admin_expenses_by_store_and_month", new_callable=AsyncMock, return_value=({}, {})), \
              patch("routers.reports.china_salary_totals_by_store_and_application_date", new_callable=AsyncMock, return_value={}):
             await _store_profit_loss_auto_values(db, 7, date(2026,1,1), "店铺")
         params = db.execute.await_args.args[0].compile().params.values()
