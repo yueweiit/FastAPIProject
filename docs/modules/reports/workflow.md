@@ -109,11 +109,17 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 
 ## OA 来源
 
+配置 `OA_EXPENSE_API_BASE_URL` 后，FIFO 每次请求向新 OA 的 `GET /api/v1/reporting/operating-expenses` 读取三类费用的人民币月度汇总，并校验企业、月份和返回结构。企业与服务凭据通过 `OA_EXPENSE_API_CORP_ID` 和 `OA_EXPENSE_API_TOKEN` 配置。HTTP 查询或校验失败抛出 `OaExpenseSourceError`。地址留空时使用原 `OA_DB_*` 直连，直连配置缺失时沿用空数据和警告。OA 更新会影响实时重算，当前有效店铺数量参与办公费用均分。依据：[HTTP 取数](../../../services/oa_operating_expenses.py)、[直连取数](../../../services/oa_office_expenses.py)。
+
+HTTP 模式下，平摊人事财务费用按 OA 费用所属月份与店铺明细归属。直连模式沿用原有申请日期与有效店铺均摊口径。
+
+HTTP 模式下，OA 的申请月份和币种待核对记录随已确认金额返回。FIFO 按审批去重并显示核对提示，办公费用提示适用于参与均摊的报表，工资和分摊费用提示按店铺匹配。异常金额待核对，确认金额继续按现有口径汇总。上线时先更新能识别新警示码的 FIFO，再启用新版 OA 响应。
+
 _approved_forms_by_expense 查询未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance，按申请日期左闭右开过滤，只执行 SELECT。办公明细只取指定部门的租金/电费，工资按明细部门名归属，分摊管理费按精确组件名取数。代码固定流程/组件/部门标识，实际 OA 表单契约待验证。
 
 OA_DB 必要配置缺少或不完整时返回空数据并记录警告；完整配置但连接/查询失败抛 OaExpenseSourceError，没有统一转换为专用业务响应。数据是直接读取，没有稳定期间缓存，OA 更新和当前有效店铺数量变化会影响重算。依据：[oa_office_expenses.py](../../../services/oa_office_expenses.py)。
 
-单店损益读取、保存后的响应及财务附件导出先读取当前有效店铺数，结束只读 MySQL 事务后再等待 OA PostgreSQL；OA 结果在同一请求内复用，财务附件的跨店汇总不逐店重复请求 OA。OA 返回后才重新读取 MySQL 报表/销售数据，避免等待外部数据库时占用 MySQL 连接。保存接口先提交人工值，再执行上述读取；OA 失败仍按原有错误传播，已提交人工值不回滚。此分段读取不提供跨 MySQL/OA 的一致快照，金额仍应按业务核对。依据：[reports.py](../../../routers/reports.py) 的 `_prepare_profit_loss_oa_values`、`_store_profit_loss_auto_values`。
+单店损益读取、保存后的响应及财务附件导出先读取当前有效店铺数，结束只读 MySQL 事务后再等待 OA 取数。OA 结果在同一请求内复用，财务附件的跨店汇总不逐店重复请求 OA。OA 返回后才重新读取 MySQL 报表和销售数据，避免等待外部读取时占用 MySQL 连接。保存接口先提交人工值，再执行上述读取。OA 失败仍按原有错误传播，已提交人工值不回滚。此分段读取不提供跨 MySQL/OA 的一致快照，金额仍应按业务核对。依据：[reports.py](../../../routers/reports.py) 的 `_prepare_profit_loss_oa_values`、`_store_profit_loss_auto_values`。
 
 ## 产品线、跨店汇总与 Excel
 

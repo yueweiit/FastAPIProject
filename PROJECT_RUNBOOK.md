@@ -163,7 +163,7 @@
 
 1. 阅读本文件和项目根目录的 `.env`，不要把密码复制到日志、截图或文档。
 2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地备份测试库位于 Docker `fifo-mysql8-test` 容器（MySQL 8.0.46），宿主机连接为 `127.0.0.1:3309`、用户 `fifo_local_app`、库名 `inventory_fifo_test`；本地 `.env` 使用已有的独立本地凭据。原 `mysql57` 与 `127.0.0.1:3308` 的 `inventory_fifo` 保留。Web 容器不能直接使用此宿主机回环地址，Docker 部署须另配容器可达的数据库地址。
-3. 店铺损益表的“房租+水电+网费”还需要 OA PostgreSQL 的只读配置：`OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。FIFO 不写入 OA；只从 `dingtalk_oa.ding_approval_instance` 读取已完成且同意的指定办公场地审批明细。
+3. 店铺损益表的 OA 费用可通过新 OA HTTP 接口或 PostgreSQL 直连读取。配置 `OA_EXPENSE_API_BASE_URL`、`OA_EXPENSE_API_CORP_ID`、`OA_EXPENSE_API_TOKEN` 启用 HTTP，切换前用同一批审批核对三项金额。保留 PostgreSQL 直连时，使用 `OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。
    如果 OA PostgreSQL 与服务器同机且 OA 项目的 `PGHOST=localhost`，Docker 部署时将 `OA_DB_HOST` 配为 `host.docker.internal`；Compose 已加入 Linux 所需的 host-gateway 映射。若 PostgreSQL 在内网主机，则填写该内网地址。
 4. 确认运行服务器能连接 MySQL，且数据库账号有建表和改表权限。应用启动会创建缺失表。
 5. 确认 `uploads/` 可写、磁盘空间足够、宿主机端口 `8006` 未被占用。

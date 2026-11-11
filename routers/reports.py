@@ -46,6 +46,9 @@ from services.oa_office_expenses import (
     office_space_totals_by_application_date,
     shared_admin_totals_by_application_date,
 )
+from services.oa_operating_expenses import (
+    operating_expense_http_enabled, operating_expense_review_messages, read_operating_expenses,
+)
 from services.financial_facts import (
     manual_period_values, unlinked_settlement_events, valid_rate,
 )
@@ -368,6 +371,8 @@ async def _load_profit_loss_oa_values(report_month: date, active_store_count: in
     periods = _month_periods(report_month)
     read_start = min(start for start, _end in periods.values())
     ytd_end = periods["ytd"][1]
+    if operating_expense_http_enabled():
+        return await read_operating_expenses(read_start, ytd_end)
     office, shared_admin, salaries = {}, {}, {}
     if active_store_count:
         office = await office_space_totals_by_application_date(read_start, ytd_end)
@@ -468,6 +473,8 @@ async def _store_profit_loss_auto_values(
         active_store_count = await db.scalar(
             select(func.count()).select_from(Store).where(Store.is_active.is_(True))
         )
+    if oa_values is None and operating_expense_http_enabled():
+        oa_values = await read_operating_expenses(read_start, ytd_end)
     if active_store_count:
         office_totals = (oa_values["office"] if oa_values is not None
                          else await office_space_totals_by_application_date(read_start, ytd_end))
@@ -478,16 +485,34 @@ async def _store_profit_loss_auto_values(
                 total / Decimal(active_store_count),
                 periods,
             )
-        shared_admin_totals = (oa_values["shared_admin"] if oa_values is not None
-                               else await shared_admin_totals_by_application_date(read_start, ytd_end))
-        for application_date, total in shared_admin_totals.items():
+        if oa_values is None or "shared_admin_by_store" not in oa_values:
+            shared_admin_totals = (oa_values["shared_admin"] if oa_values is not None
+                                   else await shared_admin_totals_by_application_date(read_start, ytd_end))
+            for application_date, total in shared_admin_totals.items():
+                _add_period_value(
+                    auto_values["shared_admin"],
+                    application_date,
+                    total / Decimal(active_store_count),
+                    periods,
+                )
+    if store_name:
+        store_name = store_name.strip()
+        shared_admin_totals, unresolved = {}, {}
+        if oa_values is not None and "shared_admin_by_store" in oa_values:
+            shared_admin_totals = oa_values["shared_admin_by_store"]
+            unresolved = oa_values["shared_admin_unresolved"]
+        for expense_month, total in shared_admin_totals.get(store_name, {}).items():
             _add_period_value(
                 auto_values["shared_admin"],
-                application_date,
-                total / Decimal(active_store_count),
+                expense_month,
+                total,
                 periods,
             )
-    if store_name:
+        if unresolved_count := unresolved.get(store_name):
+            warnings.append(
+                f"{unresolved_count} 张 OA 审批的平摊人事+财务管理费用所属年月待核对，"
+                "金额未纳入损益计算。"
+            )
         salary_totals = (oa_values["salaries"] if oa_values is not None
                          else await china_salary_totals_by_store_and_application_date(read_start, ytd_end))
         auto_values["salary"] = {
@@ -502,6 +527,8 @@ async def _store_profit_loss_auto_values(
             month = day.replace(day=1).isoformat()
             salary_months[month] = salary_months.get(month, Decimal(0)) + total
         auto_values["_monthly_defaults"] = {"salary": salary_months}
+    if oa_values is not None:
+        warnings.extend(operating_expense_review_messages(oa_values, store_name, active_store_count or 0))
     return auto_values
 
 
@@ -645,7 +672,10 @@ async def _store_profit_loss_response(
             kind=kind,
             is_auto=kind == "auto",
             is_formula=kind == "formula",
-            source=source,
+            source=(
+                "按费用所属月份，审批明细中列出的店铺各取一份 OA 原金额"
+                if key == "shared_admin" and operating_expense_http_enabled() else source
+            ),
             value=StoreProfitLossCell(**values[key]),
             manual_value=StoreProfitLossCell(**saved_manual_values.get(key, {}))
             if kind == "manual" and isinstance(saved_manual_values.get(key), dict) else None,

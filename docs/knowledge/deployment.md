@@ -29,6 +29,7 @@ MySQL 必须单独提供；需要 OA 自动费用时再配置外部 PostgreSQL�
 | SSO_TOKEN_ENCRYPTION_KEY | 后端临时数据/Token 的 Fernet 密钥 | 独立密钥；变更使旧 SSO 加密会话失效 |
 | OA_DB_HOST、OA_DB_PORT | OA PostgreSQL 地址和端口 | 可选，端口缺省 5432 |
 | OA_DB_DATABASE、OA_DB_USER、OA_DB_PASSWORD | OA 查询数据库及账号 | 应用只查表，账号实际只读权限待验证 |
+| OA_EXPENSE_API_BASE_URL、OA_EXPENSE_API_CORP_ID、OA_EXPENSE_API_TOKEN | 新 OA 运营费用 HTTP 入口、企业和独立服务凭据 | 地址非空时启用 HTTP，三项须齐全。Compose 显式传入，留空地址继续使用 OA_DB_* |
 
 database.py 在加载时读取根目录 .env；Dockerfile COPY . . 配合 [.dockerignore](../../.dockerignore) 排除了 .env，当前 Compose 已显式注入 MySQL/OA/JWT/SSO 变量，环境变更需重新创建容器。OA 必需配置缺失或不完整时服务视为未配置；完整配置但查询失败时抛错。EIMS 配置不全仅关闭 SSO，hybrid 保留本地登录；配置完整不代表真实客户端登录已验收。
 

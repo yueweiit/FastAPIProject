@@ -7,7 +7,7 @@
 | 集成 | 方向/方式 | 责任边界与保存结果 | 代码入口 |
 | --- | --- | --- | --- |
 | EIMS | 浏览器授权/退出跳转；FIFO 后端请求 OIDC Discovery、JWKS、Token、UserInfo | EIMS 负责身份和应用授权；FIFO 校验 app_user_id 绑定本地用户，本地维护角色/店铺。Token 加密后端保存，不共享数据库、不自动开户 | [EimsClient](../../services/eims_sso.py)、[认证路由](../../routers/eims_auth.py)、[SessionStore](../../services/auth_sessions.py) |
-| OA PostgreSQL | FIFO 查询 ding_approval_instance，只执行 SELECT | OA 负责审批原始表单；FIFO 按申请日期、流程、完成结果及组件计算费用，不向 OA 回写，不建本地费用同步表 | [oa_office_expenses.py](../../services/oa_office_expenses.py)、[报表 OA 来源](../modules/reports/workflow.md#oa-来源) |
+| OA 运营费用 | 配置 HTTP 地址时从新 OA 读取月度汇总，否则沿用 PostgreSQL SELECT | OA 保存原始审批，FIFO 负责按店铺核算、处理人工薪资和台账覆盖 | [HTTP 取数](../../services/oa_operating_expenses.py)、[直连取数](../../services/oa_office_expenses.py)、[报表 OA 来源](../modules/reports/workflow.md#oa-来源) |
 | Frankfurter | FIFO 按原币/日期区间请求历史汇率 | 服务返回币种→CNY；FIFO 保存汇率、实际日期、来源于结算行，后续报表复用。财务是否批准该来源仍待确认 | [exchange_rates.py](../../services/exchange_rates.py)、[销售流程](../modules/sales/workflow.md#组合金额与人民币) |
 | TikTok 文件 | 人工上传订单详情 CSV/XLSX/XLSM | 平台文件负责原始结算值；FIFO 负责 SKU 映射、事件去重、出库、分摊及待确认。未实现平台 OAuth/API 自动同步 | [sales.py](../../routers/sales.py) 的 _read_import_file、import_sales_file |
 | 钉钉单号 | 用户填写入库/费用单号 | 仅本地留档，无批次路由直接调用钉钉审批接口；OA 取数是独立链路 | [batches.py](../../routers/batches.py)、[库存字典](../modules/inventory/database.md) |
@@ -16,7 +16,7 @@
 flowchart LR
     B["浏览器"] -->|"授权 / 退出跳转"| E["EIMS 身份提供方"]
     A["FIFO 后端"] -->|"HTTPS：Token / UserInfo / Discovery / JWKS"| E
-    A -->|"只读 SELECT"| O["OA PostgreSQL 审批数据"]
+    A -->|"HTTP 汇总或只读 SELECT"| O["OA 审批数据"]
     A -->|"历史汇率请求"| F["Frankfurter"]
     P["平台结算文件"] -->|"人工上传"| A
     A -->|"本地业务及认证事务"| M["MySQL"]
