@@ -111,9 +111,9 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 
 ## OA 来源
 
-OA 只读取未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance。办公费用和薪资按表单申请日期筛选，分别按指定部门或明细店铺取数。
+OA 只读取未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance。办公费用按表单申请日期筛选并按指定部门取数。薪资按明细店铺取数，PostgreSQL 直连按申请日期归月。OA HTTP 汇总优先按工资审批的「费用所属月份」归月，其次识别「事项说明」中明确关联工资的完整年月，如「2026年10月薪资」。只有参考月份时仍按申请日期归月。明确注明的月份无效或冲突且可能涉及查询期间时提示待核对。
 
-分摊管理费用先读取含同名金额组件的有效审批，再按费用所属年月归期，因此晚提交或次年申请的审批也能进入原费用月。优先读取表单的「费用所属月份」，支持年月、ISO 日期或形如「2026年10月」的值。该字段空缺时，从「事项说明」识别唯一的完整中文年月。同一审批内各明细部门去重，名称匹配的店铺各计一份原金额。所属年月无法确定时，相关店铺的报表和附件提示待核对，自动金额只合计可确定归属的单据。代码见 [oa_office_expenses.py](../../../services/oa_office_expenses.py) 的 `shared_admin_expenses_by_store_and_month` 和 [reports.py](../../../routers/reports.py) 的 `_store_profit_loss_auto_values`。
+分摊管理费用先读取含同名金额组件的有效审批，再按费用所属年月归期，因此晚提交或次年申请的审批也能进入原费用月。优先读取表单的「费用所属月份」，支持年月、ISO 日期或形如「2026年10月」的值。该字段空缺时，从「事项说明」识别唯一的完整中文年月。OA HTTP 汇总对工资单上的平摊费用使用该单注明的工资所属月。同一审批内各明细部门去重，名称匹配的店铺各计一份原金额。所属年月无法确定时，相关店铺的报表和附件提示待核对，自动金额只合计可确定归属的单据。代码见 [oa_office_expenses.py](../../../services/oa_office_expenses.py) 的 `shared_admin_expenses_by_store_and_month` 和 [reports.py](../../../routers/reports.py) 的 `_store_profit_loss_auto_values`。
 
 配置 `OA_EXPENSE_API_BASE_URL` 后，FIFO 每次请求向新 OA 的 `GET /api/v1/reporting/operating-expenses` 读取三类费用的人民币月度汇总，并校验企业、月份和返回结构。企业与服务凭据通过 `OA_EXPENSE_API_CORP_ID` 和 `OA_EXPENSE_API_TOKEN` 配置。HTTP 查询或校验失败抛出 `OaExpenseSourceError`。地址留空时使用原 `OA_DB_*` 直连，直连配置缺失时沿用空数据和警告。OA 更新会影响实时重算，当前有效店铺数量参与办公费用均分。依据：[HTTP 取数](../../../services/oa_operating_expenses.py)、[直连取数](../../../services/oa_office_expenses.py)。
 
