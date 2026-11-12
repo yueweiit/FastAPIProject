@@ -3350,7 +3350,8 @@ function renderStoreProfitLoss(report) {
                 const manualValue = row.manual_value?.[period];
                 const inputValue = manualValue === null || manualValue === undefined ? '' : escapeHtml(manualValue);
                 const defaultValue = inputValue === '' && value !== null && value !== undefined ? escapeHtml(value) : '';
-                const title = row.key === 'salary' ? '留空使用OA工资当前值；填写后作为人工覆盖' : (row.source || '人工填写');
+                const helpKey = {salary: 'profitLossSalaryHelp', shared_admin: 'profitLossSharedAdminHelp'}[row.key];
+                const title = (helpKey && window.PageInteractions?.text(helpKey)) || row.source || window.PageInteractions?.text('profitLossManualHelp') || '';
                 return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" placeholder="${defaultValue}" ${editable ? '' : 'disabled'}></td>`;
             }
             const title = period === 'ytd' ? window.PageInteractions?.text('profitLossYtdHelp') : row.input_source === 'ledger' ? (window.PageInteractions?.text('profitLossLedger') || row.source) : row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';

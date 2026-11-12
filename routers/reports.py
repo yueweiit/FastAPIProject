@@ -143,7 +143,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("gross_margin", "毛利率", "formula", None),
     ("tax_surcharge", "减：税金及附加", "manual", None),
     ("selling_expenses", "减：销售费用（含样品）", "formula", None),
-    ("salary", "  人员薪资", "manual", "OA 工资中国明细按部门名称匹配店铺；可人工修改"),
+    ("salary", "  人员薪资", "manual", "按本月工资＋上月提成/绩效核对；OA 按部门名称匹配店铺，人工填写本月薪资合计并覆盖 OA 默认值，已包含的提成不重复计入"),
     ("advertising", "  广告推广费", "manual", None),
     ("sample_expenses", "  样品", "manual", None),
     ("platform_subscription", "  平台月费/年费", "manual", None),
@@ -152,7 +152,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("platform_fines", "  平台罚款/赔偿", "manual", None),
     ("admin_expenses", "减：管理费用", "formula", None),
     ("rent_utilities", "  房租+水电+网费", "auto", "OA 办公场地费用中 LatínGo 的租金和电费，均分至有效店铺"),
-    ("shared_admin", "  平摊人事+财务管理费用", "auto", "按费用所属月份，审批明细中列出的店铺各取一份 OA 原金额"),
+    ("shared_admin", "  平摊人事+财务管理费用", "manual", "按费用所属月份，审批明细中列出的店铺各取一份 OA 原金额；可人工填写本店本月总额，覆盖 OA 默认值"),
     ("research_development", "减：研发费用", "manual", None),
     ("finance_expenses", "减：财务费用", "manual", None),
     ("asset_impairment_loss", "减：资产减值损失", "formula", None),
@@ -165,6 +165,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("net_profit", "三、净利润", "formula", None),
 )
 STORE_PROFIT_LOSS_RESERVED_KEYS = {"non_operating_income", "non_operating_expense", "income_tax_expense"}
+STORE_PROFIT_LOSS_OA_DEFAULT_KEYS = {"salary", "shared_admin"}
 
 STORE_PROFIT_LOSS_AUTO_KEYS = {
     key for key, _label, kind, _source in STORE_PROFIT_LOSS_ROWS if kind == "auto"
@@ -430,7 +431,7 @@ async def _store_profit_loss_auto_values(
                         if event.original_revenue or event.original_expense)
     rates = await monthly_report_rates(db, requirements)
     auto_values = {key: {period: Decimal(0) for period in STORE_PROFIT_LOSS_PERIODS}
-                   for key in STORE_PROFIT_LOSS_AUTO_KEYS}
+                   for key in STORE_PROFIT_LOSS_AUTO_KEYS | STORE_PROFIT_LOSS_OA_DEFAULT_KEYS}
     warnings = rate_warnings(rates)
     auto_values["_exchange_rates"] = list(rates.values())
     auto_values["_fulfillment_counts"] = {period: sum(len(ids) for month, ids in orders.items() if start <= month < end)
@@ -514,18 +515,18 @@ async def _store_profit_loss_auto_values(
             )
         salary_totals = (oa_values["salaries"] if oa_values is not None
                          else await china_salary_totals_by_store_and_application_date(read_start, ytd_end))
-        auto_values["salary"] = {
-            period: Decimal("0") for period in STORE_PROFIT_LOSS_PERIODS
-        }
         for application_date, total in salary_totals.get(store_name, {}).items():
             _add_period_value(
                 auto_values["salary"], application_date, total, periods
             )
-        salary_months = {}
-        for day, total in salary_totals.get(store_name, {}).items():
-            month = day.replace(day=1).isoformat()
-            salary_months[month] = salary_months.get(month, Decimal(0)) + total
-        auto_values["_monthly_defaults"] = {"salary": salary_months}
+        # 人工值只替换对应月份；其余月份继续使用 OA，避免混合来源的年累计漏算。
+        auto_values["_monthly_defaults"] = {}
+        for key, records in (("salary", salary_totals), ("shared_admin", shared_admin_totals)):
+            monthly = {}
+            for day, total in records.get(store_name, {}).items():
+                month = day.replace(day=1).isoformat()
+                monthly[month] = monthly.get(month, Decimal(0)) + total
+            auto_values["_monthly_defaults"][key] = monthly
     if oa_values is not None:
         warnings.extend(operating_expense_review_messages(oa_values, store_name, active_store_count or 0))
     return auto_values
@@ -671,10 +672,7 @@ async def _store_profit_loss_response(
             kind=kind,
             is_auto=kind == "auto",
             is_formula=kind == "formula",
-            source=(
-                "按费用所属月份，审批明细中列出的店铺各取一份 OA 原金额"
-                if key == "shared_admin" and operating_expense_http_enabled() else source
-            ),
+            source=source,
             value=StoreProfitLossCell(**values[key]),
             manual_value=StoreProfitLossCell(**saved_manual_values.get(key, {}))
             if kind == "manual" and isinstance(saved_manual_values.get(key), dict) else None,

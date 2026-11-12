@@ -14,6 +14,7 @@ from database import Base
 from models import (InventoryBatch, Product, Sale, SaleCostDetail, SalesImportBatch,
                     SettlementEntry, SettlementEntryAllocation, Store, StoreProfitLossReport, User)
 from routers.reports import (_build_product_line_profit_sheet, _build_store_profit_loss_summary_sheet,
+                             _build_store_profit_loss_sheet,
                              _build_store_profit_loss_values, _product_line_profit_data,
                              _store_profit_loss_auto_values, _store_profit_loss_response, STORE_PROFIT_LOSS_AUTO_KEYS,
                              STORE_PROFIT_LOSS_MANUAL_KEYS)
@@ -108,6 +109,78 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
              patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})), \
              patch("routers.reports.shared_admin_expenses_by_store_and_month", new=AsyncMock(return_value=({}, {}))):
             return await _store_profit_loss_auto_values(self.db, 7, date(2026, 9, 1))
+
+    async def test_shared_admin_manual_months_mix_with_oa_in_response_and_export(self):
+        month, prior = date(2026, 9, 1), date(2026, 8, 1)
+        current = StoreProfitLossReport(store_id=7, report_month=month, manual_values={})
+        self.session.add_all([
+            StoreProfitLossReport(store_id=7, report_month=prior,
+                                  manual_values={"shared_admin": {"current": "861"}}),
+            StoreProfitLossReport(store_id=8, report_month=month,
+                                  manual_values={"shared_admin": {"current": "9999"}}),
+            current,
+        ])
+        self.session.commit()
+        oa = {"office": {month: Decimal(600)}, "salaries": {},
+              "shared_admin_by_store": {"S7": {prior: Decimal(200), month: Decimal("1217.33")}},
+              "shared_admin_unresolved": {}}
+        store = self.session.get(Store, 7)
+        with patch.dict("os.environ", {"FIFO_FINANCIAL_CONTROLS_ENABLED": "0"}), \
+             patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=self.zero_provisions())):
+            for amount, expected in ((None, Decimal("1217.33")), ("0", Decimal(0)), ("950", Decimal(950))):
+                with self.subTest(amount=amount):
+                    current.manual_values = {"shared_admin": {"current": amount, "previous": "777", "ytd": "999"}}
+                    self.session.commit()
+                    response = await _store_profit_loss_response(
+                        self.db, SimpleNamespace(role="admin"), store, month, current,
+                        oa_values=oa, active_store_count=2,
+                    )
+                    rows = {row.key: row for row in response.rows}
+                    shared = rows["shared_admin"]
+                    self.assertEqual(shared.kind, "manual")
+                    self.assertFalse(shared.is_auto)
+                    self.assertEqual(shared.manual_value.current, None if amount is None else Decimal(amount))
+                    self.assertEqual(shared.value.current, expected)
+                    self.assertEqual(shared.value.previous, Decimal(861))
+                    self.assertEqual(shared.value.ytd, Decimal(861) + expected)
+                    self.assertEqual(rows["admin_expenses"].value.current, Decimal(300) + expected)
+                    self.assertEqual(current.manual_values["shared_admin"]["ytd"], "999")
+                    values = {key: row.value.model_dump() for key, row in rows.items()}
+                    book = Workbook()
+                    _build_store_profit_loss_sheet(book, store, month, values, {})
+                    exported = next(row for row in book.worksheets[-1].iter_rows(values_only=True)
+                                    if row[0] == "  平摊人事+财务管理费用")
+                    self.assertEqual(exported[1:4], (float(expected), 861.0, float(Decimal(861) + expected)))
+
+    async def test_company_oa_default_does_not_duplicate_store_overrides(self):
+        month = date(2026, 9, 1)
+        oa = {"office": {}, "salaries": {}, "shared_admin_unresolved": {},
+              "shared_admin_by_store": {"公司汇总部门": {month: Decimal(861)}}}
+        self.session.add_all([
+            StoreProfitLossReport(store_id=store_id, report_month=month,
+                                  manual_values={"shared_admin": {"current": "861"}})
+            for store_id in (7, 8)
+        ])
+        self.session.commit()
+        store_values = []
+        with patch.dict("os.environ", {"FIFO_FINANCIAL_CONTROLS_ENABLED": "0"}), \
+             patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=self.zero_provisions())):
+            for store_id in (7, 8):
+                store = self.session.get(Store, store_id)
+                auto = await _store_profit_loss_auto_values(
+                    self.db, store_id, month, store.name, oa_values=oa, active_store_count=2,
+                )
+                self.assertEqual(auto["shared_admin"]["current"], Decimal(0))
+                manual = await manual_period_values(self.db, store_id, month, STORE_PROFIT_LOSS_MANUAL_KEYS,
+                                                   auto["_monthly_defaults"], force_monthly=True)
+                values = _build_store_profit_loss_values(auto, manual)
+                self.assertEqual(values["shared_admin"]["current"], Decimal(861))
+                store_values.append((store, values))
+        book = Workbook()
+        _build_store_profit_loss_summary_sheet(book, store_values, month)
+        exported = next(row for row in book.worksheets[-1].iter_rows(values_only=True)
+                        if row[0] == "  平摊人事+财务管理费用")
+        self.assertEqual(exported[1:4], (861.0, 861.0, 1722.0))
 
     async def test_unlinked_events_exclude_linked_sale_pending_orders_and_other_stores(self):
         events = await unlinked_settlement_events(self.db, {7}, date(2026, 9, 1), date(2026, 10, 1))

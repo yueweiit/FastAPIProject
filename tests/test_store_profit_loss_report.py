@@ -277,6 +277,10 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values['rent_utilities']['current'], Decimal('50'))
         self.assertEqual(values['shared_admin']['current'], Decimal('1217.33'))
         self.assertEqual(values['salary']['current'], Decimal('30'))
+        self.assertEqual(values['_monthly_defaults'], {
+            'salary': {'2026-09-01': Decimal('30')},
+            'shared_admin': {'2026-09-01': Decimal('1217.33')},
+        })
         self.assertEqual(unlisted['shared_admin']['current'], Decimal('0'))
         self.assertTrue(any('所属年月待核对' in note for note in values['_warnings']))
         self.assertFalse(any('所属年月待核对' in note for note in unlisted['_warnings']))
@@ -327,6 +331,20 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.manual_values, {
             "advertising":{"current":"30", "previous":None, "ytd":"300"},
         })
+
+    async def test_shared_admin_can_be_saved_zeroed_and_cleared(self):
+        saved = {"shared_admin": {"current": "100", "previous": "80", "ytd": "500"}}
+        for amount in ("861", "0", None):
+            with self.subTest(amount=amount):
+                report = await self._save_manual_report(saved, update_scope="current", manual_values={
+                    "shared_admin": {"current": amount},
+                    "admin_expenses": {"current": "999"},
+                    "rent_utilities": {"current": "999"},
+                })
+                self.assertEqual(report.manual_values, {
+                    "shared_admin": {"current": amount, "previous": "80", "ytd": "500"},
+                })
+                self.assertEqual(saved["shared_admin"]["current"], "100")
 
     async def test_new_current_only_report_does_not_save_comparison_inputs(self):
         report = await self._save_manual_report(None, update_scope="current", manual_values={
@@ -637,25 +655,26 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "ytd": Decimal("500"),
         })
 
-    def test_saved_shared_admin_value_cannot_override_oa_default(self):
+    def test_shared_admin_override_replaces_oa_and_preserves_formula(self):
         auto_values = {
             "shared_admin": {
                 "current": Decimal("100"),
                 "previous": Decimal("80"),
                 "ytd": Decimal("500"),
             },
+            "rent_utilities": {"current": Decimal("300")},
         }
-        manual_values = {
-            "shared_admin": {"current": "999", "previous": "999", "ytd": "999"},
-        }
-
-        values = _build_store_profit_loss_values(auto_values, manual_values)
-
-        self.assertEqual(values["shared_admin"], {
-            "current": Decimal("100"),
-            "previous": Decimal("80"),
-            "ytd": Decimal("500"),
-        })
+        for amount, expected in (("861", Decimal("861")), ("0", Decimal(0)),
+                                 (None, Decimal("100")), ("", Decimal("100"))):
+            with self.subTest(amount=amount):
+                values = _build_store_profit_loss_values(auto_values, {
+                    "shared_admin": {"current": amount},
+                })
+                self.assertEqual(values["shared_admin"], {
+                    "current": expected, "previous": Decimal("80"), "ytd": Decimal("500"),
+                })
+                self.assertEqual(values["admin_expenses"]["current"], Decimal(300) + expected)
+                self.assertEqual(values["net_profit"]["current"], -Decimal(300) - expected)
 
     def test_gross_margin_is_empty_when_revenue_is_zero(self):
         values = _build_store_profit_loss_values({}, {})
