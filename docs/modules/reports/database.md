@@ -84,6 +84,8 @@ AccountingPeriod.period_snapshots 使用 all/delete-orphan；没有公开删除�
 
 ## 人工损益保存与外部数据
 
+`manual_values.shared_admin`与已有`salary`使用相同的current/previous/ytd结构；当前页面只保存本月覆盖值，null表示沿用OA，0表示明确覆盖为零。不新增数据库字段、不迁移或回填历史金额。工资和平摊费用的逐月OA默认值只用于当前读取计算，不固化进人工JSON；规则见[OA来源](workflow.md#oa-来源)。
+
 metadata（ORM属性report_metadata）增加内部manual_period_mode：页面current保存标monthly，比较期间从实际月记录推导；旧all保存标legacy，明确输入的比较金额保持兼容。原manual_values.previous/ytd仍保留存储，不做历史回填；字段类型和表结构不变。实现见[financial_facts.py](../../../services/financial_facts.py)。
 
 store_profit_loss_reports以(store_id,report_month)唯一；人工金额按各科目/期间以字符串或空值放入manual_values，remarks保存备注，report_metadata对应数据库列metadata。该表保存人工输入和扩展信息，不保存全部自动计算结果/结账审计副本。默认保存整体替换JSON；页面使用current范围，在已有报表行锁内仅替换本月人工列、保留已有上月/年累计人工值，remarks仍完整替换。范围字段不是新数据库列，具体见[损益保存契约](api.md#损益保存契约)。

@@ -88,7 +88,7 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 | 存货跌价准备 | 对应期间每天实际新增准备合计 |
 | 销售转销跌价准备 | 已售商品对应准备抵减营业成本，不改保存的FIFO成本 |
 | 房租+水电+网费 | OA 指定部门租金/电费，按当前启用店铺数均分 |
-| 分摊人事财务 | 按审批的费用所属年月归期，每张审批向明细中每家匹配店铺计入一次同名组件原金额 |
+| 分摊人事财务 | 默认按审批费用所属年月、明细店铺取同名组件原金额；本店本月已保存人工值优先，覆盖而非叠加 |
 | 人员薪资 | OA 部门名精确匹配店铺名；已保存人工值优先 |
 
 批次数量/成本经历史编辑更正后，原FIFO单价不改写；_fifo_cost_components通过base_cost_components读取cost_basis冻结的原构成，再叠加各类差额。不能改用当前数量和最近目标费用重新分配旧FIFO成本，否则会重复或错配成本。当前查询追溯原销售月，旧FinancialReportVersion.payload保持原值；规则及结构前提见[库存流程](../inventory/workflow.md#编辑与删除)。
@@ -110,6 +110,12 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 依据：[reports.py](../../../routers/reports.py) 的 STORE_PROFIT_LOSS_ROWS、_store_profit_loss_auto_values、_build_store_profit_loss_values、update_store_profit_loss。
 
 ## OA 来源
+
+人员薪资的业务核对口径为本月工资＋上月提成/绩效，例如11月编制10月报表仍选择10月，已包含在工资金额中的提成不重复加。页面问号及输入提示说明该口径；OA现有归月解析不等于实际发薪日识别，提成缺少明确计入月份时仍回落申请月，历史差异由财务按确认后的本月薪资总额覆盖，不自动把所有工资审批月份前移。
+
+`salary`和`shared_admin`均支持本店本月人工覆盖：留空/清空保存为null，继续取OA；填写0也视为明确覆盖；填写的是总额，不能只填写与OA的差额。平摊费用按费用所属月份填写，管理费用合计仍为房租水电网费＋平摊人事财务费。公司级工资审批只有汇总部门时，不自动映射或复制工资到店铺，财务依据历史分配数据分别录入。手填不修改OA归档，也不硬编码特定店铺或金额。
+
+两项费用都提供OA逐月默认值；年累计逐月取已保存current，未填的月份回落各自OA金额，上月按对应月事实计算。页面、单店Excel和跨店汇总使用同一结果。保存沿用既有权限和行锁，使用现有manual_values JSON，无结构迁移。代码入口为[reports.py](../../../routers/reports.py)的`STORE_PROFIT_LOSS_OA_DEFAULT_KEYS`、`_store_profit_loss_auto_values`、`_store_profit_loss_response`及[financial_facts.py](../../../services/financial_facts.py)的`manual_period_values`。
 
 OA 只读取未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance。办公费用按表单申请日期筛选并按指定部门取数。薪资按明细店铺取数，PostgreSQL 直连按申请日期归月。OA HTTP 汇总优先按工资审批的「费用所属月份」归月，其次识别「事项说明」中明确关联工资的完整年月，如「2026年10月薪资」。只有参考月份时仍按申请日期归月。明确注明的月份无效或冲突且可能涉及查询期间时提示待核对。
 

@@ -16,7 +16,7 @@
 | 作废批次历史持有费用待核对 | 店铺损益/API及财务附件 | _voided_inventory_holding_counts、_store_provision_financial_values | 作废时间、创建人当前店铺、入库数量/日期、累计出库数量及最后销售日；受影响费用留空 |
 | 独立结算/人工期间 | 销售月度、损益/产品线/附件 | unlinked_settlement_events、manual_period_values、derive_manual_periods | services/financial_facts.py；结算、分摊、人工月记录 |
 | 原静态准备余额 | 自动快照及历史辅助 | batch_impairments | 不替代当前持有期间变动服务 |
-| OA 自动费用 | 损益自动项/默认薪资 | HTTP 使用 read_operating_expenses，PostgreSQL 直连使用 office_space_totals_by_application_date、china_salary_totals_by_store_and_application_date、shared_admin_expenses_by_store_and_month | OA 运营费用接口或只读 PostgreSQL |
+| OA 自动费用 | 办公费自动项；薪资/平摊费OA默认及人工覆盖 | HTTP 使用 read_operating_expenses，PostgreSQL 直连使用 office_space_totals_by_application_date、china_salary_totals_by_store_and_application_date、shared_admin_expenses_by_store_and_month；_monthly_defaults复用于逐月累计 | OA 运营费用接口或只读 PostgreSQL、manual_values |
 
 逐商品毛利回归：[test_product_profit_report.py](../../../tests/test_product_profit_report.py)使用隔离SQLite验证同名不同编码、无映射/旧分类冲突、多订单合并、组合分摊与库存件数、退款/赔付、权限、只读SQL、API/Excel一致、未知金额及公式文本；[product_profit_page_checks.cjs](../../../tests/product_profit_page_checks.cjs)运行两份页面的真实函数与字典，检查数量、查询范围、转义、失败恢复及旧后端防混用。现有[inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)验证两份页面的实际DOM、保留名称、列名、问号、空结果/异常/旧接口提示；[test_batch_store_allocations.py](../../../tests/test_batch_store_allocations.py)继续验证按店铺归属抵减同商品成本、数量不随承担额重分。全部不连接业务库；真实本机后端加载仍需用户重启。
 
@@ -36,6 +36,7 @@
 | 损益加载/保存竞态、条件切换和会话失效（两份页面DOM模拟） | [profit_loss_page_checks.cjs](../../../tests/profit_loss_page_checks.cjs)，`node tests/profit_loss_page_checks.cjs` |
 | 损益问号说明、可展开汇率、重复警示合并、缺失汇率/旧后端提示可见及查询失败清理（两份页面真实DOM） | [inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)，沿用现有Playwright与本地模拟API，不连接业务数据库 |
 | OA HTTP 契约、直连过滤、部门及费用归月 | [test_oa_operating_expenses.py](../../../tests/test_oa_operating_expenses.py)、[test_oa_office_expenses.py](../../../tests/test_oa_office_expenses.py) |
+| 平摊费保存/0覆盖/清空、人工与OA混合年累计、跨店隔离及Excel一致 | [test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)、[test_financial_facts.py](../../../tests/test_financial_facts.py)、[profit_loss_page_checks.cjs](../../../tests/profit_loss_page_checks.cjs) |
 | 财务附件、汇总、产品线分摊与歧义 | [test_financial_attachments_export.py](../../../tests/test_financial_attachments_export.py) |
 | 非管理员范围 | [test_store_data_isolation.py](../../../tests/test_store_data_isolation.py) |
 

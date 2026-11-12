@@ -137,6 +137,8 @@
 
 损益说明问号复用`profitLossPolicy`；汇率折叠入口、保存时间及警示合并用`profitLossExchangeDetails/profitLossLastSaved/profitLossPeriodCurrent/profitLossPeriodPrevious/profitLossPeriodYtd/profitLossPeriodSeparator`，同样集中于PageInteractions局部zh-CN字典。合并仅影响相同提示的展示，无法识别的后端文案保留原文，不据此判断金额或状态；未新增支持语言。
 
+薪资与平摊人事财务费的人工覆盖说明集中于PageInteractions的`profitLossSalaryHelp/profitLossSharedAdminHelp/profitLossManualHelp`，问号`profitLossPolicy`补充薪资核对和归月口径。两份页面按稳定salary/shared_admin字段键选提示，复用现有语言回退；后端source沿用中文响应约定，无新语言或依赖。
+
 
 扩展业务审计的商品/账号/主数据/销售/损益分类、稳定action/entity/field标签、未知旧值、同次操作编号及启用/暂停/缺结构提示集中于operation-logs.js的zh-CN字典，按页面lang回退中文。原始业务名称/编码不翻译并转义；密码只显示变更标记。后端审计失败提供稳定code/message，无新语言、翻译依赖或导出契约。
 
