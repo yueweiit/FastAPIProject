@@ -1,5 +1,13 @@
 # FastAPIProject 运行与维护说明
 
+## 历史汇率来源与原币对账（2026-11-19）
+
+`FIFO_FX_PROVIDER=frankfurter`为默认兼容值；切换为`baidu`后，新导入及实时重算的损益/产品线使用百度历史日线**收盘价**。Compose已透传该变量，更新代码及`.env`后需构建镜像并重建web，使Python与静态字段资源同时生效；只改`.env`或只build不会替换运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率，旧固定报表版本保留原值；当前报表会按新来源重新换算各核算月，因此与旧台账人民币列可能不同。
+
+百度入口为公开行情页使用的`https://finance.pae.baidu.com/async`，参数`srcid=50494&group=huilv_kline_day&tab_id=6&query=MXNCNY`；这是网页数据接口，未确认有独立开放平台的稳定性承诺。解析精确货币对和命名日期/收盘字段，拒绝非有限/非正数、未来日期、同日冲突及目标日之前14天以外的数据。失败会阻止新导入或让报表相关金额待核对，不自动混用其他来源。若停用，可改回`frankfurter`并重建web；已经保存的汇率不随配置回退。
+
+原币对账合计`allocated_net_product_sales/allocated_settlement_total`；整行来源字段重复展示，不可合计。两类字段都从已有结算与组件份额读取，不修改库存或销售原金额。损益另将赔付单列“其他收入（赔付）”，人工其他收入保留。验证入口：`tests/test_baidu_exchange_rates.py`、`tests/test_sales_currency_reconciliation.py`、`tests/test_financial_facts.py`；来源、实际汇率日期及月末目标日期可在报表“汇率明细”核对。
+
 ## 非实物结算与初始化分类（2026-11-10）
 
 新增基础表non_inventory_sku_rules及sales.business_metadata JSON NULL，不依赖财务增强开关；普通销售默认兼容。业务用途、字段及范围见[销售分类](docs/modules/sales/workflow.md#非实物结算与初始化扣减2026-11-10)、[销售字典](docs/modules/sales/database.md#non_inventory_sku_rules)、[库存基线](docs/modules/inventory/workflow.md#初始化历史扣减)。当前ORM为34表。新增稳定分类，不改既有库存数量、FIFO单价/成本、真实入库日或旧版本。

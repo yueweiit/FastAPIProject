@@ -144,7 +144,7 @@ flowchart TD
 
 普通记录其他费用 = 净商品销售额−结算总金额；物流/平台/物料赔付收入 = 结算总金额，赔付费用为0，负数结算冲减收入。外币收入和费用乘固化汇率；profit_cny = 收入人民币−FIFO成本−费用人民币。赔付单独计入一次店铺收入，不生成库存出库、成本或跌价。历史已保存原始结算与月度版本不改写，动态查询按现行收入口径计算。导入后的 sales.selling_price/platform_fee 为来源分摊金额，持久化 profit 会与人民币成本相减，报表应使用人民币响应与结算上下文，不能直接把原字段视为人民币。
 
-get_cny_rates 对 CNY 返回1，对其他三字母币种查询包含向前14天的区间，取目标日及之前最近可用汇率。获取失败502；保存汇率、实际汇率日期及 Frankfurter/ECB 来源，重复报表不重新查汇率。缺失或历史遗留汇率在月度汇总显示 fx_missing_count 并将金额设为空；损益/产品线对缺失率的处理不同，见[报表流程](../reports/workflow.md)。
+get_cny_rates 对 CNY 返回1；`FIFO_FX_PROVIDER`默认`frankfurter`保留原来源，也可选`baidu`使用百度历史日线收盘价。百度按精确`币种CNY`货币对、命名`time/close`字段解析，在目标日及此前14天内取最近有效日期；不使用实时价、开盘价、倒数货币对或未来日期，失败不切换其他来源。导入获取失败502；保存汇率、实际日期和`Frankfurter/ECB`或`Baidu/DailyClose`来源。销售台账继续使用保存值，不因配置变更重算旧记录；损益/产品线实时按所选来源查核算月末，旧固定版本不改。缺失率与部署边界见[报表流程](../reports/workflow.md)、[运行说明](../../../PROJECT_RUNBOOK.md#历史汇率来源与原币对账2026-11-19)。
 
 依据：[exchange_rates.py](../../../services/exchange_rates.py)、[sales.py](../../../routers/sales.py) 的 _component_allocation_shares、_build_sale_response、_sale_import_context、_monthly_sales_summary。
 
