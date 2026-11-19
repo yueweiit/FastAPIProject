@@ -28,7 +28,7 @@ OFFICE_DETAIL_VALUES = {"租金Alquiler", "电费Electricidad"}
 _CHINESE_YEAR_MONTH = re.compile(r"(?<![0-9])([0-9]{4})\s*年\s*([0-9]{1,2})\s*月(?:份)?")
 _APPROVED_OPERATION_FILTER = """
     source.deleted_at IS NULL
-    AND source.process_code = $1
+    AND source.corp_id = $1 AND source.process_code = $2
     AND UPPER(COALESCE(source.status, '')) = 'COMPLETED'
     AND LOWER(COALESCE(source.result, '')) IN ('agree', 'approved', '同意', '通过')
 """
@@ -51,15 +51,20 @@ def _oa_database_config() -> dict[str, str] | None:
     return required
 
 
+def _decode(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if text.startswith(("[", "{", '"')):
+        try:
+            return json.loads(text)
+        except ValueError:
+            pass  # Keep malformed input distinguishable from an empty field.
+    return text
+
+
 def _json_list(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    if not isinstance(value, str) or not value.strip():
-        return []
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return []
+    parsed = _decode(value)
     return [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
 
 
@@ -83,16 +88,51 @@ def _cell(cells: list[Any], *keywords: str) -> dict[str, Any] | None:
     return None
 
 
-def _department_name(cell: dict[str, Any] | None) -> str:
+def _department_name(cell: dict[str, Any] | None) -> str | None:
+    """None denotes an empty selector, an empty string a filled but unresolved one."""
     if not isinstance(cell, dict):
-        return ""
-    value = cell.get("value")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    identity = cell.get("extendValue")
-    if isinstance(identity, list) and identity and isinstance(identity[0], dict):
-        return str(identity[0].get("name") or identity[0].get("label") or "").strip()
-    return ""
+        return None
+    names, ids, display_values = set(), set(), set()
+    for source in ("value", "extendValue", "extValue"):
+        entry = _decode(cell.get(source))
+        if isinstance(entry, list):
+            if len(entry) > 1:
+                return ""
+            entry = entry[0] if entry else None
+        if entry is None or entry == "":
+            continue
+        if isinstance(entry, str):
+            text = entry.strip()
+            if text.startswith(("[", "{", '"')):
+                return ""
+            if text:
+                display_values.add(text)
+        elif isinstance(entry, (int, float)) and not isinstance(entry, bool):
+            ids.add(str(entry))
+        elif isinstance(entry, dict):
+            if not entry:
+                continue
+            raw_id = next((entry[k] for k in ("id", "itemId", "deptId", "dept_id") if entry.get(k) is not None), "")
+            raw_name = entry.get("name") or entry.get("label") or ""
+            if not isinstance(raw_name, str) or not isinstance(raw_id, (str, int, float)) or isinstance(raw_id, bool):
+                return ""
+            ident, label = str(raw_id).strip(), raw_name.strip()
+            if not ident and not label:
+                return ""
+            if ident:
+                ids.add(ident)
+            if label:
+                names.add(label)
+        else:
+            return ""
+    for display in display_values - ids:
+        if display not in names and re.fullmatch(r"[0-9]+", display):
+            ids.add(display)
+        else:
+            names.add(display)
+    if not names and not ids:
+        return None
+    return next(iter(names)) if len(names) == 1 and len(ids) <= 1 else ""
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -218,6 +258,9 @@ async def _fetch_oa_forms(query: str, *args: Any) -> list[Any]:
     if config is None:
         logger.warning("OA database is not configured; expense data is unavailable")
         return []
+    corp_id = os.getenv("OA_EXPENSE_API_CORP_ID", "").strip()
+    if not corp_id:
+        raise OaExpenseSourceError("OA 数据库直连缺少企业标识 OA_EXPENSE_API_CORP_ID")
     try:
         connection = await asyncpg.connect(
             host=config["host"],
@@ -228,7 +271,7 @@ async def _fetch_oa_forms(query: str, *args: Any) -> list[Any]:
             command_timeout=10,
         )
         try:
-            return list(await connection.fetch(query, *args))
+            return list(await connection.fetch(query, corp_id, OA_OPERATION_PROCESS_CODE, *args))
         finally:
             await connection.close()
     except Exception as exc:
@@ -248,18 +291,18 @@ async def _approved_forms_by_expense(
         ) AS request_field(value)
           ON request_field.value ->> 'name' = '申请日期Fecha de solicitud'
         WHERE {_APPROVED_OPERATION_FILTER}
-          AND (request_field.value ->> 'value')::date >= $2::date
-          AND (request_field.value ->> 'value')::date < $3::date
+          AND (request_field.value ->> 'value')::date >= $3::date
+          AND (request_field.value ->> 'value')::date < $4::date
           AND EXISTS (
               SELECT 1
               FROM jsonb_array_elements(
                   COALESCE(source.form_component_values, '[]'::jsonb)
               ) AS management_field(value)
               WHERE management_field.value ->> 'name' = '管理支出Gastos de operación'
-                AND management_field.value ->> 'value' = $4
+                AND management_field.value ->> 'value' = $5
           )
     """
-    return await _fetch_oa_forms(query, OA_OPERATION_PROCESS_CODE, start_date, end_date, expense_name)
+    return await _fetch_oa_forms(query, start_date, end_date, expense_name)
 
 
 async def _approved_shared_admin_forms() -> list[Any]:
@@ -275,10 +318,10 @@ async def _approved_shared_admin_forms() -> list[Any]:
                        THEN source.form_component_values ELSE '[]'::jsonb END
               ) AS component(value)
               WHERE btrim(COALESCE(NULLIF(component.value ->> 'name', ''),
-                                   component.value ->> 'label')) = $2
+                                   component.value ->> 'label')) = $3
           )
     """
-    return await _fetch_oa_forms(query, OA_OPERATION_PROCESS_CODE, OA_SHARED_ADMIN_COMPONENT)
+    return await _fetch_oa_forms(query, OA_SHARED_ADMIN_COMPONENT)
 
 
 async def office_space_totals_by_application_date(

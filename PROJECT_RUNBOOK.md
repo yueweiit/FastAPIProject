@@ -183,7 +183,7 @@
 
 1. 阅读本文件和项目根目录的 `.env`，不要把密码复制到日志、截图或文档。
 2. 检查 `MYSQL_HOST`、`MYSQL_PORT`、`MYSQL_DATABASE`、`MYSQL_USER`、`MYSQL_PASSWORD`。当前本地备份测试库位于 Docker `fifo-mysql8-test` 容器（MySQL 8.0.46），宿主机连接为 `127.0.0.1:3309`、用户 `fifo_local_app`、库名 `inventory_fifo_test`；本地 `.env` 使用已有的独立本地凭据。原 `mysql57` 与 `127.0.0.1:3308` 的 `inventory_fifo` 保留。Web 容器不能直接使用此宿主机回环地址，Docker 部署须另配容器可达的数据库地址。
-3. 店铺损益表的 OA 费用可通过新 OA HTTP 接口或 PostgreSQL 直连读取。配置 `OA_EXPENSE_API_BASE_URL`、`OA_EXPENSE_API_CORP_ID`、`OA_EXPENSE_API_TOKEN` 启用 HTTP，切换前用同一批审批核对三项金额。保留 PostgreSQL 直连时，使用 `OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。
+3. 店铺损益表通过 OA HTTP 接口或 PostgreSQL 直连取数。两种方式都要填写目标企业的 `OA_EXPENSE_API_CORP_ID`。HTTP 另配 `OA_EXPENSE_API_BASE_URL`、`OA_EXPENSE_API_TOKEN`。直连将接口地址留空，填写 `OA_DB_HOST`、`OA_DB_PORT`、`OA_DB_DATABASE`、`OA_DB_USER`、`OA_DB_PASSWORD`。切换前用同一批审批核对工资、个税和社保公积金公司金额。
    如果 OA PostgreSQL 与服务器同机且 OA 项目的 `PGHOST=localhost`，Docker 部署时将 `OA_DB_HOST` 配为 `host.docker.internal`；Compose 已加入 Linux 所需的 host-gateway 映射。若 PostgreSQL 在内网主机，则填写该内网地址。
 4. 确认运行服务器能连接 MySQL，且数据库账号有建表和改表权限。应用启动会创建缺失表。
 5. 确认 `uploads/` 可写、磁盘空间足够、宿主机端口 `8006` 未被占用。
@@ -259,7 +259,7 @@ Windows PowerShell 终端已位于 `D:\product\FastAPIProject` 时，只需执�
 
 `database.py` 从项目根目录 `.env` 读取 MySQL 配置，使用 `mysql+aiomysql` 异步连接。当前 `.env` 适合直接在本机运行 FastAPI；Docker 容器内的 `127.0.0.1` 指向容器自身，因此 Docker 或服务器部署必须单独配置数据库地址。浏览器使用可撤销的24小时Cookie会话；local/hybrid兼容无Cookie的HS256 Bearer。Compose 已要求 JWT_SECRET 并传入认证配置，生产显式使用强随机值。EIMS 参数与回调注册见[接入说明](docs/modules/auth/eims-sso-setup.md)。
 
-`services/oa_office_expenses.py` 使用独立的 `OA_DB_*` 配置以只读方式连接 OA PostgreSQL，统计流程 `PROC-E7BC3316-E618-4812-BDCC-7A655A7C694B` 中状态为已完成且同意的记录。办公场地总费用和工资中国按表单申请日期归期。前者取 `LatínGo拉丁购`（部门 ID `1089990115`）的租金和电费，合计后均分给当前有效店铺。后者按明细部门与店铺名称精确匹配，填入“人员薪资”，已保存人工值优先。“平摊人事+财务管理费用”按费用所属年月归期，每张审批向明细中每家匹配店铺计入一次原金额。字段识别和待核对规则见[报表 OA 来源](docs/modules/reports/workflow.md#oa-来源)。OA 配置缺失时本地开发报表自动值为 0，配置存在但读取失败时接口报错。
+直连查询按 `OA_EXPENSE_API_CORP_ID` 和运营支出流程筛选已通过审批。办公场地费用按申请日期归期，拉丁购的租金和电费合计后均分给有效店铺。工资中国按申请日期和明细部门归期，个税归发起上月，社保公积金公司部分归发起当月。平摊管理费用按费用所属月向每家匹配店铺计入一次。配置了直连账号但遗漏企业标识时，报表提示配置错误。[报表 OA 来源](docs/modules/reports/workflow.md#oa-来源)
 
 ## 文件职责
 

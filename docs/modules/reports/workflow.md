@@ -121,13 +121,15 @@ _month_periods 定义 current（本月）、previous（上月）、ytd（当年1
 
 两项费用都提供OA逐月默认值；年累计逐月取已保存current，未填的月份回落各自OA金额，上月按对应月事实计算。页面、单店Excel和跨店汇总使用同一结果。保存沿用既有权限和行锁，使用现有manual_values JSON，无结构迁移。代码入口为[reports.py](../../../routers/reports.py)的`STORE_PROFIT_LOSS_OA_DEFAULT_KEYS`、`_store_profit_loss_auto_values`、`_store_profit_loss_response`及[financial_facts.py](../../../services/financial_facts.py)的`manual_period_values`。
 
-OA 只读取未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance。办公费用按表单申请日期筛选并按指定部门取数。薪资按明细店铺取数，PostgreSQL 直连按申请日期归月。OA HTTP 汇总优先按工资审批的「费用所属月份」归月，其次识别「事项说明」中明确关联工资的完整年月，如「2026年10月薪资」。只有参考月份时仍按申请日期归月。明确注明的月份无效或冲突且可能涉及查询期间时提示待核对。
+OA 只读取未删除、指定流程、COMPLETED、结果同意的 ding_approval_instance。办公费用按表单申请日期筛选并按指定部门取数。工资部分按明细店铺取数，PostgreSQL 直连按申请日期归月。OA HTTP 汇总优先按工资审批的「费用所属月份」归月，其次识别「事项说明」中明确关联工资的完整年月，如「2026年10月薪资」。只有参考月份时仍按申请日期归月。明确注明的月份无效或冲突且可能涉及查询期间时提示待核对。
 
 分摊管理费用先读取含同名金额组件的有效审批，再按费用所属年月归期，因此晚提交或次年申请的审批也能进入原费用月。优先读取表单的「费用所属月份」，支持年月、ISO 日期或形如「2026年10月」的值。该字段空缺时，从「事项说明」识别唯一的完整中文年月。OA HTTP 汇总对工资单上的平摊费用使用该单注明的工资所属月。同一审批内各明细部门去重，名称匹配的店铺各计一份原金额。所属年月无法确定时，相关店铺的报表和附件提示待核对，自动金额只合计可确定归属的单据。代码见 [oa_office_expenses.py](../../../services/oa_office_expenses.py) 的 `shared_admin_expenses_by_store_and_month` 和 [reports.py](../../../routers/reports.py) 的 `_store_profit_loss_auto_values`。
 
-配置 `OA_EXPENSE_API_BASE_URL` 后，FIFO 每次请求向新 OA 的 `GET /api/v1/reporting/operating-expenses` 读取三类费用的人民币月度汇总，并校验企业、月份和返回结构。企业与服务凭据通过 `OA_EXPENSE_API_CORP_ID` 和 `OA_EXPENSE_API_TOKEN` 配置。HTTP 查询或校验失败抛出 `OaExpenseSourceError`。地址留空时使用原 `OA_DB_*` 直连，直连配置缺失时沿用空数据和警告。OA 更新会影响实时重算，当前有效店铺数量参与办公费用均分。依据：[HTTP 取数](../../../services/oa_operating_expenses.py)、[直连取数](../../../services/oa_office_expenses.py)。
+配置 `OA_EXPENSE_API_BASE_URL` 后，FIFO 通过 `GET /api/v1/reporting/operating-expenses` 读取人民币月度汇总并校验企业、月份和返回结构。地址留空时使用 `OA_DB_*` 直连。两种方式都按 `OA_EXPENSE_API_CORP_ID` 限定企业。已配置的直连缺少企业标识时抛出 `OaExpenseSourceError`，本地未配置数据库连接时返回空数据并记录日志。HTTP 还须配置 `OA_EXPENSE_API_TOKEN`。OA 更新会影响实时重算，当前有效店铺数量参与办公费用均分。[HTTP 取数](../../../services/oa_operating_expenses.py)、[直连取数](../../../services/oa_office_expenses.py)
 
-HTTP 模式下，OA 的申请月份和币种待核对记录随已确认金额返回。FIFO 按审批去重并显示核对提示，办公费用提示适用于参与均摊的报表，工资和分摊费用提示按店铺匹配。异常金额待核对，确认金额继续按现有口径汇总。上线时先更新能识别新警示码的 FIFO，再启用新版 OA 响应。
+HTTP 模式通过 `includePayroll=1` 请求个税与公积金。月、币种或部门金额待核对的审批随已确认汇总返回，FIFO 按店铺提示。新项目涉及的部门无法识别时，在报表提示待核对。发布时先更新 OA，再更新 FIFO，旧版调用方继续收到原三类费用。直连读取规则见 [oa_payroll.py](../../../services/oa_payroll.py)。
+
+个税和社保公积金按唯一可确定的明细部门核算。部门多选、名称与身份冲突、金额有歧义或超出精度时，保留同单可核对的金额，对异常行提示核对。归档表的 `details` 和 `value` 可能同时保存同一行，每条明细只计一次。个税专表只有空部门和默认零时，读取通用明细。有店铺的零金额按该店的实际填报处理。
 
 单店损益读取、保存后的响应及财务附件导出先读取当前有效店铺数，结束只读 MySQL 事务后再等待 OA 取数。OA 结果在同一请求内复用，财务附件的跨店汇总不逐店重复请求 OA。OA 返回后才重新读取 MySQL 报表和销售数据，避免等待外部读取时占用 MySQL 连接。保存接口先提交人工值，再执行上述读取。OA 失败仍按原有错误传播，已提交人工值不回滚。此分段读取不提供跨 MySQL/OA 的一致快照，金额仍应按业务核对。依据：[reports.py](../../../routers/reports.py) 的 `_prepare_profit_loss_oa_values`、`_store_profit_loss_auto_values`。
 
