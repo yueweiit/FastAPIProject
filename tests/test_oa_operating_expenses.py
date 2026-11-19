@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 
 from routers.reports import _load_profit_loss_oa_values, _store_profit_loss_auto_values
+from services.financial_facts import derive_manual_periods
 from services.oa_office_expenses import OaExpenseSourceError
 from services.oa_operating_expenses import operating_expense_review_messages, read_operating_expenses
 
@@ -90,12 +91,23 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
             values = await _store_profit_loss_auto_values(db, 1, month, "店铺 A", active_store_count=2, oa_values={
                 "office": {month: Decimal("300")},
                 "salaries": {"店铺 A": {month: Decimal("100")}},
+                "individual_income_tax": {"店铺 A": {date(2026, 10, 1): Decimal("10.20"), month: Decimal("8.70")},
+                                          "店铺 B": {month: Decimal("987")}},
+                "employer_contributions": {"店铺 A": {month: Decimal("41.31")}},
                 "shared_admin_by_store": {"店铺 A": {month: Decimal("80")}, "店铺 B": {month: Decimal("50")}},
                 "shared_admin_unresolved": {"店铺 A": 1},
             })
         self.assertEqual(values["rent_utilities"]["current"], Decimal("150"))
         self.assertEqual(values["shared_admin"]["current"], Decimal("80"))
-        self.assertEqual(values["salary"]["current"], Decimal("100"))
+        self.assertEqual(values["salary"], {"current": Decimal("150.01"), "previous": Decimal("10.20"), "ytd": Decimal("160.21")})
+        detail = values["_salary_oa_breakdown"]
+        self.assertEqual(detail["total"], values["salary"])
+        self.assertEqual([detail[key]["current"] for key in ("china_salary", "individual_income_tax", "employer_contributions")],
+                         [Decimal("100"), Decimal("8.70"), Decimal("41.31")])
+        # October is explicitly overridden to zero; November retains all three OA components.
+        saved = SimpleNamespace(report_month=date(2026, 10, 1), manual_values={"salary": {"current": "0"}})
+        manual = derive_manual_periods([saved], month, ["salary"], values["_monthly_defaults"], force_monthly=True)
+        self.assertEqual(manual["salary"]["ytd"], Decimal("150.01"))
         self.assertTrue(any("所属年月待核对" in message for message in values["_warnings"]))
 
     async def test_rejects_response_for_another_enterprise(self):

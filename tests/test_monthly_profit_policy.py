@@ -74,6 +74,7 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
             ('routers.reports.office_space_totals_by_application_date',AsyncMock(return_value={})),
             ('routers.reports.shared_admin_expenses_by_store_and_month',AsyncMock(return_value=({}, {}))),
             ('routers.reports.china_salary_totals_by_store_and_application_date',AsyncMock(return_value={})),
+            ('routers.reports.payroll_supplements_by_store',AsyncMock(return_value={})),
         ]:
             item=patch(target,new=value);item.start();self.addCleanup(item.stop)
         flag=patch.dict(os.environ,{'FIFO_FINANCIAL_CONTROLS_ENABLED':'0'});flag.start();self.addCleanup(flag.stop)

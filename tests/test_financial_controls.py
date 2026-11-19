@@ -451,7 +451,8 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         patchers = [patch("routers.reports._store_provision_financial_values", new=AsyncMock(return_value=self.zero_provisions())),
                     patch("routers.reports.office_space_totals_by_application_date", new=AsyncMock(return_value={})),
                     patch("routers.reports.shared_admin_expenses_by_store_and_month", new=AsyncMock(return_value=({}, {}))),
-                    patch("routers.reports.china_salary_totals_by_store_and_application_date", new=AsyncMock(return_value={}))]
+                    patch("routers.reports.china_salary_totals_by_store_and_application_date", new=AsyncMock(return_value={})),
+                    patch("routers.reports.payroll_supplements_by_store", new=AsyncMock(return_value={}))]
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -615,6 +616,7 @@ class FinancialControlsTests(facts.FinancialFactsTests):
              patch("routers.reports.office_space_totals_by_application_date", new=read_oa), \
              patch("routers.reports.shared_admin_expenses_by_store_and_month", new=read_shared_admin), \
              patch("routers.reports.china_salary_totals_by_store_and_application_date", new=read_oa), \
+             patch("routers.reports.payroll_supplements_by_store", new=read_oa), \
              patch("services.financial_versions.today", return_value=date(2026, 10, 27)), \
              patch.object(controls, "today", return_value=date(2026, 10, 27)):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
@@ -625,7 +627,7 @@ class FinancialControlsTests(facts.FinancialFactsTests):
                 version_id = captured.json()["id"]
                 compared = await client.get(f"/financial-control/versions/{version_id}/compare")
                 self.assertEqual(compared.status_code, 200, compared.text)
-                self.assertEqual(len(oa_reads), 9)  # Three OA sources, once per request.
+                self.assertEqual(len(oa_reads), 12)  # Four OA reads per request, outside the MySQL transaction.
 
                 async def unavailable(*_args):
                     raise AssertionError("Idempotent replay must not read OA")
@@ -642,7 +644,7 @@ class FinancialControlsTests(facts.FinancialFactsTests):
             async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
                 forbidden = await client.get("/financial-control/overview?store_id=8&report_month=2026-09-01")
             self.assertEqual(forbidden.status_code, 403)
-            self.assertEqual(len(oa_reads), 9)
+            self.assertEqual(len(oa_reads), 12)
 
     async def test_api_authorization_feature_gate_and_duplicate_source_errors(self):
         app = FastAPI()

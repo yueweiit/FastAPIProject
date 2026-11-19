@@ -46,6 +46,7 @@ from services.oa_office_expenses import (
     office_space_totals_by_application_date,
     shared_admin_expenses_by_store_and_month,
 )
+from services.oa_payroll import payroll_supplements_by_store
 from services.oa_operating_expenses import (
     operating_expense_http_enabled, operating_expense_review_messages, read_operating_expenses,
 )
@@ -144,7 +145,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("gross_margin", "毛利率", "formula", None),
     ("tax_surcharge", "减：税金及附加", "manual", None),
     ("selling_expenses", "减：销售费用（含样品）", "formula", None),
-    ("salary", "  人员薪资", "manual", "按本月工资＋上月提成/绩效核对；OA 按部门名称匹配店铺，人工填写本月薪资合计并覆盖 OA 默认值，已包含的提成不重复计入"),
+    ("salary", "  人员薪资", "manual", "按店铺汇总工资（含应归本月的提成/绩效）、个税和社保公积金公司部分。个税归发起月的上月，社保公积金归发起当月。人工填写本月薪资合计后覆盖 OA 默认值"),
     ("advertising", "  广告推广费", "manual", None),
     ("sample_expenses", "  样品", "manual", None),
     ("platform_subscription", "  平台月费/年费", "manual", None),
@@ -376,16 +377,18 @@ async def _load_profit_loss_oa_values(report_month: date, active_store_count: in
     ytd_end = periods["ytd"][1]
     if operating_expense_http_enabled():
         return await read_operating_expenses(read_start, ytd_end)
-    office, salaries = {}, {}
+    office = {}
     if active_store_count:
         office = await office_space_totals_by_application_date(read_start, ytd_end)
     shared_admin, unresolved = await shared_admin_expenses_by_store_and_month(read_start, ytd_end)
-    if include_salary:
-        salaries = await china_salary_totals_by_store_and_application_date(read_start, ytd_end)
-    return {
-        "office": office, "shared_admin": shared_admin, "salaries": salaries,
+    values = {
+        "office": office, "shared_admin": shared_admin, "salaries": {},
         "shared_admin_unresolved": unresolved,
     }
+    if include_salary:
+        values["salaries"] = await china_salary_totals_by_store_and_application_date(read_start, ytd_end)
+        values.update(await payroll_supplements_by_store(read_start, ytd_end))
+    return values
 
 
 async def _prepare_profit_loss_oa_values(db: AsyncSession, report_month: date,
@@ -485,11 +488,10 @@ async def _store_profit_loss_auto_values(
         active_store_count = await db.scalar(
             select(func.count()).select_from(Store).where(Store.is_active.is_(True))
         )
-    if oa_values is None and operating_expense_http_enabled():
-        oa_values = await read_operating_expenses(read_start, ytd_end)
+    if oa_values is None:
+        oa_values = await _load_profit_loss_oa_values(report_month, active_store_count or 0, bool(store_name))
     if active_store_count:
-        office_totals = (oa_values["office"] if oa_values is not None
-                         else await office_space_totals_by_application_date(read_start, ytd_end))
+        office_totals = oa_values["office"]
         for application_date, total in office_totals.items():
             _add_period_value(
                 auto_values["rent_utilities"],
@@ -499,15 +501,11 @@ async def _store_profit_loss_auto_values(
             )
     if store_name:
         store_name = store_name.strip()
-        if oa_values is not None and "shared_admin_by_store" in oa_values:
-            shared_admin_totals = oa_values["shared_admin_by_store"]
-            unresolved = oa_values["shared_admin_unresolved"]
-        elif oa_values is None:
-            shared_admin_totals, unresolved = await shared_admin_expenses_by_store_and_month(read_start, ytd_end)
-        else:
-            shared_admin_totals = oa_values["shared_admin"]
-            unresolved = oa_values.get("shared_admin_unresolved", {})
+        shared_admin_totals = oa_values.get("shared_admin_by_store", oa_values.get("shared_admin", {}))
+        unresolved = oa_values.get("shared_admin_unresolved", {})
+        monthly_defaults = {"salary": defaultdict(Decimal), "shared_admin": defaultdict(Decimal)}
         for expense_month, total in shared_admin_totals.get(store_name, {}).items():
+            monthly_defaults["shared_admin"][expense_month.replace(day=1).isoformat()] += total
             _add_period_value(
                 auto_values["shared_admin"],
                 expense_month,
@@ -519,22 +517,21 @@ async def _store_profit_loss_auto_values(
                 f"{unresolved_count} 张 OA 审批的平摊人事+财务管理费用所属年月待核对，"
                 "金额未纳入损益计算。"
             )
-        salary_totals = (oa_values["salaries"] if oa_values is not None
-                         else await china_salary_totals_by_store_and_application_date(read_start, ytd_end))
-        for application_date, total in salary_totals.get(store_name, {}).items():
-            _add_period_value(
-                auto_values["salary"], application_date, total, periods
-            )
-        # 人工值只替换对应月份；其余月份继续使用 OA，避免混合来源的年累计漏算。
-        auto_values["_monthly_defaults"] = {}
-        for key, records in (("salary", salary_totals), ("shared_admin", shared_admin_totals)):
-            monthly = {}
-            for day, total in records.get(store_name, {}).items():
-                month = day.replace(day=1).isoformat()
-                monthly[month] = monthly.get(month, Decimal(0)) + total
-            auto_values["_monthly_defaults"][key] = monthly
-    if oa_values is not None:
-        warnings.extend(operating_expense_review_messages(oa_values, store_name, active_store_count or 0))
+        breakdown = {}
+        for component, amounts in (
+            ("china_salary", oa_values["salaries"]),
+            ("individual_income_tax", oa_values.get("individual_income_tax", {})),
+            ("employer_contributions", oa_values.get("employer_contributions", {})),
+        ):
+            component_values = dict.fromkeys(periods, Decimal(0))
+            for day, amount in amounts.get(store_name, {}).items():
+                _add_period_value(component_values, day, amount, periods)
+                monthly_defaults["salary"][day.replace(day=1).isoformat()] += amount
+            breakdown[component] = component_values
+        auto_values["salary"] = {p: sum(component[p] for component in breakdown.values()) for p in periods}
+        auto_values["_salary_oa_breakdown"] = {**breakdown, "total": auto_values["salary"]}
+        auto_values["_monthly_defaults"] = monthly_defaults
+    warnings.extend(operating_expense_review_messages(oa_values, store_name, active_store_count or 0))
     return auto_values
 
 
@@ -697,6 +694,7 @@ async def _store_profit_loss_response(
         can_edit=user.role in ("admin", "operator"),
         updated_at=report.updated_at if report else None,
         rows=rows,
+        salary_oa_breakdown=auto_values.get("_salary_oa_breakdown"),
         exchange_rates=auto_values.get("_exchange_rates", []),
         fulfillment_order_counts=auto_values.get("_fulfillment_counts", {}),
         calculation_policy="month_end_fx_mxn8_compensation_v2",

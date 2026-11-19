@@ -231,6 +231,10 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
         async def salary_reader(*_):
             return await read_oa('salary', salaries)
 
+        supplements = {"employer_contributions": {"测试店铺": {report_month: Decimal("8.75")}}, "individual_income_tax": {}}
+        async def supplement_reader(*_):
+            return await read_oa('supplements', supplements)
+
         with (
             patch('routers.reports.office_space_totals_by_application_date',
                   new=office_reader),
@@ -238,12 +242,14 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                   new=shared_reader),
             patch('routers.reports.china_salary_totals_by_store_and_application_date',
                   new=salary_reader),
+            patch('routers.reports.payroll_supplements_by_store', new=supplement_reader),
         ):
             count, values = await _prepare_profit_loss_oa_values(db, report_month, True)
-        self.assertEqual(events, ['mysql_count', 'mysql_commit', 'office', 'shared', 'salary'])
+        self.assertEqual(events, ['mysql_count', 'mysql_commit', 'office', 'shared', 'salary', 'supplements'])
         self.assertEqual(count, 2)
         self.assertEqual(values, {
             'office': office, 'shared_admin': shared, 'salaries': salaries, 'shared_admin_unresolved': {},
+            **supplements,
         })
 
     async def test_prefetched_oa_values_do_not_reopen_external_connection(self):
@@ -265,6 +271,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                   new=AsyncMock(side_effect=AssertionError('unexpected OA read'))),
             patch('routers.reports.china_salary_totals_by_store_and_application_date',
                   new=AsyncMock(side_effect=AssertionError('unexpected OA read'))),
+            patch('routers.reports.payroll_supplements_by_store', new=AsyncMock(side_effect=AssertionError('unexpected OA read'))),
         ):
             values = await _store_profit_loss_auto_values(
                 db, 7, date(2026, 9, 1), '测试店铺',
@@ -410,6 +417,12 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
     async def test_oa_salary_default_is_separate_from_saved_manual_value(self):
         auto = {"salary": {"current": Decimal(100), "previous": Decimal(80),
                             "ytd": Decimal(500)}}
+        auto["_salary_oa_breakdown"] = {
+            "china_salary": {"current": 70, "previous": 50, "ytd": 400},
+            "individual_income_tax": {"current": 10, "previous": 10, "ytd": 30},
+            "employer_contributions": {"current": 20, "previous": 20, "ytd": 70},
+            "total": auto["salary"],
+        }
         store = SimpleNamespace(id=7, name="测试店铺", platform="TikTok")
         user = SimpleNamespace(role="admin")
         with patch("routers.reports._store_profit_loss_auto_values", new=AsyncMock(return_value=auto)):
@@ -424,6 +437,8 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             salary = next(row for row in response.rows if row.key == "salary")
             self.assertEqual(salary.value.current, Decimal(120))
             self.assertEqual(salary.manual_value.current, Decimal(120))
+            self.assertEqual(response.salary_oa_breakdown.total.current, Decimal(100))
+            self.assertEqual(response.salary_oa_breakdown.employer_contributions.current, Decimal(20))
 
     def test_month_periods_include_previous_month_and_ytd(self):
         periods = _month_periods(date(2026, 8, 1))
@@ -511,6 +526,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
                     },
                 }),
             ),
+            patch("routers.reports.payroll_supplements_by_store", new=AsyncMock(return_value={})),
             patch(
                 "routers.reports.shared_admin_expenses_by_store_and_month",
                 new=AsyncMock(return_value=({

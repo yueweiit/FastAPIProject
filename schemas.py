@@ -635,6 +635,13 @@ class StoreProfitLossCell(BaseModel):
     ytd: Decimal | None = None
 
 
+class StoreProfitLossSalaryBreakdown(BaseModel):
+    china_salary: StoreProfitLossCell
+    individual_income_tax: StoreProfitLossCell
+    employer_contributions: StoreProfitLossCell
+    total: StoreProfitLossCell
+
+
 class StoreProfitLossRowResponse(BaseModel):
     key: str
     label: str
@@ -666,6 +673,7 @@ class StoreProfitLossResponse(BaseModel):
     can_edit: bool
     updated_at: datetime | None = None
     rows: list[StoreProfitLossRowResponse]
+    salary_oa_breakdown: StoreProfitLossSalaryBreakdown | None = None
     warnings: list[str] = Field(default_factory=list)
     exchange_rates: list[dict] = Field(default_factory=list)
     fulfillment_order_counts: dict[str, int] = Field(default_factory=dict)
