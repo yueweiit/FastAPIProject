@@ -1560,6 +1560,7 @@ async def _sale_import_context(
                 {
                     "source_net_product_sales": Decimal("0"),
                     "source_other_expense": Decimal("0"),
+                    "source_compensation_income": Decimal("0"),
                     "source_row_net_product_sales": Decimal("0"),
                     "source_row_settlement_total": Decimal("0"),
                     "allocated_net_product_sales": Decimal("0"),
@@ -1568,6 +1569,8 @@ async def _sale_import_context(
             )
             context["source_net_product_sales"] += amount
             context["source_other_expense"] += expense
+            if first.transaction_type in COMPENSATION_TRANSACTION_TYPES:
+                context["source_compensation_income"] += amount
             # 来源整行用于与Excel核对；组合各组件重复展示，不能跨组件合计。
             context["source_row_net_product_sales"] += first.net_product_sales or Decimal(0)
             context["source_row_settlement_total"] += first.settlement_total or Decimal(0)
@@ -1618,6 +1621,7 @@ async def _sale_import_context(
             "source_file_type": source_file_type,
             "source_quantity": entry.quantity, "transaction_type": entry.transaction_type or "订单", "source_type": "import",
             "source_net_product_sales": Decimal(0), "source_other_expense": Decimal(0),
+            "source_compensation_income": Decimal(0),
             "source_row_net_product_sales": Decimal(0), "source_row_settlement_total": Decimal(0),
             "allocated_net_product_sales": Decimal(0), "allocated_settlement_total": Decimal(0),
             "is_fulfillment_order": False})
@@ -1627,6 +1631,8 @@ async def _sale_import_context(
             entry.settlement_total or Decimal(0), entry.transaction_type)
         context["source_net_product_sales"] += revenue
         context["source_other_expense"] += expense
+        if entry.transaction_type in COMPENSATION_TRANSACTION_TYPES:
+            context["source_compensation_income"] += revenue
         context["source_row_net_product_sales"] += entry.net_product_sales or Decimal(0)
         context["source_row_settlement_total"] += entry.settlement_total or Decimal(0)
         context["allocated_net_product_sales"] += entry.net_product_sales or Decimal(0)

@@ -203,9 +203,48 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.gross_profit_cny, Decimal(37))
         values = _build_store_profit_loss_values(await self.auto_values(), {})
         self.assertEqual(values["net_profit"]["current"], row.gross_profit_cny - Decimal(4))
+        self.assertEqual(values["product_sales_revenue"]["current"], Decimal(80))
+        self.assertEqual(values["compensation_revenue"]["current"], Decimal(5))
+        self.assertEqual(values["operating_revenue"]["current"], row.sales_revenue_cny)
         # 报表查询没有恢复退款库存、删除订单或重写保存成本。
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
         self.assertEqual(self.session.get(Sale, 1).total_cost, Decimal(40))
+
+    async def test_compensation_classification_preserves_manual_income_linked_history_and_periods(self):
+        self.entry(6, net=0, total=7, quantity=0, kind="平台赔付")
+        direct = self.entry(7, net=0, total=3, quantity=0, kind="物料赔付")
+        direct.sale_id = 1
+        self.entry(8, net=0, total=-2, quantity=0, kind="物流赔付", occurred=datetime(2026, 8, 31))
+        self.session.flush()
+        self.session.add(SettlementEntryAllocation(settlement_entry_id=6, product_id=10,
+                                                   sale_id=1, component_name="P10", quantity=0))
+        self.session.commit()
+        auto = await self.auto_values()
+        values = _build_store_profit_loss_values(auto, {"other_revenue": {"current": "40", "ytd": "40"}})
+        self.assertEqual(values["product_sales_revenue"]["current"], Decimal(80))
+        self.assertEqual(values["compensation_revenue"], {
+            "current": Decimal(15), "previous": Decimal(-2), "ytd": Decimal(13),
+        })
+        self.assertEqual(values["other_revenue"]["current"], Decimal(40))
+        self.assertEqual(values["operating_revenue"]["current"], Decimal(135))
+        self.assertEqual(values["operating_revenue"]["ytd"], Decimal(133))
+        wb = Workbook()
+        _build_store_profit_loss_sheet(wb, self.session.get(Store, 7), date(2026, 9, 1), values, {})
+        cells = {row[0].value.strip(): row[1].value for row in wb.worksheets[-1] if isinstance(row[0].value, str)}
+        self.assertEqual(cells["商品销售收入"], 80)
+        self.assertEqual(cells["其他收入（赔付）"], 15)
+        self.assertEqual(cells["其他收入（手工）"], 40)
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
+
+    async def test_missing_compensation_rate_masks_other_income_without_masking_known_merchandise(self):
+        self.unavailable_monthly_rates = True
+        self.entry(6, net=0, total=7, quantity=0, kind="平台赔付", currency="USD", rate=None)
+        self.session.commit()
+        values = _build_store_profit_loss_values(await self.auto_values(), {})
+        self.assertEqual(values["product_sales_revenue"]["current"], Decimal(80))
+        self.assertIsNone(values["compensation_revenue"]["current"])
+        self.assertIsNone(values["operating_revenue"]["current"])
+        self.assertIsNone(values["net_profit"]["current"])
 
     async def test_positive_quantity_shipping_and_full_refund_markers_reconcile_without_fifo(self):
         self.session.get(SettlementEntry,1).raw_data={SETTLEMENT_ONLY_KEY:'shipping_adjustment'}

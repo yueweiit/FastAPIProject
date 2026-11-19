@@ -50,7 +50,7 @@ from services.oa_operating_expenses import (
     operating_expense_http_enabled, operating_expense_review_messages, read_operating_expenses,
 )
 from services.financial_facts import (
-    manual_period_values, unlinked_settlement_events, valid_rate,
+    COMPENSATION_TYPES, manual_period_values, unlinked_settlement_events, valid_rate,
 )
 from services.batch_store_allocations import has_unassigned_provision
 from services.inventory_provision_data import load_inventory_provision_data
@@ -127,9 +127,10 @@ INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
 
 STORE_PROFIT_LOSS_ROWS = (
     ("operating_revenue", "一、营业收入", "formula", None),
-    ("product_sales_revenue", "  商品销售收入", "auto", "销售记录中的净商品收入"),
+    ("product_sales_revenue", "  商品销售收入", "auto", "销售记录中的净商品收入，不含物流、平台及物料赔付"),
     ("shipping_revenue", "  运费收入", "manual", None),
-    ("other_revenue", "  其他收入", "manual", None),
+    ("compensation_revenue", "  其他收入（赔付）", "auto", "物流、平台及物料赔付按结算金额正负号及所属核算月末汇率换算；不重复填入其他手工收入"),
+    ("other_revenue", "  其他收入（手工）", "manual", None),
     ("operating_cost", "减：营业成本（对应）", "formula", None),
     ("product_purchase_cost", "  商品采购成本", "auto", "按批次采购金额权重分配已保存的FIFO销售成本"),
     ("head_logistics_cost", "  头程尾程物流成本", "auto", "按批次头尾程费用权重分配已保存的FIFO销售成本"),
@@ -276,7 +277,7 @@ def _build_store_profit_loss_values(
     for period in STORE_PROFIT_LOSS_PERIODS:
         get = lambda key: _decimal_or_zero(values[key][period])
         values["operating_revenue"][period] = sum(
-            (get(key) for key in ("product_sales_revenue", "shipping_revenue", "other_revenue")),
+            (get(key) for key in ("product_sales_revenue", "shipping_revenue", "compensation_revenue", "other_revenue")),
             Decimal("0"),
         )
         values["operating_cost"][period] = sum(
@@ -315,7 +316,7 @@ def _build_store_profit_loss_values(
         values["net_profit"][period] = values["operating_profit"][period]
         for key in STORE_PROFIT_LOSS_RESERVED_KEYS:
             values[key][period] = None
-        revenue_keys = ("product_sales_revenue", "shipping_revenue", "other_revenue")
+        revenue_keys = ("product_sales_revenue", "shipping_revenue", "compensation_revenue", "other_revenue")
         cost_keys = ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
                      "customs_import_tax", "local_logistics_cost", "fulfillment_cost",
                      "other_direct_cost", "inventory_writeoff")
@@ -425,7 +426,8 @@ async def _store_profit_loss_auto_values(
     requirements = {("MXN", month) for month in orders}
     for sale in sales:
         context = contexts.get(sale.id, {})
-        if context.get("source_net_product_sales", sale.selling_price * sale.quantity) or context.get("source_other_expense", sale.platform_fee):
+        if (context.get("source_net_product_sales", sale.selling_price * sale.quantity)
+                or context.get("source_other_expense", sale.platform_fee) or context.get("source_compensation_income")):
             requirements.add(rate_key(context.get("currency"), sale.sold_at.date()))
     requirements.update(rate_key(event.currency, event.occurred_at.date()) for event in events
                         if event.original_revenue or event.original_expense)
@@ -446,13 +448,17 @@ async def _store_profit_loss_auto_values(
     for sale in sales:
         context = contexts.get(sale.id, {})
         day = sale.sold_at.date()
-        add("product_sales_revenue", day, convert(context.get("source_net_product_sales", sale.selling_price * sale.quantity), context.get("currency"), day))
+        compensation = context.get("source_compensation_income", Decimal(0))
+        revenue = context.get("source_net_product_sales", sale.selling_price * sale.quantity)
+        add("product_sales_revenue", day, convert(revenue - compensation, context.get("currency"), day))
+        add("compensation_revenue", day, convert(compensation, context.get("currency"), day))
         add("other_direct_cost", day, convert(context.get("source_other_expense", sale.platform_fee), context.get("currency"), day))
     for month, ids in orders.items():
         add("fulfillment_cost", month, convert(Decimal(8) * len(ids), "MXN", month))
     for event in events:
         day = event.occurred_at.date()
-        add("product_sales_revenue", day, convert(event.original_revenue, event.currency, day))
+        revenue_key = "compensation_revenue" if event.transaction_type in COMPENSATION_TYPES else "product_sales_revenue"
+        add(revenue_key, day, convert(event.original_revenue, event.currency, day))
         add("other_direct_cost", day, convert(event.original_expense, event.currency, day))
         if event.uses_import_date:
             warnings.append(f"结算行{event.entry_id}缺少业务日期，暂按导入日期归月，需核对。")
@@ -693,7 +699,7 @@ async def _store_profit_loss_response(
         rows=rows,
         exchange_rates=auto_values.get("_exchange_rates", []),
         fulfillment_order_counts=auto_values.get("_fulfillment_counts", {}),
-        calculation_policy="month_end_fx_mxn8_v1",
+        calculation_policy="month_end_fx_mxn8_compensation_v2",
         warnings=values.get("_warnings", []),
     )
 

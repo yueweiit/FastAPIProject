@@ -3236,7 +3236,7 @@ function profitLossSelectionMatches(report) {
 }
 
 function profitLossPolicyReady(report) {
-    return report?.calculation_policy === 'month_end_fx_mxn8_v1';
+    return ['month_end_fx_mxn8_v1', 'month_end_fx_mxn8_compensation_v2'].includes(report?.calculation_policy);
 }
 
 function updateProfitLossSaveState() {

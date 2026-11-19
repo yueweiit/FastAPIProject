@@ -6,7 +6,7 @@ let checks = 0;
 const equal = (actual, expected) => { assert.equal(actual, expected); checks++; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const report = (month = '2026-09', store = 7, editable = true) => ({
-    report_month: month, store_id: store, can_edit: editable, calculation_policy: "month_end_fx_mxn8_v1", rows: [], warnings: [],
+    report_month: month, store_id: store, can_edit: editable, calculation_policy: "month_end_fx_mxn8_compensation_v2", rows: [], warnings: [],
 });
 
 function setup(file, {admin = false, deferStores = false, manualInput = '123', manualKey = 'salary'} = {}) {
@@ -49,7 +49,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123', m
     return {element, calls, rendered, notices, run, queries, writes, load, save};
 }
 
-function renderManualCell(file, manualValue, inputSource = 'manual', key = 'salary') {
+function renderManualCell(file, manualValue, inputSource = 'manual', key = 'salary', kind = 'manual', policy = 'month_end_fx_mxn8_v1') {
     const source = fs.readFileSync(file, 'utf8');
     const elements = new Map();
     const element = id => {
@@ -73,8 +73,8 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
         vm.runInContext(match[0], context);
     }
     context.report = {
-        store_name: '测试店铺', period_label: '2026年9月', can_edit: true, calculation_policy:'month_end_fx_mxn8_v1',
-        rows: [{key, label: '费用', kind: 'manual', input_source: inputSource,
+        store_name: '测试店铺', period_label: '2026年9月', can_edit: true, calculation_policy:policy,
+        rows: [{key, label: '费用', kind, input_source: inputSource,
             value: {current: 100,ytd:321}, manual_value: manualValue, remark: ''}],
     };
     vm.runInContext('renderStoreProfitLoss(report)', context);
@@ -110,6 +110,9 @@ async function verify(file) {
     }
     {
         const defaultCell = renderManualCell(file, null);
+        const compensationCell = renderManualCell(file, null, 'manual', 'compensation_revenue', 'auto', 'month_end_fx_mxn8_compensation_v2');
+        equal(compensationCell.includes('data-profit-key="compensation_revenue"'),false);
+        equal(compensationCell.includes('>100</td>'),true);
         equal(/data-profit-key="salary"[^>]*value="" placeholder="100"/.test(defaultCell), true);
         const overrideCell = renderManualCell(file, {current: 120});
         equal(/data-profit-key="salary"[^>]*value="120" placeholder=""/.test(overrideCell), true);

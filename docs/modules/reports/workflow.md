@@ -1,5 +1,7 @@
 # 报表流程、公式与快照
 
+2026-11-19收入分类：商品销售收入排除物流/平台/物料赔付，新增自动行`compensation_revenue`“其他收入（赔付）”，按原结算金额正负号、原业务归月及月末汇率换算。已有`other_revenue`保留为“其他收入（手工）”，原金额、费用台账来源和累计规则不变，不覆盖手工值。营业收入为商品销售收入＋运费收入＋赔付收入＋手工其他收入，分类不改变总收入及利润。关联出库的历史赔付按每个来源行先识别再分摊，独立事件仍排除已关联来源；未知赔付汇率传播至赔付、营业收入与利润，已知商品收入可继续展示。销售台账及产品线的总收入仍含赔付，不可仅与商品销售收入一行比较。新响应计算策略为`month_end_fx_mxn8_compensation_v2`；旧固定版本按原payload导出，不补行、不重算。入口：`routers/reports.py`、`routers/sales.py::_sale_import_context`；回归：`tests/test_financial_facts.py`、`tests/test_monthly_profit_policy.py`。
+
 2026-11-10分类修复：按店铺/平台SKU明确配置的non_inventory结算保留原金额、费用和币种，作为独立财务事件取数，排除实物履约计费。明确标记的opening_deduction不进入销量、采购/FIFO销售成本、产品线实际出库和履约订单；库存与准备使用扣减后的数量基线，原凭据及成本不改。07原入库−期初扣减−真实已售=现存，期初扣减写入comparison_note供核对。真正历史销售的缺失店铺/时序异常继续传播null；不能用初始化分类推断其归属。见[销售分类](../sales/workflow.md#非实物结算与初始化扣减2026-11-10)和[库存基线](../inventory/workflow.md#初始化历史扣减)。
 
 2026-11-02确认的店铺损益口径：外币按各核算月月末当天或之前最近可用汇率换算，沿用Frankfurter/ECB，不改销售保存的逐日汇率。履约订单按店铺及原始订单ID去重（跨SKU/组合只计一次），每单8 MXN；退款、调整、赔付及待确认行不新增履约费。销售费用包含薪资、广告、样品、平台月费/年费、仓储、配送和平台罚款/赔偿。跌价计提/转销/归属算法保留。营业外收支及所得税标记暂未接入，净利润暂按营业利润计算；历史人工代发及预留金额保留且保存时不覆盖。人工费用按人民币录入。
@@ -50,7 +52,7 @@ _load_inventory_provision_data一次读取批次、规则和逐笔FIFO明细，�
 
 表头由[reports.py](../../../routers/reports.py)的`INVENTORY_IMPAIRMENT_HEADERS`和`INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS`维护，同步更新[运行模板](../../../templates/index.html)和[副本](../../../index.html)，保留其原有非本功能差异。批次页面单列批次号，Excel放备注；批次页面/Excel25列；SKU页面20列，Excel21列含比较说明；期初、本月总计提、转销及准备转入/转出已增加。
 
-其他报表命名仍来自`STORE_PROFIT_LOSS_ROWS`、产品线构建函数；单店页面展示本月与本年累计，Excel/API还保留上月，不能将不同期间混为同一列。页面通过`calculation_policy=month_end_fx_mxn8_v1`识别新口径，后端尚未更新时提示并禁用保存，避免混用旧计算结果。
+其他报表命名仍来自`STORE_PROFIT_LOSS_ROWS`、产品线构建函数；单店页面展示本月与本年累计，Excel/API还保留上月，不能将不同期间混为同一列。页面支持`calculation_policy=month_end_fx_mxn8_compensation_v2`及兼容旧`month_end_fx_mxn8_v1`，按响应行渲染分类；策略缺失/不支持时提示并禁用保存，避免混用旧计算结果。
 
 ## 自动月末快照与比较值
 

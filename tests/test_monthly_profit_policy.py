@@ -220,7 +220,8 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
         auto=await self.auto()
         self.assertEqual(auto['_fulfillment_counts']['current'],1)
         self.assertEqual(auto['fulfillment_cost']['current'],D('2.4'))
-        self.assertEqual(auto['product_sales_revenue']['current'],D(55))
+        self.assertEqual(auto['product_sales_revenue']['current'],D(50))
+        self.assertEqual(auto['compensation_revenue']['current'],D(5))
 
     async def test_true_manual_ytd_samples_reserved_and_legacy_fulfillment(self):
         august=StoreProfitLossReport(store_id=7,report_month=date(2026,8,1),manual_values={

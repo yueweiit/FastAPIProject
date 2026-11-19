@@ -1,5 +1,7 @@
 # 报表 API
 
+2026-11-19：当前损益新增只读自动行`compensation_revenue`“其他收入（赔付）”；`product_sales_revenue`排除同笔赔付，`operating_revenue`加回该自动行。已有`other_revenue`继续为人工/台账科目，不改保存接口或旧值。三个期间、金额类型、权限和旧固定版本保持；当前响应`calculation_policy=month_end_fx_mxn8_compensation_v2`。参见[流程](workflow.md)。
+
 2026-11-02：损益响应新增calculation_policy（month_end_fx_mxn8_v1）、exchange_rates及fulfillment_order_counts；每行新增is_reserved。旧字段和三个期间保留，新增字段均有默认值，旧月度版本可读取。查询/保存及Excel使用[现行月度规则](workflow.md)；无需DDL或历史回填。
 
 
