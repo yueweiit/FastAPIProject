@@ -394,6 +394,8 @@ class SaleResponse(BaseModel):
     currency: str = "CNY"
     source_row_net_product_sales: Decimal | None = None
     source_row_settlement_total: Decimal | None = None
+    allocated_net_product_sales: Decimal | None = None
+    allocated_settlement_total: Decimal | None = None
     exchange_rate_to_cny: Decimal | None = Decimal("1")
     exchange_rate_date: date | None = None
     exchange_rate_source: str | None = None

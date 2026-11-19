@@ -96,7 +96,7 @@
     {
       "key": "source_row_net_product_sales",
       "default_hidden": true,
-      "label": "来源净商品销售额（原币）",
+      "label": "来源净商品销售额（原币，整行勿合计）",
       "group": "原币核对",
       "kind": "source_money",
       "formula": "直接读取来源行净商品销售额，不乘汇率",
@@ -107,13 +107,37 @@
     {
       "key": "source_row_settlement_total",
       "default_hidden": true,
-      "label": "来源结算总金额（原币）",
+      "label": "来源结算总金额（原币，整行勿合计）",
       "group": "原币核对",
       "kind": "source_money",
       "formula": "直接读取来源行结算总金额，不乘汇率",
       "source": "结算原始行settlement_total",
       "note": "普通记录其他费用为来源净商品销售额减结算总金额，再按份额与汇率换算。组合各组件重复展示整行金额，不合计；没有原始结算行时留空。",
       "width": 195
+    },
+    {
+      "key": "allocated_net_product_sales",
+      "default_hidden": true,
+      "label": "分摊净商品销售额（原币）",
+      "group": "原币核对",
+      "kind": "source_money",
+      "sum_by_currency": true,
+      "formula": "来源净商品销售额 × 本组件保存金额份额；独立结算取原值",
+      "source": "结算原始行及全部已保存组件份额",
+      "note": "核对原文件净商品销售额应合计本列，同一币种的组件合计等于来源净额，不能跨币种合计。赔付保留原净商品销售额（通常为0），店铺收入另按赔付结算金额计入。无来源时留空。",
+      "width": 215
+    },
+    {
+      "key": "allocated_settlement_total",
+      "default_hidden": true,
+      "label": "分摊结算总金额（原币）",
+      "group": "原币核对",
+      "kind": "source_money",
+      "sum_by_currency": true,
+      "formula": "来源结算总金额 × 本组件保存金额份额；独立结算取原值",
+      "source": "结算原始行及全部已保存组件份额",
+      "note": "同一币种可合计；组件筛选或分页不会改变份额，部分组件不代表完整来源行。与分摊净商品销售额的差额为普通结算费用；赔付按原规则计收入，不重复记费用。无来源时留空。",
+      "width": 205
     },
     {
       "key": "exchange_rate_to_cny",

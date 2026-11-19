@@ -58,7 +58,7 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         sheet = workbook['销售记录']
         headers = [c.value for c in sheet[1]]
         cells = next(c for c in sheet.iter_rows(min_row=2, max_row=sheet.max_row-1) if c[11].value == 'SALE')
-        for label, expected in [('来源净商品销售额（原币）', D('84.9')), ('来源结算总金额（原币）', D('58.73'))]:
+        for label, expected in [('来源净商品销售额（原币，整行勿合计）', D('84.9')), ('来源结算总金额（原币，整行勿合计）', D('58.73'))]:
             index = headers.index(label)
             self.assertEqual(D(str(cells[index].value)), expected)
             self.assertNotIn('¥', cells[index].number_format)
@@ -81,9 +81,21 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({D(r['source_row_net_product_sales']) for r in rows}, {D(100)})
         self.assertEqual({D(r['source_row_settlement_total']) for r in rows}, {D(90)})
         self.assertEqual(sum(D(r['sales_revenue_cny']) for r in rows), D(100))
+        self.assertEqual(sum(D(r['allocated_net_product_sales']) for r in rows), D(100))
+        self.assertEqual(sum(D(r['allocated_settlement_total']) for r in rows), D(90))
         filtered = await self.listed(product_id=11, page=1, page_size=1)
         self.assertEqual(D(filtered[0]['source_row_net_product_sales']), D(100))
         self.assertEqual(D(filtered[0]['sales_revenue_cny']), D(50))
+        self.assertEqual(D(filtered[0]['allocated_net_product_sales']), D(50))
+        self.assertEqual(D(filtered[0]['allocated_settlement_total']), D(45))
+        workbook = await self.exported()
+        sheet = workbook['销售记录']
+        headers = [cell.value for cell in sheet[1]]
+        net_col = headers.index('分摊净商品销售额（原币）') + 1
+        # 整单100、退款-20、赔付原始净额0，赔付5只进入店铺收入。
+        self.assertEqual(D(str(sheet.cell(sheet.max_row, net_col).value)), D(80))
+        self.assertEqual(D(str(sheet.cell(sheet.max_row, net_col+1).value)), D(77))
+        self.assertIsNone(sheet.cell(sheet.max_row, headers.index('来源净商品销售额（原币，整行勿合计）')+1).value)
 
     async def test_refund_and_compensation_preserve_actual_source_net_and_settlement(self):
         rows = {r['id']: r for r in await self.listed()}
@@ -92,6 +104,9 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(D(rows[-3]['source_row_net_product_sales']), D(0))
         self.assertEqual(D(rows[-3]['source_row_settlement_total']), D(5))
         self.assertEqual(D(rows[-3]['sales_revenue_cny']), D(5))
+        self.assertEqual(D(rows[-2]['allocated_net_product_sales']), D(-20))
+        self.assertEqual(D(rows[-3]['allocated_net_product_sales']), D(0))
+        self.assertEqual(D(rows[-3]['allocated_settlement_total']), D(5))
 
     async def test_missing_fx_keeps_original_amounts_and_unknown_cny(self):
         entry = self.mxn_order()
@@ -100,6 +115,7 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         row = next(r for r in await self.listed() if r['id'] == 1)
         self.assertEqual(D(row['source_row_net_product_sales']), D('84.9'))
         self.assertEqual(D(row['source_row_settlement_total']), D('58.73'))
+        self.assertEqual(D(row['allocated_net_product_sales']), D('84.9'))
         self.assertIsNone(row['sales_revenue_cny'])
         self.assertIsNone(row['profit_cny'])
 
@@ -124,11 +140,21 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         row = next(r for r in await self.listed() if r['id'] == 1)
         self.assertEqual(D(row['source_row_net_product_sales']), D(100))
         self.assertEqual(D(row['source_row_settlement_total']), D(90))
+        self.assertEqual(D(row['allocated_net_product_sales']), D(100))
         entry.sale_id = None
         self.session.commit()
         row = next(r for r in await self.listed() if r['id'] == 1)
         self.assertIsNone(row['source_row_net_product_sales'])
         self.assertIsNone(row['source_row_settlement_total'])
+        self.assertIsNone(row['allocated_net_product_sales'])
+
+    async def test_mixed_currencies_never_generate_an_original_currency_total(self):
+        self.mxn_order()  # 其他退款/赔付仍为CNY。
+        workbook = await self.exported()
+        sheet = workbook['销售记录']
+        headers = [cell.value for cell in sheet[1]]
+        for label in ('分摊净商品销售额（原币）', '分摊结算总金额（原币）'):
+            self.assertIsNone(sheet.cell(sheet.max_row, headers.index(label)+1).value)
 
 
 if __name__ == '__main__':

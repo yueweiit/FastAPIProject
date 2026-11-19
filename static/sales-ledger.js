@@ -23,6 +23,8 @@
         count:'出库明细数', wholeCost:'整单销售成本（元）', wholeImpairment:'整单出库跌价（元）',
         originalCurrency:'原币', rate:'汇率', rateDate:'汇率日期', rateSource:'汇率来源', missingRate:'汇率缺失，人民币金额待核对。',
         sourceRowHelp:'来源整行原币金额，用于对照Excel；组合各组件重复展示，不参与合计。人民币收入和费用仍按已保存的组件份额及汇率计算。',
+        allocatedSourceHelp:'本行按完整来源的组件份额分摊；同一币种可合计。部分组件不代表整单，原币净销售额不等于含赔付的店铺收入。',
+        mixedCurrencyTotal:'多种币种不能合计，请按币种分别核对。',
         sourceBackendUnavailable:'后端待更新',
         sourceBackendUpdate:'当前后端尚未加载原币核对字段。请重启后端服务后刷新页面；已导入的记录仍会保留，无需重新导入Excel。',
         noBatches:'没有可核对的FIFO批次。', noImpairment:'没有可核对的出库跌价明细。',
@@ -71,7 +73,7 @@
         if (!pendingResource) pendingResource = fetch('/sales-fields.json', {credentials:'same-origin'}).then(async response => {
             if (!response.ok) throw new Error(t('unavailable'));
             const data = await response.json();
-            if (data.version !== 1 || !Array.isArray(data.fields) || data.fields.length !== 30 || !Array.isArray(data.extra_fields)) throw new Error(t('unavailable'));
+            if (data.version !== 1 || !Array.isArray(data.fields) || data.fields.length !== 32 || !Array.isArray(data.extra_fields)) throw new Error(t('unavailable'));
             resource = data;
         }).finally(() => {pendingResource = null;});
         await pendingResource;
@@ -240,7 +242,8 @@
         summary.addEventListener('scroll',()=>sync(summary,detail),{passive:true});
         detail.addEventListener('scroll',()=>sync(detail,summary),{passive:true});
     }
-    const sourceFields = ['source_row_net_product_sales','source_row_settlement_total'];
+    const sourceFields = ['source_row_net_product_sales','source_row_settlement_total','allocated_net_product_sales','allocated_settlement_total'];
+    const sourceMoneyText = v => v == null || !Number.isFinite(Number(v)) ? t('pending') : h(Number(v).toLocaleString(document.documentElement.lang,{minimumFractionDigits:2,maximumFractionDigits:4}));
     const hasSourceField = (row,key) => Object.prototype.hasOwnProperty.call(row,key);
     function sourceBackendStatus(rows=[]) {
         const status=el('sales-currency-status');
@@ -262,7 +265,7 @@
             const rate = meta.kind === 'rate';
             let text;
             if (sourceMoney) {
-                text = !hasSourceField(row,meta.key) ? h(t('sourceBackendUnavailable')) : v == null || !Number.isFinite(Number(v)) ? t('na') : h(Number(v).toLocaleString(document.documentElement.lang,{minimumFractionDigits:2,maximumFractionDigits:4}));
+                text = !hasSourceField(row,meta.key) ? h(t('sourceBackendUnavailable')) : v == null || !Number.isFinite(Number(v)) ? t('na') : sourceMoneyText(v);
             } else if (rate) {
                 text = v == null || !Number.isFinite(Number(v)) ? t('pending') : Number(v).toFixed(8);
             } else {
@@ -270,7 +273,7 @@
             }
             const transaction = ['selling_price_cny','sales_revenue_cny','platform_fee_cny','profit_cny'].includes(meta.key);
             const fxReason = `${t('originalCurrency')} ${row.currency || 'CNY'}；${t('rate')} ${row.exchange_rate_to_cny ?? t('pending')}；${t('rateDate')} ${row.exchange_rate_date || '—'}；${t('rateSource')} ${row.exchange_rate_source || '—'}`;
-            const reason = sourceMoney ? hasSourceField(row,meta.key) ? t('sourceRowHelp') : t('sourceBackendUpdate') : rate ? fxReason : meta.key === 'impairment_cny' ? row.impairment_review_reason : transaction ?
+            const reason = sourceMoney ? hasSourceField(row,meta.key) ? t(meta.sum_by_currency ? 'allocatedSourceHelp' : 'sourceRowHelp') : t('sourceBackendUpdate') : rate ? fxReason : meta.key === 'impairment_cny' ? row.impairment_review_reason : transaction ?
                 [fxReason, row.exchange_rate_to_cny == null && row.currency && row.currency !== 'CNY' ? t('missingRate') : '',meta.key === 'profit_cny' ? row.cost_review_reason : ''].filter(Boolean).join('；') : row.cost_breakdown_review_reason || row.cost_review_reason;
             const content = meta.kind === 'action' ? (row.id > 0 && (row.record_type || 'sale') === 'sale' ? `<button type="button" class="btn btn-secondary" data-sale-calculation="${Number(row.id)}" aria-label="${h(t('detail')+' · '+orderNumber(row))}">${h(t('detail'))}</button>` : t('na')) : text;
             const number=['money','unit','quantity','source_quantity','source_money','rate'].includes(meta.kind);
@@ -278,6 +281,12 @@
         }).join('')}</tr>`).join('') : `<tr><td colspan="${columns.length}" class="empty">${h(t('empty'))}</td></tr>`;
         el('sales-total-summary-body').innerHTML = `<tr>${columns.map(meta => {
             const attr=`data-sales-total="${h(meta.key)}" class="sales-number${meta.pinned?' sales-pinned':''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''}`;
+            if (meta.sum_by_currency) {
+                if (!rows.length) return `<td ${attr}></td>`;
+                const currencies = new Set(rows.map(row => row.currency));
+                if (currencies.size !== 1 || !rows[0].currency) return `<td ${attr} title="${h(t('mixedCurrencyTotal'))}">${t('na')}</td>`;
+                return `<td ${attr}>${sourceMoneyText(unknownSum(rows.map(row => value(row,meta,{}))))}</td>`;
+            }
             if (!['quantity','money'].includes(meta.kind)) return `<td ${attr}></td>`;
             const values = rows.map(row => value(row,meta,{}));
             return `<td ${attr}>${meta.kind === 'quantity' ? values.reduce((sum,v) => sum + Number(v || 0),0).toLocaleString(document.documentElement.lang) : money(unknownSum(values))}</td>`;

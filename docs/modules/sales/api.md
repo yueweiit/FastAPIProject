@@ -27,6 +27,8 @@
 
 销售只读响应追加可空Decimal字段`source_row_net_product_sales`、`source_row_settlement_total`，直接读取关联原始结算行的原币净商品销售额与结算总金额。组合各组件重复展示完整来源行金额，不得跨组件累加；人民币金额仍按原有组件份额计算。无原始结算行时为null；缺失汇率不影响原币展示。独立退款、赔付及手工结算保留实际来源值；币种、保存汇率、实际汇率日期及来源复用既有字段。GET /sales（数组/分页）、GET /sales/{id}、计算明细及导出一致；无写接口、数据库、权限或汇率获取策略变更。
 
+原币核对另追加`allocated_net_product_sales`、`allocated_settlement_total`两个可空Decimal字段，分别为来源净商品销售额、结算总金额按完整组件份额分摊的本行值。分页或商品筛选不会把整行金额再次分配给单个组件；独立结算使用原值，赔付的净商品销售额保留原值，不用赔付结算额替换。只对相同币种且所有金额已知的记录合计，混合币种合计留空/页面显示不可合计。旧`source_row_*`字段保留整行参考值，标签标明“整行勿合计”；没有来源时均为null。Excel原32列位置保持，追加分摊两列。实现：`routers/sales.py::_sale_import_context/_build_sale_response/_financial_event_response`、`services/sales_export.py`；回归：`tests/test_sales_currency_reconciliation.py`。
+
 ## 待确认筛选与原记录处理
 
 GET及导出新增可选`reason`稳定码：stock_shortage/product_missing/product_ambiguous/expression_invalid/mapping_invalid/order_conflict/source_invalid/other；未知参数422。keyword最长255，匹配订单、SKU ID、产品名、SKU名称、文件名及原因文本。原page/page_size和店铺范围保持不变。列表追加reason_counts（权限/关键字范围的各分类数量），每项追加reason_code、confirmed_components（此前人工确认的product_id/multiplier）。旧字段仍保留；分类为动态字段，无DDL或历史回填。

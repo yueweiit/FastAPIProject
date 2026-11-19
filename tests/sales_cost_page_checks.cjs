@@ -21,7 +21,7 @@ async function main(){
   vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
   vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
   check(translated.every(n=>n.textContent?.length>0),true);
-  check(resource.fields.length,30);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
+  check(resource.fields.length,32);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
   check(html.includes('/sales-ledger.js'),true);
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="SKU",salesTotal=0,allProducts=[];',c);
   const source=html.match(/^async function loadSales\(\) \{[\s\S]*?^\}/m);assert(source);vm.runInContext(source[0],c);
@@ -33,6 +33,7 @@ async function main(){
   const body=k=>values(element('sales-tbody').innerHTML,'data-sales-value',k);
   const total=k=>values(element('sales-total-summary-body').innerHTML,'data-sales-total',k)[0];
   rows=[{...sale,currency:'MXN',source_row_net_product_sales:'84.9000',source_row_settlement_total:'58.7300',
+   allocated_net_product_sales:'42.45',allocated_settlement_total:'29.365',
    exchange_rate_to_cny:'0.36989000',exchange_rate_date:'2026-09-30',exchange_rate_source:'Frankfurter/ECB'}];
   await c.loadSales();
   element('sales-visible-all').listeners.click();
@@ -41,6 +42,12 @@ async function main(){
   check(body('exchange_rate_date'),['2026-09-30']);check(body('exchange_rate_source'),['Frankfurter/ECB']);
   check(element('sales-currency-status').hidden,true);
   for(const key of ['currency','source_row_net_product_sales','source_row_settlement_total','exchange_rate_to_cny','exchange_rate_date'])check(total(key),'');
+  check(total('allocated_net_product_sales'),'42.45');
+  rows=[rows[0],{...rows[0],id:2}];await c.loadSales();
+  check(body('source_row_net_product_sales'),['84.90','84.90']);
+  check(body('allocated_net_product_sales'),['42.45','42.45']);check(total('allocated_net_product_sales'),'84.90');
+  rows[1]={...rows[1],currency:'CNY'};await c.loadSales();check(total('allocated_net_product_sales'),'—');
+  rows[1]={...rows[1],currency:'MXN',allocated_net_product_sales:null};await c.loadSales();check(total('allocated_net_product_sales'),'待核对');
   rows=[{...rows[0],source_row_net_product_sales:0,source_row_settlement_total:'-0.1234',exchange_rate_to_cny:null,exchange_rate_date:null,
    exchange_rate_source:'<img src=x onerror=unsafe>'}];await c.loadSales();
   check(body('source_row_net_product_sales'),['0.00']);check(body('source_row_settlement_total'),['-0.1234']);
@@ -55,7 +62,7 @@ async function main(){
   rows=[{...sale,source_row_net_product_sales:0}];await c.loadSales();
   check(body('source_row_net_product_sales'),['0.00']);check(body('source_row_settlement_total'),['后端待更新']);
   check(element('sales-currency-status').hidden,false);
-  rows=[{...sale,source_row_net_product_sales:null,source_row_settlement_total:null}];await c.loadSales();
+  rows=[{...sale,source_row_net_product_sales:null,source_row_settlement_total:null,allocated_net_product_sales:null,allocated_settlement_total:null}];await c.loadSales();
   check(element('sales-currency-status').hidden,true);
   check(body('source_row_net_product_sales'),['—']);check(body('source_row_settlement_total'),['—']);
   check(body('product_name'),['商品']);

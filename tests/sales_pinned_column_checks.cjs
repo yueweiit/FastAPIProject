@@ -33,7 +33,7 @@ const offsets=(html,attribute)=>[...html.matchAll(new RegExp(attribute+'="([^"]+
 const rows=[{id:1,product_id:1,order_no:'INTERNAL',display_order_no:'00017-A',quantity:2,source_quantity:1,total_cost:20,
  purchase_cost_cny:8,unit_purchase_cost_cny:4,impairment_cny:null,display_name:'<商品>'}];
 async function main(){
- const defaultHidden=['currency','source_row_net_product_sales','source_row_settlement_total','exchange_rate_to_cny','exchange_rate_date','exchange_rate_source'];
+ const defaultHidden=['currency','source_row_net_product_sales','source_row_settlement_total','allocated_net_product_sales','allocated_settlement_total','exchange_rate_to_cny','exchange_rate_date','exchange_rate_source'];
  check(resource.fields.filter(field=>field.default_hidden===true).map(field=>field.key),defaultHidden);
  const defaults=setup();await defaults.ui.ready();defaults.ui.render(rows,{});
  const initiallyVisible=resource.fields.filter(field=>!defaultHidden.includes(field.key)).map(field=>field.key);
@@ -41,7 +41,7 @@ async function main(){
  check(fields(defaults.node('sales-ledger-head').innerHTML),expectedDefault);
  check(rowFields(defaults.node('sales-tbody').innerHTML),expectedDefault);
  check(totalFields(defaults.node('sales-total-summary-body').innerHTML),expectedDefault);
- check(defaults.node('sales-visible-summary').textContent,'已隐藏 6 列');
+ check(defaults.node('sales-visible-summary').textContent,'已隐藏 8 列');
  check(defaults.saved.has(hiddenKey(7)),false);
  for(const field of defaultHidden)check(defaults.node('sales-visible-option-'+field).checked,false);
  defaults.show('currency');const changed=setup(defaults.saved);await changed.ui.ready();changed.ui.render(rows,{});

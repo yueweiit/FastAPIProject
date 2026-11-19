@@ -16,7 +16,8 @@ HEADERS = ("店铺", "日期", "SKU ID", "产品名", "实际出库数量", "销
            "原币", "汇率", "汇率日期", "成本状态", "说明", "采购成本（元）", "头程成本（元）",
            "尾程成本（元）", "其他入库成本（元）", "出库商品跌价（元，参考）",
            "单件采购（元/件）", "单件头程（元/件）", "单件尾程（元/件）", "单件其他入库成本（元/件）", "交易类型", "来源数量",
-           "来源净商品销售额（原币）", "来源结算总金额（原币）", "汇率来源")
+           "来源净商品销售额（原币，整行勿合计）", "来源结算总金额（原币，整行勿合计）", "汇率来源",
+           "分摊净商品销售额（原币）", "分摊结算总金额（原币）")
 RECORD_NAMES = {"sale": "销售", "other_expense": "赔付费用", "compensation_income": "赔付收入", "manual_settlement": "手工结算补录", "settlement_adjustment": "退款/结算调整"}
 COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": "待核对"}
 
@@ -59,6 +60,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
             *(row.get("unit_" + key + "_cost_cny") for key in ("purchase", "head_shipping", "last_mile", "other")),
             row.get("transaction_type"), row.get("source_quantity"),
             row.get("source_row_net_product_sales"), row.get("source_row_settlement_total"), row.get("exchange_rate_source"),
+            row.get("allocated_net_product_sales"), row.get("allocated_settlement_total"),
         ])
         _append(sheet, values[-1], number)
     totals = [None] * len(HEADERS)
@@ -66,9 +68,14 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
     for col in (5, 8, 9, 10, 11, 19, 20, 21, 22, 23):
         parts = [row[col - 1] for row in values]
         totals[col - 1] = None if None in parts else sum(parts, Decimal(0))
+    currencies = {row[13] for row in values}
+    if len(currencies) == 1 and None not in currencies and "" not in currencies:
+        for col in (33, 34):
+            parts = [row[col - 1] for row in values]
+            totals[col - 1] = None if None in parts else sum(parts, Decimal(0))
     _append(sheet, totals, len(rows) + 2)
     _style_header(sheet)
-    widths = (22, 14, 24, 36, 14, 20, 22, 23, 26, 20, 20, 30, 22, 12, 18, 14, 16, 70, 20, 20, 20, 22, 30, 23, 23, 23, 25, 18, 16, 30, 28, 22)
+    widths = (22, 14, 24, 36, 14, 20, 22, 23, 26, 20, 20, 30, 22, 12, 18, 14, 16, 70, 20, 20, 20, 22, 30, 23, 23, 23, 25, 18, 16, 44, 42, 22, 32, 30)
     for col, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(col)].width = width
     for cells in sheet.iter_rows(min_row=2):
@@ -81,7 +88,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
         for column in (24, 25, 26, 27):
             cells[column - 1].number_format = '¥#,##0.0000'
         cells[14].number_format = '0.00000000'
-        for column in (30, 31):
+        for column in (30, 31, 33, 34):
             cells[column - 1].number_format = '#,##0.00##'
         for cell in cells:
             cell.alignment = Alignment(vertical="center", wrap_text=cell.column in (4, 18))
@@ -95,7 +102,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
                  ("商品ID", product_id), ("记录数", len(rows)),
                  ("口径", "导出全部匹配记录，不限当前页；包含台账中的独立退款、调整和赔付事件，事件数量为0。"),
                  ("金额", "收入、费用、成本及毛利为人民币，沿用保存汇率及当前成本追溯结果。来源净商品销售额、来源结算总金额为原币，币种见原币列，汇率表示1原币兑人民币；不修改库存、销售或原始成本。"),
-                 ("原币核对", "来源金额保留原始结算行金额，组合各组件重复展示整行值，不参与合计；人民币收入和费用仍按已保存组件份额换算。没有原始结算行时留空。"),
+                 ("原币核对", "来源整行金额在各组件重复展示，不可合计。核对原文件总额请使用分摊净商品销售额、分摊结算总金额；仅全表币种相同且金额完整时显示合计，混合币种须分别核对。赔付的净商品销售额保留原值（通常为0），店铺收入仍按赔付结算金额计入。无原始结算行时留空。"),
                  ("成本拆分", "采购、头程、尾程、其他入库成本按实际FIFO批次汇总；展示金额按分舍入，尾差按科目金额由大到小分配，合计等于本行订单总成本。组合商品同一订单号各行相加为整单成本。"),
                  ("跌价", impairment_help["formula"] + "；" + impairment_help["note"]),
                  ("待核对", "未知金额和相应合计留空，不以0代替；未核对成本沿用台账展示，作废批次相关毛利待核对。")), 1):

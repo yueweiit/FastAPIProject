@@ -1415,6 +1415,8 @@ def _build_sale_response(
         currency=currency,
         source_row_net_product_sales=(source_context or {}).get("source_row_net_product_sales"),
         source_row_settlement_total=(source_context or {}).get("source_row_settlement_total"),
+        allocated_net_product_sales=(source_context or {}).get("allocated_net_product_sales"),
+        allocated_settlement_total=(source_context or {}).get("allocated_settlement_total"),
         exchange_rate_to_cny=exchange_rate_to_cny,
         exchange_rate_date=exchange_rate_date,
         exchange_rate_source=exchange_rate_source,
@@ -1560,6 +1562,8 @@ async def _sale_import_context(
                     "source_other_expense": Decimal("0"),
                     "source_row_net_product_sales": Decimal("0"),
                     "source_row_settlement_total": Decimal("0"),
+                    "allocated_net_product_sales": Decimal("0"),
+                    "allocated_settlement_total": Decimal("0"),
                 },
             )
             context["source_net_product_sales"] += amount
@@ -1567,6 +1571,8 @@ async def _sale_import_context(
             # 来源整行用于与Excel核对；组合各组件重复展示，不能跨组件合计。
             context["source_row_net_product_sales"] += first.net_product_sales or Decimal(0)
             context["source_row_settlement_total"] += first.settlement_total or Decimal(0)
+            context["allocated_net_product_sales"] += (first.net_product_sales or Decimal(0)) * share
+            context["allocated_settlement_total"] += (first.settlement_total or Decimal(0)) * share
 
     import_context_by_sale = {}
     for row in context_rows:
@@ -1613,6 +1619,7 @@ async def _sale_import_context(
             "source_quantity": entry.quantity, "transaction_type": entry.transaction_type or "订单", "source_type": "import",
             "source_net_product_sales": Decimal(0), "source_other_expense": Decimal(0),
             "source_row_net_product_sales": Decimal(0), "source_row_settlement_total": Decimal(0),
+            "allocated_net_product_sales": Decimal(0), "allocated_settlement_total": Decimal(0),
             "is_fulfillment_order": False})
         context["is_fulfillment_order"] |= is_fulfillment_settlement(entry.transaction_type,
             entry.quantity, entry.net_product_sales or Decimal(0), (entry.raw_data or {}).get(SETTLEMENT_ONLY_KEY))
@@ -1622,6 +1629,8 @@ async def _sale_import_context(
         context["source_other_expense"] += expense
         context["source_row_net_product_sales"] += entry.net_product_sales or Decimal(0)
         context["source_row_settlement_total"] += entry.settlement_total or Decimal(0)
+        context["allocated_net_product_sales"] += entry.net_product_sales or Decimal(0)
+        context["allocated_settlement_total"] += entry.settlement_total or Decimal(0)
 
     # 旧文件未携带中文产品名时，展示实际已扣库的本地组件；不重建来源或改写历史关联。
     legacy_products = {sale.product_id for sale in sales
@@ -2161,6 +2170,8 @@ def _financial_event_response(event, store_name, local_product_name=None):
         currency=event.currency, exchange_rate_to_cny=event.rate,
         source_row_net_product_sales=event.source_row_net_product_sales,
         source_row_settlement_total=event.source_amount,
+        allocated_net_product_sales=event.source_row_net_product_sales,
+        allocated_settlement_total=event.source_amount,
         exchange_rate_date=event.rate_date, exchange_rate_source=event.rate_source,
         selling_price_cny=event.revenue, sales_revenue_cny=event.revenue,
         platform_fee_cny=event.expense,
