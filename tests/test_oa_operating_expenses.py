@@ -18,11 +18,11 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
         "OA_EXPENSE_API_TOKEN": "fixture-token",
     }
 
-    async def test_report_fetches_three_categories_once_for_january_and_previous_december(self):
+    async def test_report_fetches_payroll_components_once_for_january_and_previous_december(self):
         def handler(request):
             self.assertEqual(request.url.path, "/oa/api/v1/reporting/operating-expenses")
             self.assertEqual(dict(request.url.params), {
-                "corpId": "corp-1", "startMonth": "2026-12", "endMonth": "2027-01",
+                "corpId": "corp-1", "startMonth": "2026-12", "endMonth": "2027-01", "includePayroll": "1",
             })
             self.assertEqual(request.headers["Authorization"], "Bearer fixture-token")
             return httpx.Response(200, json={
@@ -32,6 +32,10 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
                      "amount": "4207.24", "currency": "CNY", "approvalCount": 1},
                     {"expenseType": "china_salary", "month": "2027-01", "departmentName": "店铺 A",
                      "amount": "1300.00", "currency": "CNY", "approvalCount": 1},
+                    {"expenseType": "employer_contributions", "month": "2027-01", "departmentName": "店铺 A",
+                     "amount": "200.56", "currency": "CNY", "approvalCount": 1},
+                    {"expenseType": "individual_income_tax", "month": "2026-12", "departmentName": "店铺 A",
+                     "amount": "12.34", "currency": "CNY", "approvalCount": 2},
                     {"expenseType": "shared_admin", "month": "2026-12", "departmentName": "店铺 A",
                      "amount": "1217.33", "currency": "CNY", "approvalCount": 1},
                 ],
@@ -53,6 +57,8 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values, {
             "office": {date(2026, 12, 1): Decimal("4207.24")},
             "salaries": {"店铺 A": {date(2027, 1, 1): Decimal("1300.00")}},
+            "employer_contributions": {"店铺 A": {date(2027, 1, 1): Decimal("200.56")}},
+            "individual_income_tax": {"店铺 A": {date(2026, 12, 1): Decimal("12.34")}},
             "shared_admin_by_store": {"店铺 A": {date(2026, 12, 1): Decimal("1217.33")}},
             "shared_admin_unresolved": {"店铺 A": 1, "店铺 B": 1},
         })
@@ -115,6 +121,10 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
             "code": "EXPENSE_CURRENCY_UNSUPPORTED", "expenseType": "china_salary",
             "processInstanceId": "salary-1", "departmentNames": ["店铺 A"], "month": "2026-11",
         }
+        company_warning = {
+            "code": "PAYROLL_DETAIL_UNRESOLVED", "expenseType": "employer_contributions",
+            "processInstanceId": "contribution-1", "departmentNames": ["店铺 B"], "month": "2026-11",
+        }
         client = httpx.AsyncClient(transport=httpx.MockTransport(
             lambda _: httpx.Response(200, json={
                 "success": True, "corpId": "corp-1", "startMonth": "2026-11", "endMonth": "2026-11",
@@ -122,7 +132,7 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
                     {"expenseType": "china_salary", "month": "2026-11", "departmentName": "店铺 A",
                      "amount": "20.10", "currency": "CNY", "approvalCount": 1},
                 ],
-                "warnings": [office_warning, salary_warning, salary_warning],
+                "warnings": [office_warning, salary_warning, salary_warning, company_warning],
             })
         ))
         with (
@@ -134,5 +144,7 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
         office_message = "有1张 OA 审批的办公场地总费用申请月份待核对，相关金额未纳入 OA 汇总。"
         salary_message = "2026-11 有1张 OA 审批的工资中国币种待核对，相关金额未纳入 OA 汇总。"
         self.assertEqual(operating_expense_review_messages(values, "店铺 A", 2), [office_message, salary_message])
-        self.assertEqual(operating_expense_review_messages(values, "店铺 B", 2), [office_message])
-        self.assertEqual(operating_expense_review_messages(values, "店铺 B", 0), [])
+        company_message = "2026-11 有1张 OA 审批的社保＋公积金（公司部分）部门或金额明细待核对，相关金额未纳入 OA 汇总。"
+        self.assertEqual(operating_expense_review_messages(values, "店铺 B", 2), [office_message, company_message])
+        self.assertEqual(operating_expense_review_messages(values, "店铺 B", 0), [company_message])
+        self.assertEqual(operating_expense_review_messages(values, "店铺 C", 0), [])

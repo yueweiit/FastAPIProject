@@ -12,8 +12,11 @@ from pydantic import BaseModel, Field, ValidationError
 from services.oa_office_expenses import OaExpenseSourceError
 
 
+_ExpenseType = Literal["office_space", "china_salary", "shared_admin", "individual_income_tax", "employer_contributions"]
+
+
 class _ExpenseRow(BaseModel):
-    expenseType: Literal["office_space", "china_salary", "shared_admin"]
+    expenseType: _ExpenseType
     month: str = Field(pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
     departmentName: str | None
     amount: str = Field(pattern=r"^-?[0-9]+(\.[0-9]+)?$")
@@ -21,9 +24,10 @@ class _ExpenseRow(BaseModel):
     approvalCount: int = Field(gt=0)
 
 
-class _ExpenseWarning(BaseModel):
-    code: Literal["EXPENSE_MONTH_UNRESOLVED", "APPLICATION_MONTH_UNRESOLVED", "EXPENSE_CURRENCY_UNSUPPORTED"]
-    expenseType: Literal["office_space", "china_salary", "shared_admin"]
+class OperatingExpenseWarning(BaseModel):
+    code: Literal["EXPENSE_MONTH_UNRESOLVED", "APPLICATION_MONTH_UNRESOLVED", "EXPENSE_CURRENCY_UNSUPPORTED",
+                  "PAYROLL_DETAIL_UNRESOLVED"]
+    expenseType: _ExpenseType
     processInstanceId: str = Field(min_length=1)
     departmentNames: list[str]
     month: str | None = Field(default=None, pattern=r"^[0-9]{4}-(0[1-9]|1[0-2])$")
@@ -32,9 +36,11 @@ class _ExpenseWarning(BaseModel):
 class OperatingExpenseValues(TypedDict):
     office: dict[date, Decimal]
     salaries: dict[str, dict[date, Decimal]]
+    individual_income_tax: dict[str, dict[date, Decimal]]
+    employer_contributions: dict[str, dict[date, Decimal]]
     shared_admin_by_store: dict[str, dict[date, Decimal]]
     shared_admin_unresolved: dict[str, int]
-    expense_review_warnings: NotRequired[list[_ExpenseWarning]]
+    expense_review_warnings: NotRequired[list[OperatingExpenseWarning]]
 
 
 class _ExpenseResponse(BaseModel):
@@ -43,7 +49,7 @@ class _ExpenseResponse(BaseModel):
     startMonth: str
     endMonth: str
     data: list[_ExpenseRow]
-    warnings: list[_ExpenseWarning]
+    warnings: list[OperatingExpenseWarning]
 
 
 def operating_expense_http_enabled() -> bool:
@@ -53,11 +59,14 @@ def operating_expense_http_enabled() -> bool:
 _EXPENSE_NAMES = {
     "office_space": "办公场地总费用",
     "china_salary": "工资中国",
+    "individual_income_tax": "个税",
+    "employer_contributions": "社保＋公积金（公司部分）",
     "shared_admin": "平摊人事+财务管理费用",
 }
 _REVIEW_REASONS = {
     "APPLICATION_MONTH_UNRESOLVED": "申请月份待核对",
     "EXPENSE_CURRENCY_UNSUPPORTED": "币种待核对",
+    "PAYROLL_DETAIL_UNRESOLVED": "部门或金额明细待核对",
 }
 
 
@@ -65,7 +74,10 @@ def operating_expense_review_messages(values: OperatingExpenseValues, store_name
                                       active_store_count: int) -> list[str]:
     groups: defaultdict[tuple[str, str, str], set[str]] = defaultdict(set)
     for warning in values.get("expense_review_warnings", []):
-        relevant = bool(active_store_count) if warning.expenseType == "office_space" else store_name in warning.departmentNames
+        if warning.expenseType == "office_space":
+            relevant = bool(active_store_count)
+        else:
+            relevant = bool(store_name) and (not warning.departmentNames or store_name in warning.departmentNames)
         if relevant:
             groups[warning.month or "", warning.expenseType, warning.code].add(warning.processInstanceId)
     return [
@@ -95,7 +107,7 @@ async def read_operating_expenses(start: date, end: date) -> OperatingExpenseVal
         async with httpx.AsyncClient(timeout=20, follow_redirects=False, trust_env=False) as client:
             response = await client.get(
                 url,
-                params={"corpId": corp_id, "startMonth": start_month, "endMonth": end_month},
+                params={"corpId": corp_id, "startMonth": start_month, "endMonth": end_month, "includePayroll": "1"},
                 headers={"Authorization": f"Bearer {token}"},
             )
             response.raise_for_status()
@@ -104,8 +116,12 @@ async def read_operating_expenses(start: date, end: date) -> OperatingExpenseVal
             raise ValueError("OA expense response does not match request")
 
         values: OperatingExpenseValues = {
-            "office": {}, "salaries": {}, "shared_admin_by_store": {}, "shared_admin_unresolved": {},
+            "office": {}, "salaries": {}, "individual_income_tax": {}, "employer_contributions": {},
+            "shared_admin_by_store": {}, "shared_admin_unresolved": {},
         }
+        by_department = {"china_salary": values["salaries"], "shared_admin": values["shared_admin_by_store"],
+                         "individual_income_tax": values["individual_income_tax"],
+                         "employer_contributions": values["employer_contributions"]}
         seen = set()
         for row in payload.data:
             key = (row.expenseType, row.month, row.departmentName)
@@ -122,14 +138,17 @@ async def read_operating_expenses(start: date, end: date) -> OperatingExpenseVal
                 department = row.departmentName
                 if not department or department != department.strip():
                     raise ValueError("Invalid OA expense department")
-                bucket = values["salaries"] if row.expenseType == "china_salary" else values["shared_admin_by_store"]
+                bucket = by_department[row.expenseType]
                 bucket.setdefault(department, {})[month] = amount
 
         unresolved: defaultdict[str, set[str]] = defaultdict(set)
         review_warnings = []
         for warning in payload.warnings:
-            if (warning.expenseType == "office_space") != (not warning.departmentNames):
+            supplement = warning.expenseType in ("individual_income_tax", "employer_contributions")
+            if not supplement and (warning.expenseType == "office_space") != (not warning.departmentNames):
                 raise ValueError("Invalid OA expense warning scope")
+            if warning.code == "PAYROLL_DETAIL_UNRESOLVED" and not supplement:
+                raise ValueError("Invalid payroll detail warning")
             for department in warning.departmentNames:
                 if not department or department != department.strip():
                     raise ValueError("Invalid OA expense warning department")
