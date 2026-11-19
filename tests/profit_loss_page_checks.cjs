@@ -49,7 +49,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123', m
     return {element, calls, rendered, notices, run, queries, writes, load, save};
 }
 
-function renderManualCell(file, manualValue, inputSource = 'manual', key = 'salary', kind = 'manual', policy = 'month_end_fx_mxn8_v1') {
+function renderManualCell(file, manualValue, inputSource = 'manual', key = 'salary', kind = 'manual', policy = 'month_end_fx_mxn8_v1', breakdown = null) {
     const source = fs.readFileSync(file, 'utf8');
     const elements = new Map();
     const element = id => {
@@ -61,19 +61,21 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
         window: {PageInteractions: {text: key => {
             const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新',
                 profitLossPeriodCurrent:'本月',profitLossPeriodPrevious:'上月',profitLossPeriodYtd:'本年累计',profitLossPeriodSeparator:'、',
-                profitLossSalaryHelp:'本月薪资合计覆盖OA',profitLossSharedAdminHelp:'本店本月管理费覆盖OA'};
+                profitLossSalaryHelp:'本月薪资合计覆盖OA',profitLossSharedAdminHelp:'本店本月管理费覆盖OA',
+                profitLossSalaryBase:'工资',profitLossSalaryTax:'个税',profitLossSalaryFund:'公积金',profitLossSalaryOaTotal:'OA合计',
+                profitLossSalaryYtd:'报表累计',profitLossSalaryManual:'人工覆盖',profitLossSalaryLedger:'费用台账',profitLossSalaryDefault:'OA取值'};
             equal(Object.hasOwn(labels,key),true);return labels[key];
         }}},
         document: {getElementById: element},
         formatProfitLossAmount: value => value == null ? '—' : String(value),
     });
-    for (const name of ['escapeHtml', 'profitLossPolicyReady', 'compactProfitLossWarnings', 'renderStoreProfitLoss']) {
+    for (const name of ['escapeHtml', 'profitLossPolicyReady', 'compactProfitLossWarnings', 'salaryBreakdownText', 'renderStoreProfitLoss']) {
         const match = source.match(new RegExp('^function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(match, `Missing ${name}`);
         vm.runInContext(match[0], context);
     }
     context.report = {
-        store_name: '测试店铺', period_label: '2026年9月', can_edit: true, calculation_policy:policy,
+        store_name: '测试店铺', period_label: '2026年9月', can_edit: true, calculation_policy:policy, salary_oa_breakdown: breakdown,
         rows: [{key, label: '费用', kind, input_source: inputSource,
             value: {current: 100,ytd:321}, manual_value: manualValue, remark: ''}],
     };
@@ -120,6 +122,14 @@ async function verify(file) {
         equal(ledgerCell.includes('title="使用明细">100</td>'), true);
         equal(ledgerCell.includes('data-profit-key="salary"'), false);
         equal(ledgerCell.includes('title="各月累计">321</td>'),true);
+        const breakdown = {china_salary:{current:77,ytd:260}, individual_income_tax:{current:5,ytd:11},
+            employer_contributions:{current:18,ytd:50}, total:{current:100,ytd:321}};
+        for (const [manual,source,label] of [[null,'manual','OA取值'],[{current:0},'manual','人工覆盖'],[null,'ledger','费用台账']]) {
+            const html = renderManualCell(file,manual,source,'salary','manual','month_end_fx_mxn8_compensation_v2',breakdown);
+            for(const expected of ['工资  77','个税  5','公积金  18','OA合计  100',label,'报表累计  321','data-help-tip']) {
+                equal(html.includes(expected),true);
+            }
+        }
         const ui = setup(file, {manualInput: ''});
         const loading = ui.load(); await flush(); ui.queries()[0].resolve(report()); await loading;
         const saving = ui.save();

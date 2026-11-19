@@ -3327,6 +3327,21 @@ async function loadStoreProfitLossStores(requestId = storeProfitLossRequestId) {
     }
 }
 
+function salaryBreakdownText(report, row, period) {
+    const data = report.salary_oa_breakdown;
+    if (row.key !== 'salary' || !data || !window.PageInteractions?.text) return '';
+    const text = key => window.PageInteractions.text(key);
+    const lines = [
+        ['china_salary', 'profitLossSalaryBase'], ['individual_income_tax', 'profitLossSalaryTax'],
+        ['employer_contributions', 'profitLossSalaryFund'], ['total', 'profitLossSalaryOaTotal'],
+    ].map(([key, label]) => text(label) + '  ' + formatProfitLossAmount(data[key]?.[period], row));
+    const source = period === 'ytd' ? 'profitLossSalaryYtd'
+        : row.input_source === 'ledger' ? 'profitLossSalaryLedger'
+        : row.manual_value?.current != null ? 'profitLossSalaryManual' : 'profitLossSalaryDefault';
+    lines.push(text(source) + '  ' + formatProfitLossAmount(row.value?.[period], row));
+    return lines.join('\n');
+}
+
 function renderStoreProfitLoss(report) {
     const tbody = document.getElementById('store-profit-loss-tbody');
     const saveButton = document.getElementById('profit-loss-save');
@@ -3365,20 +3380,25 @@ function renderStoreProfitLoss(report) {
         const readOnlyClass = row.is_auto ? 'profit-loss-auto' : 'profit-loss-formula';
         const amountCells = ['current','ytd'].map(period => {
             const value = row.value?.[period];
+            const breakdown = salaryBreakdownText(report, row, period);
             if (row.is_reserved) return `<td class="profit-loss-value">${escapeHtml(window.PageInteractions?.text('profitLossReserved') || '')}</td>`;
             if (period === 'current' && row.kind === 'manual' && row.input_source !== 'ledger') {
                 const manualValue = row.manual_value?.[period];
                 const inputValue = manualValue === null || manualValue === undefined ? '' : escapeHtml(manualValue);
                 const defaultValue = inputValue === '' && value !== null && value !== undefined ? escapeHtml(value) : '';
                 const helpKey = {salary: 'profitLossSalaryHelp', shared_admin: 'profitLossSharedAdminHelp'}[row.key];
-                const title = (helpKey && window.PageInteractions?.text(helpKey)) || row.source || window.PageInteractions?.text('profitLossManualHelp') || '';
-                return `<td class="profit-loss-value"><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" placeholder="${defaultValue}" ${editable ? '' : 'disabled'}></td>`;
+                const help = (helpKey && window.PageInteractions?.text(helpKey)) || row.source || window.PageInteractions?.text('profitLossManualHelp') || '';
+                const title = [breakdown, help].filter(Boolean).join('\n');
+                const cellTitle = breakdown ? ` title="${escapeHtml(breakdown)}"` : '';
+                return `<td class="profit-loss-value"${cellTitle}><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" placeholder="${defaultValue}" ${editable ? '' : 'disabled'}></td>`;
             }
             const title = period === 'ytd' ? window.PageInteractions?.text('profitLossYtdHelp') : row.input_source === 'ledger' ? (window.PageInteractions?.text('profitLossLedger') || row.source) : row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
-            return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(title)}">${formatProfitLossAmount(value, row)}</td>`;
+            return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(breakdown || title)}">${formatProfitLossAmount(value, row)}</td>`;
         }).join('');
         const remark = `<td class="profit-loss-remark"><input type="text" maxlength="500" data-profit-remark="${row.key}" value="${escapeHtml(row.remark || '')}" ${editable ? '' : 'disabled'}></td>`;
-        return `<tr class="${row.is_formula ? 'profit-loss-formula-row' : ''}"><td class="profit-loss-label">${escapeHtml(row.label)}</td>${amountCells}${remark}</tr>`;
+        const detail = salaryBreakdownText(report, row, 'current');
+        const help = detail ? `<span data-help-tip>${escapeHtml(detail).replace(/\n/g, '<br>')}</span>` : '';
+        return `<tr class="${row.is_formula ? 'profit-loss-formula-row' : ''}"><td class="profit-loss-label">${escapeHtml(row.label)}${help}</td>${amountCells}${remark}</tr>`;
     }).join('');
 }
 
