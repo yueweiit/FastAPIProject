@@ -23,7 +23,7 @@
 | Excel | [商品导入服务](../../services/product_import.py)、[商品](../../routers/products.py)、[批次](../../routers/batches.py)、[销售](../../routers/sales.py)、[报表](../../routers/reports.py) 的工作表名、列名、校验及备注多为中文，无统一语言参数；日期/金额格式在导出代码设置 |
 | 其他输出 | 当前注册接口未见 PDF、邮件、通知或独立打印模板服务；Excel 打印布局不构成多语言打印系统 |
 
-依赖以 [requirements.txt](../../requirements.txt) 为准；当前无前端 package.json。现阶段没有可供复用的全局翻译键约定或语言回退实现，下面均为后续建设建议。
+应用Python依赖以 [requirements.txt](../../requirements.txt) 为准；根目录package.json仅管理浏览器测试依赖，安装方式见[开发约定](conventions.md#实际代码习惯)，未引入前端构建或国际化框架。现阶段没有可供复用的全局翻译键约定或语言回退实现，下面均为后续建设建议。
 
 ## 不能当作界面文案翻译的契约
 

@@ -12,7 +12,9 @@
 | 前端 | 单文件内嵌 CSS/JS，camelCase 函数，原生 fetch、同源相对 API | [templates/index.html](../../templates/index.html) |
 | 测试 | unittest、IsolatedAsyncioTestCase、mock/模拟会话，部分签名/源码约束检查 | [tests/](../../tests/) |
 
-未发现 pyproject.toml、格式化/静态检查配置、前端打包配置或 CI 文件；不要宣称已有 Ruff、Black、pytest 或 CI 门禁。依赖以 requirements.txt 为准，不擅自增加框架。
+未发现 pyproject.toml、格式化/静态检查配置、前端打包配置或 CI 文件；不要宣称已有 Ruff、Black、pytest 或 CI 门禁。Python依赖以 requirements.txt 为准，不擅自增加框架。
+
+浏览器回归的开发依赖由根目录[package.json](../../package.json)与[package-lock.json](../../package-lock.json)锁定，只用于测试，不引入前端构建。使用Node.js 22及以上，在项目根目录执行`npm ci`、`npm run test:browser:install`安装Playwright及配套Chromium，随后`npm run test:browser`运行完整库存/跨页面回归；`npm run test:products`运行商品工作台回归（复用本机Chrome，可用FIFO_TEST_CHROME指定路径）。安装会下载测试依赖和浏览器，测试使用本地静态页面及模拟API，不启动main或连接业务库；node_modules和output不入库。已有受支持的浏览器可用INVENTORY_BROWSER_CHANNEL指定，INVENTORY_PLAYWRIGHT_MODULE仍可覆盖模块路径。安装方式依据[Playwright Library文档](https://playwright.dev/docs/library#usage)。
 
 ## 页面说明与状态提示
 

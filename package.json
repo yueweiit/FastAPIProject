@@ -1,0 +1,17 @@
+{
+  "name": "fifo-browser-checks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local browser regression checks for the FastAPI UI",
+  "scripts": {
+    "test:browser:install": "playwright install chromium",
+    "test:browser": "node tests/inventory_workspace_browser_checks.cjs",
+    "test:products": "node tests/product_workspace_browser_checks.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.65.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -7,6 +7,9 @@
 __pycache__/
 *.py[cod]
 
+# Local browser-test dependencies
+node_modules/
+
 # Runtime data
 uploads/
 output/

@@ -10,7 +10,7 @@
 
 | 层次 | 实际实现和证据 |
 | --- | --- |
-| 前端 | 原生 HTML/CSS/JavaScript，单文件页面、原生 fetch；[templates/index.html](../../templates/index.html)。未发现独立 Vue/React 项目、package.json 或前端构建流程 |
+| 前端 | 原生 HTML/CSS/JavaScript，单文件页面、原生 fetch；[templates/index.html](../../templates/index.html)。无独立 Vue/React 项目或前端构建流程；根目录[package.json](../../package.json)仅管理浏览器回归的开发依赖和命令 |
 | Web | FastAPI、Uvicorn、Python；[main.py](../../main.py)、[Dockerfile](../../Dockerfile) |
 | 数据访问 | SQLAlchemy 2.x 异步 ORM、aiomysql；[database.py](../../database.py) |
 | 校验 | Pydantic 2.x 请求/响应模型和 FastAPI Form/File/Query；[schemas.py](../../schemas.py) |

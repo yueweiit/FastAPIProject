@@ -14,7 +14,7 @@
 
 库存工作台入口为[routers/inventory.py](../../../routers/inventory.py)、[services/inventory_activity.py](../../../services/inventory_activity.py)、[static/inventory-workspace.js](../../../static/inventory-workspace.js)。两份首页同步菜单、挂载、样式及退出清理，保留此前非本功能差异。`python -m unittest tests.test_inventory_workspace -v`以独立SQLite/ASGI验证数量勾稽、更正/作废时点、取消未来到货、补差、权限、参数、分页及只SELECT。
 
-`node tests/inventory_workspace_browser_checks.cjs`使用现有Playwright、本地静态服务器及模拟API，真实无头浏览器检查两份页面、三视图、弹窗、转义、错误、退出/重登与晚响应、重复重建及窄屏。可用INVENTORY_PLAYWRIGHT_MODULE指定现有模块、INVENTORY_BROWSER_CHANNEL选择已安装浏览器、INVENTORY_QA_DIR保存截图；不安装依赖、不启动main、不连接业务库或外网，不代表目标MySQL/生产验收。
+`npm run test:browser`（即`node tests/inventory_workspace_browser_checks.cjs`）使用Playwright、本地静态服务器及模拟API，真实无头浏览器检查两份页面、三视图、弹窗、转义、错误、退出/重登与晚响应、重复重建及窄屏。依赖及配套Chromium的安装命令见[开发约定](../../knowledge/conventions.md#实际代码习惯)；测试本身不自动安装依赖。可用INVENTORY_PLAYWRIGHT_MODULE指定现有模块、INVENTORY_BROWSER_CHANNEL选择已安装浏览器、INVENTORY_QA_DIR保存截图；不启动main、不连接业务库或外网，不代表目标MySQL/生产验收。
 
 | 页面/流程 | 前端函数 | 后端函数 | 数据/依赖 |
 | --- | --- | --- | --- |

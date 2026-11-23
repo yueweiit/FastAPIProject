@@ -1,5 +1,5 @@
 // 真实无头浏览器 + 本地静态页面 + 模拟API；不启动main、不连接数据库或外部网络。
-// 需现有Playwright；可用INVENTORY_PLAYWRIGHT_MODULE指定现有模块，INVENTORY_QA_DIR保存截图。
+// npm ci及npm run test:browser:install准备依赖；可用INVENTORY_PLAYWRIGHT_MODULE指定模块，INVENTORY_QA_DIR保存截图。
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
