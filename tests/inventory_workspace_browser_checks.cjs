@@ -854,6 +854,7 @@ async function main() {
             check(productCalls.at(-1).keyword, '羽毛');
             await page.locator('#iw-product').press('Escape');
             // 清除指定商品查询后，横向表继续覆盖全查询范围。
+            await page.locator('#iw-keyword').fill('');
             await page.locator('#iw-query button[type="submit"]').click();
             await page.waitForFunction(() => document.getElementById('iw-product').value.startsWith('CW0001'));
             await page.locator('#iw-layout').selectOption('matrix');

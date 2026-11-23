@@ -10,7 +10,7 @@
 
 库存Excel由[services/inventory_export.py](../../../services/inventory_export.py)格式化，只消费页面共用的overview_row/activity_rows，不连接数据库或另算库存。接口测试核对总览/整月/横向格式、全查询范围、指定商品、跨店权限、未知合计空白、文本/公式安全、上限和分组期间一致性；浏览器测试核对下载文件名/参数、忙时重复点击、失败恢复、无效文件和旧会话响应。
 
-商品工作台的“查看库存”调用InventoryWorkspace.openProduct(productId)，回到库存总览，清除旧关键词并按ID精确筛选，导出继续携带product_id；中止旧导出并恢复其控件状态。库存总览请求通过isCurrent隔离旧查询/旧会话的响应，避免过期401退出新会话。此跳转不写入库存，也不改变角色或店铺范围。
+商品工作台的“查看库存”调用InventoryWorkspace.openProduct(productId)，回到库存总览，清除旧关键词并按ID精确筛选，响应后在搜索框回显SKU。总览、每日进出及其按天/按商品/横向日期视图切换、刷新和分页保留当前商品范围，Excel导出沿用相同product_id；主动修改或清空查询条件后重新查询才能解除原精确筛选。等待响应时切换视图仍保留ID，响应不覆盖用户新输入的查询草稿；中止旧导出并恢复其控件状态。库存查询通过isCurrent隔离旧查询/旧会话的响应，避免过期401退出新会话。此跳转不写入库存，也不改变角色或店铺范围。上述切换、清空和导出范围由`node tests/product_workspace_browser_checks.cjs`在两份实际页面上回归验证（真实Chrome、模拟API，无业务库写入）。
 
 库存工作台入口为[routers/inventory.py](../../../routers/inventory.py)、[services/inventory_activity.py](../../../services/inventory_activity.py)、[static/inventory-workspace.js](../../../static/inventory-workspace.js)。两份首页同步菜单、挂载、样式及退出清理，保留此前非本功能差异。`python -m unittest tests.test_inventory_workspace -v`以独立SQLite/ASGI验证数量勾稽、更正/作废时点、取消未来到货、补差、权限、参数、分页及只SELECT。
 

@@ -69,11 +69,20 @@ const server=http.createServer(async(req,res)=>{
             const saved={...previous,...data,id,safe_stock_quantity:Number(data.safe_stock_quantity),image:data.image?'/uploads/new-fixture.png':previous.image};
             catalog=catalog.filter(p=>p.id!==id);catalog.push(saved);return json(saved);
         }
-        if(url.pathname==='/inventory/overview') {
-            if(inventoryGate && !inventoryGate.started){const gate=inventoryGate;gate.started=true;await gate.promise;return json({detail:'old inventory session'},401);}
+        if(['/inventory/overview','/inventory/daily'].includes(url.pathname)) {
+            if(inventoryGate && !inventoryGate.started){const gate=inventoryGate;gate.started=true;await gate.promise;if(gate.expired!==false)return json({detail:'old inventory session'},401);}
             inventoryCalls.push(url);const id=Number(url.searchParams.get('product_id'));
-            const items=catalog.filter(p=>!id||p.id===id).map(p=>({...p,stock_status:'normal'}));
-            return json({items,total:items.length,page:1,page_size:20,scope:'shared',summary:{quantity:100,inventory_amount:1000,low_count:0,zero_count:0}});
+            const keyword=(url.searchParams.get('keyword')||'').toLowerCase();
+            const matches=catalog.filter(p=>(!id||p.id===id)&&`${p.sku} ${p.name}`.toLowerCase().includes(keyword));
+            const page_size=Number(url.searchParams.get('page_size')||20),page=Math.min(Number(url.searchParams.get('page')||1),Math.max(1,Math.ceil(matches.length/page_size)));
+            const items=matches.slice((page-1)*page_size,page*page_size).map(p=>({...p,stock_status:'normal'}));
+            if(url.pathname==='/inventory/daily') {
+                const month=url.searchParams.get('month').slice(0,7);
+                return json({items:items.map(p=>({...p,product_id:p.id,days:[1,2].map(day=>({date:`${month}-0${day}`,
+                    opening_quantity:null,inbound:0,outbound:0,adjustment:null,closing_quantity:null}))})),
+                    total:matches.length,page,page_size,start:`${month}-01`,end:`${month}-02`,scope:'restricted',warnings:[]});
+            }
+            return json({items,total:matches.length,page,page_size,scope:'shared',summary:{quantity:100,inventory_amount:1000,low_count:0,zero_count:0}});
         }
         if(url.pathname==='/inventory/export'){exportRequests.push(url);return excel();}
         if(url.pathname.startsWith('/uploads/')){res.writeHead(200,{'Content-Type':'image/png'});res.end(png);return;}
@@ -106,6 +115,19 @@ async function main() {
         const press=async key=>{const code={Enter:13,ArrowDown:40,Escape:27}[key];await send('Input.dispatchKeyEvent',{type:'keyDown',key,code:key,windowsVirtualKeyCode:code,...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})},sessionId);await send('Input.dispatchKeyEvent',{type:'keyUp',key,code:key,windowsVirtualKeyCode:code},sessionId);};
         const ready=()=>until(()=>evaluate(`document.getElementById('product-list-status').textContent==='' && document.getElementById('products-pagination').textContent.includes('共')`),'product response');
         const query=async keyword=>{await fill('#product-keyword',keyword);await evaluate('document.querySelector("#product-keyword").focus()');await press('Enter');await ready();};
+        const inventoryReady=()=>until(()=>evaluate(`document.querySelector('#iw-status').textContent==='' && document.querySelector('#iw-page-label').textContent.includes('共')`),'inventory response');
+        const checkInventoryScope=(mode,id,keyword)=>{
+            const url=inventoryCalls.at(-1);
+            check(url.pathname,`/inventory/${mode}`);check(url.searchParams.get('product_id'),id);check(url.searchParams.get('keyword'),keyword);
+        };
+        const exportInventoryScope=async(view,id,keyword)=>{
+            const previous=exportRequests.length;
+            await click('#iw-export');await until(()=>exportRequests.length>previous,'inventory export request');
+            const url=exportRequests.at(-1);
+            check(url.pathname,'/inventory/export');check(url.searchParams.get('view'),view);
+            check(url.searchParams.get('product_id'),id);check(url.searchParams.get('keyword'),keyword);
+            await until(()=>evaluate('!document.querySelector("#iw-export").disabled'),'inventory export completion');
+        };
         const screenshot=async name=>{const data=await send('Page.captureScreenshot',{format:'png'},sessionId);fs.writeFileSync(path.join(out,name+'.png'),Buffer.from(data.data,'base64'));};
         for(const [route,label] of [['/','template'],['/copy','copy']]) {
             catalog=initial();calls=[];mutations=[];exportRequests=[];inventoryCalls=[];importCalls=0;listGate=null;saveGate=null;
@@ -168,6 +190,41 @@ async function main() {
             check(await evaluate('document.querySelectorAll("#iw-tbody tr").length'),1);
             await click('#iw-export');await until(()=>exportRequests.at(-1).pathname==='/inventory/export');check(exportRequests.at(-1).searchParams.get('product_id'),'1');
             await until(()=>evaluate('!document.querySelector("#iw-export").disabled'),'inventory export completion');
+            // 商品页直达后，各库存视图、刷新、分页和Excel沿用同一精确商品范围。
+            await click('[data-iw-action="daily"]');await inventoryReady();checkInventoryScope('daily','1','EXACT');
+            check(await evaluate('document.querySelector("#iw-keyword").value'),'EXACT');
+            await exportInventoryScope('daily','1','EXACT');
+            for(const layout of ['product','matrix','day']) {
+                await evaluate(`document.querySelector('#iw-layout').value='${layout}';document.querySelector('#iw-layout').dispatchEvent(new Event('change'))`);
+                await exportInventoryScope(layout==='matrix'?'matrix':'daily','1','EXACT');
+            }
+            await click('[data-iw-action="overview"]');await inventoryReady();checkInventoryScope('overview','1','EXACT');
+            await click('[data-iw-action="refresh"]');await inventoryReady();checkInventoryScope('overview','1','EXACT');
+            await click('#iw-query button[type="submit"]');await inventoryReady();checkInventoryScope('overview','1','EXACT');
+            check(await evaluate('document.querySelectorAll("#iw-tbody tr").length'),1,'resubmitting the shown SKU keeps exact selection among similar SKUs');
+            await evaluate(`document.querySelector('#iw-page-size').value='10';document.querySelector('#iw-page-size').dispatchEvent(new Event('change'))`);
+            await inventoryReady();checkInventoryScope('overview','1','EXACT');await exportInventoryScope('overview','1','EXACT');
+            // 主动更改或清空查询能解除精确商品，不能把旧ID带入新的查询/导出。
+            await fill('#iw-keyword','DOG');check(await evaluate('document.querySelector("#iw-export").disabled'),true);
+            await click('[data-iw-action="daily"]');await inventoryReady();checkInventoryScope('daily',null,'DOG');
+            await exportInventoryScope('daily',null,'DOG');
+            await fill('#iw-keyword','');await click('#iw-query button[type="submit"]');await inventoryReady();
+            checkInventoryScope('daily',null,'');await exportInventoryScope('daily',null,'');
+            // 直达请求的SKU回显不能覆盖用户等待期间输入的新查询。
+            inventoryGate={...deferred(),expired:false};await evaluate('void openProductInventory(1)');await until(()=>inventoryGate.started,'inventory draft race');
+            await fill('#iw-keyword','DOG');inventoryGate.resolve();await inventoryReady();inventoryGate=null;
+            check(await evaluate('document.querySelector("#iw-keyword").value'),'DOG');
+            check(await evaluate('document.querySelector("#iw-export").disabled'),true);
+            await click('#iw-query button[type="submit"]');await inventoryReady();checkInventoryScope('overview',null,'DOG');
+            await exportInventoryScope('overview',null,'DOG');
+            // 请求尚未完成时切换视图也保留ID，晚到的旧401不能覆盖新视图/会话。
+            inventoryGate=deferred();await evaluate('void openProductInventory(1)');await until(()=>inventoryGate.started,'pending inventory link');
+            await click('[data-iw-action="daily"]');await inventoryReady();
+            check(inventoryCalls.at(-1).searchParams.get('product_id'),'1');
+            check(await evaluate('document.querySelector("#iw-keyword").value'),'EXACT');
+            inventoryGate.resolve();await new Promise(resolve=>setTimeout(resolve,100));inventoryGate=null;
+            check(await evaluate('CURRENT_USER_ID'),10);await exportInventoryScope('daily','1','EXACT');
+            await click('[data-iw-action="overview"]');await inventoryReady();
             inventoryGate=deferred();await evaluate('void switchTab("inventory")');await until(()=>inventoryGate.started,'old inventory query');
             await evaluate('openProductInventory(100)');inventoryGate.resolve();await new Promise(resolve=>setTimeout(resolve,100));check(await evaluate('CURRENT_USER_ID'),10);check(await evaluate('document.querySelector("#iw-tbody").textContent.includes("EXACT-1")'),true);inventoryGate=null;
             await evaluate('switchTab("products")');await ready();check(await evaluate('productKeyword'),'EXACT');

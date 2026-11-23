@@ -130,7 +130,10 @@
             }
             if (action === 'export') {exportInventory(); return;}
             if (action === 'overview' || action === 'daily') {
-                state.mode = action; applyKeywordQuery();
+                state.mode = action; state.page = 1;
+                // 仅重新提交用户改动的条件；视图切换不能丢弃按ID直达的商品筛选。
+                if (node('keyword').value.trim() !== state.keyword) applyKeywordQuery();
+                else refresh();
             } else if (action === 'refresh') refresh();
             else if (action === 'previous' || action === 'next') {state.page += action === 'next' ? 1 : -1; refresh();}
             else if (action === 'close-detail') closeDetail();
@@ -198,6 +201,13 @@
             const data = await api('GET', `/inventory/${state.mode === 'daily' ? 'daily' : 'overview'}?${params}`, undefined, {isCurrent: current});
             if (!current()) return;
             state.data = data; state.page = data.page;
+            const product = state.productId && data.items.find(item => Number(item.product_id ?? item.id) === state.productId);
+            if (product && node('keyword').value.trim() === state.keyword) {
+                // 按ID进入时回显真实SKU；等待响应期间新输入的查询条件不被覆盖。
+                const sku = product.sku.trim();
+                keywordPicker.product = {id: state.productId, sku};
+                state.keyword = sku; node('keyword').value = sku;
+            }
             node('status').textContent = '';
             render();
         } catch (error) {
