@@ -37,10 +37,14 @@
 新增基础表non_inventory_sku_rules及sales.business_metadata JSON NULL，不依赖财务增强开关；普通销售默认兼容。业务用途、字段及范围见[销售分类](docs/modules/sales/workflow.md#非实物结算与初始化扣减2026-11-10)、[销售字典](docs/modules/sales/database.md#non_inventory_sku_rules)、[库存基线](docs/modules/inventory/workflow.md#初始化历史扣减)。当前ORM为34表。新增稳定分类，不改既有库存数量、FIFO单价/成本、真实入库日或旧版本。
 
 1. 离线生成供审核的DDL：`python migrations/add_sales_classification.py --write-sql output/sales_classification.sql`。先核实目标库/父表/外键/唯一键/引擎、备份并停止所有FIFO写入进程，再执行。已有同名列/表须逐项核对；DDL不受后续DML事务回滚保护，不删除新增结构来回退。
-2. 按 Git 发布流程同步后端代码、migrate.py 和 inventory-workspace.js。migrate新增业务元数据兼容列，且启动修复保留已确认的non_inventory/运费/退款/金额调整标记。启动仍有原建表、历史兼容和快照副作用，不能替代迁移预检。Compose先停止所有FIFO写入进程，再应用代码并build；结构/数据准备后仅重新创建web，不重建或删除数据库/卷。
-3. 历史维护只处理业务已确认的记录。写入前匹配结算和销售标识、店铺、SKU、批次、原日期及金额，在同一事务内核对库存数量、FIFO 明细、原始结算和未涉及的记录。已确认的原凭据与成本随分类保留。
-4. 发布后核对销售台账、库存变动、07 存货跌价及 09 店铺损益。重点确认期初扣减只影响库存和准备基线，非实物结算只进入财务统计。对真实销售的归属或流水异常保留待核对提示。
-5. 保存目标库的私有备份和维护日志。回退使用理解业务分类的兼容版本，保留分类元数据、非实物规则及历史报表版本。
+2. 按 Git 发布流程同步后端代码、migrate.py 和 inventory-workspace.js，不能只更新前端。migrate新增业务元数据兼容列，且启动修复保留已确认的non_inventory/运费/退款/金额调整标记。启动仍有原建表、历史兼容和快照副作用，不能替代迁移预检。Compose先停止所有FIFO写入进程，再应用代码并build；结构/数据准备后仅重新创建web，不重建或删除数据库/卷。
+3. 2026-11-10 专项维护清单为8条初始化扣减449件和2条非实物结算；匹配ID/SKU/批次号/原日期/数量/成本/金额等后才提交，重复执行无新增扣库。当时其余7条真实销售80件店铺待补，不做归属推断，相关准备/累计可能仍留空。交付脚本先私有mysqldump，事务内校验全局数量成本、FIFO明细、来源金额汇率/日期及无关记录；结果以CLASSIFICATION_FIX_COMMITTED为准。此清单是历史专项记录，不适用于其他数据库或其他销售。
+4. 备份目录为脚本打印的`/tmp/fifo_classification_20261110.*`，含正式库备份，必须私密保留并另存到宿主机。失败停止并核对日志，不跳过guard、不强制继续或直接恢复整库覆盖新交易。回退须使用理解分类的兼容代码，保留元数据、规则和原凭据；未授权不撤销已扣库存或覆盖旧版本。
+5. 核实目标数据库及上述专项清单后，可在对应Compose项目中执行`docker compose exec -T web python migrations/verify_sales_classification.py`。脚本连接应用配置中的数据库，各段查询显式开启只读事务并最终回滚、释放连接，不运行main生命周期、迁移、OA或保存版本。它核对8条扣减的销售ID/数量、两条结算的店铺/SKU/金额/分类及无库存关联、两条有效非实物规则，再输出店铺1在2026年9/10月的准备回放。`CLASSIFICATION_VERIFIED_REPORTS_REQUIRE_REVIEW`仅表示专项记录核验通过且回放完成，金额和归属警示仍须人工核对，不能填0；记录不符或查询异常以非零退出。此工具不是任意环境的通用健康检查，真实服务器结果仍须维护者核对。
+
+2026-11-11 维护脚本修正记录：原脚本将销售单价为零用作匹配条件，历史库存对账凭据实际按原单位成本保存单价，导致数据事务在匹配校验时回滚。修正版以已核对的销售 ID、成本明细 ID、单号、数量及原金额匹配 8 条记录。私有交付件为 `fix_fifo_classification_20261111.sh`；该历史记录不代表当前镜像、数据库或上线状态，重新维护仍需重新核实目标、清单和授权。
+
+核验工具的无数据库回归：`python -m unittest tests.test_verify_sales_classification -v`。覆盖精确清单、异常/缺失数据、未知金额、只读事务和失败清理；不代表已执行真实目标库核验。
 
 回归：`FIFO_OPERATION_AUDIT_ENABLED=0 python -m unittest tests.test_sales_classification tests.test_sales_name_import tests.test_sales_pending tests.test_inventory_workspace tests.test_batch_store_allocations tests.test_provision_reporting tests.test_inventory_assessment tests.test_sales_export -v`，使用独立SQLite/ASGI及现有测试汇率，不启动业务服务。默认关闭审计的夹具使用该环境值，审计功能由专用测试单独开启验证，不修改生产审计配置。临时MySQL影子表验证仅覆盖维护DML、幂等及失败保护，不代替目标DDL外键和真实并发验证。
 
