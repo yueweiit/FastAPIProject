@@ -76,12 +76,15 @@
 | `sales_created` | `Integer` | 否 | 生成销售数量 | Python 默认：0 |
 | `skipped_duplicates` | `Integer` | 否 | 跳过的已导入事件数 | Python 默认：0 |
 | `pending_confirmation` | `Integer` | 否 | 待确认行数 | Python 默认：0 |
+| `result_snapshot` | `JSON` | 是 | 文件导入当时的完整结果；统计、警告及待确认行原因 | 历史无快照为NULL；ORM延迟加载，详情接口按需读取 |
 | `status` | `String(24)` | 否 | 业务状态；见流程文档 | 索引；Python 默认：'completed' |
 | `imported_at` | `DateTime` | 否 | 导入时间 | 数据库默认：func.now() |
 | `rolled_back_at` | `DateTime` | 是 | 撤销时间 | — |
 | `rolled_back_by_user_id` | `Integer` | 是 | 撤销操作者 | ForeignKey('users.id') |
 
-待确认重新处理仍使用现有表，不新增字段或表。`SettlementEntry.mapping_status/mapping_error`随原行处理更新，原source_key、原始业务字段、日期/数量/金额及固化汇率不覆盖；确认组件与销售关系替换原待确认分配。`SalesImportBatch.sales_created`累加此次新增明细数，`pending_confirmation`在导入头锁内按现存待确认行重算，原导入人/文件/导入时间保留。
+`result_snapshot`由[routers/sales.py](../../../routers/sales.py)的`_import_sales_file`在原事务提交前写入，形状为[schemas.py](../../../schemas.py)的`SalesImportResponse`；`warnings`保存全部提示，`pending_details`按`SalesImportError`形状保存来源行号、原因和订单标识。待确认重试和文件撤销不覆盖快照；列表默认不读取该JSON，不重建已撤销的结算来源。历史NULL表示没有保存，不能解释为没有警告。加列兼容及离线DDL见[运行说明](../../../PROJECT_RUNBOOK.md#销售导入结果回看2026-11-23)。
+
+待确认重新处理仍使用现有表。`SettlementEntry.mapping_status/mapping_error`随原行处理更新，原source_key、原始业务字段、日期/数量/金额及固化汇率不覆盖；确认组件与销售关系替换原待确认分配。`SalesImportBatch.sales_created`累加此次新增明细数，`pending_confirmation`在导入头锁内按现存待确认行重算，原导入人/文件/导入时间及结果快照保留。
 
 `SettlementEntry.raw_data`保留原键，并由服务端维护`_pending_resolution`（人工确认组件product_id/multiplier及操作人/上海时区时间）、`_pending_last_attempt`（最后处理前后原因）、`_pending_resolution_history`（人工确认与完成的操作记录）。这些内部键不接受Excel原始列写入；人工组件仅影响本行，库存不足仍保存选择供下次重试。记录随原来源撤销删除，不是独立不可变审计台账；旧月度版本仍保持原payload。字段入口见[schemas.py](../../../schemas.py)，事务与上游保护见[流程](workflow.md#待确认与文件撤销)。
 

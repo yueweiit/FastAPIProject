@@ -1,5 +1,20 @@
 # FastAPIProject 运行与维护说明
 
+## 销售导入结果回看（2026-11-23）
+
+新增`sales_import_batches.result_snapshot JSON NULL`保存文件导入当时的完整结果，同原导入事务提交；待确认重试/撤销不覆盖，不改FIFO算法、锁序或库存口径。历史记录及未保存快照的手工结算显示“未保存完整结果”，不回填。
+
+1. 发布前核验目标库及备份，准备可空加列DDL。离线命令仅写SQL文件，不连接数据库：
+
+   ```powershell
+   .\.venv\Scripts\python.exe migrations/add_sales_import_result.py --write-sql output/sales_import_result.sql
+   ```
+
+2. 由获授权维护者审核目标表、已有同名字段及加列锁表影响后执行；已有列不重复ALTER。MySQL DDL不能依赖事务回滚；本次未对本地业务库或生产库执行迁移。回退代码时保留此列及快照，旧代码可忽略新增列。
+3. 新后端写入依赖此列，须先准备结构，再同步`models.py/schemas.py/routers/sales.py/migrate.py/main.py`、两份首页、`static/page-interactions.js/sales-import-progress.js/sales-import-results.js`。启动兼容迁移也包含该列，但启动还会执行原建表、历史修复和快照等操作，不能用启动服务代替只读预检。
+4. 按获准发布流程重启后端并刷新页面；只更新HTML不能启用新增`GET /sales/imports/{id}/result`及脚本入口。成功5秒、待核对8秒消失，失败手动关闭；悬停、聚焦、展开暂停计时。历史“查看导入结果”可只读回看完整警告/待确认原因，旧记录及已撤销记录有明确说明。
+5. 隔离回归入口：`test_sales_import_results/test_sales_import_progress`及既有销售/FIFO用例；前端`sales_import_progress_checks.cjs/sales_import_page_checks.cjs/sales_import_results_checks.cjs`。回看只SELECT、按店铺授权、不重跑导入；真实目标库DDL和InnoDB并发仍须按对应环境授权验证。本次未启动业务服务或部署。
+
 ## 历史汇率来源与原币对账（2026-11-19）
 
 `FIFO_FX_PROVIDER=frankfurter`为默认兼容值；切换为`baidu`后，新导入及实时重算的损益/产品线使用百度历史日线**收盘价**。Compose已透传该变量，更新代码及`.env`后需构建镜像并重建web，使Python与静态字段资源同时生效；只改`.env`或只build不会替换运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率，旧固定报表版本保留原值；当前报表会按新来源重新换算各核算月，因此与旧台账人民币列可能不同。

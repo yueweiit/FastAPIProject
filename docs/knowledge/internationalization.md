@@ -91,6 +91,10 @@
 
 导入进度、阶段、真实行数/百分比、文件/店铺、完成/待核对/断线及自动归月说明使用PageInteractions的`import*`局部zh-CN键，两份页面共用[sales-import-progress.js](../../static/sales-import-progress.js)，结果摘要也由该字典生成。紧凑摘要、查看/收起详情及关闭提示使用`importCompactSummary/importShowDetails/importHideDetails/importDismiss`，展开状态通过aria-expanded表达，不用文案作状态判断。文件名、店铺和错误以textContent展示；阶段为parsing等中立码，未知时不猜测。服务端系统错误以sales_import_failed为稳定码，中文兼容message集中在IMPORT_MESSAGES；原行级错误契约保留。当前没有第二种已支持语言，不增加翻译依赖。
 
+导入结果回看复用同一字典的`importResult*`，包括加载、旧记录无快照、已撤销、导入当时结果与当前统计；完整提示分组及来源行/标识用`importWarningsTitle/importPendingTitle/importErrorsTitle/importIssue/importIssueIdentifier`，失败行数摘要用`importFailedRows`。新静态[sales-import-results.js](../../static/sales-import-results.js)复用进度模块的摘要/详情，业务数据均textContent展示，错误码`sales_import_result_not_found`映射局部文案。后端pending_details沿用中立row/message/identifier字段，来源原因和业务名称保留原文；无新语言、依赖或导出契约调整。
+
+导入浮层与结果回看的插值共用`PageInteractions.formatText`：仅对翻译模板做一次占位符匹配，通过回调插入原值；文件名、店铺、导入人及原因中的`$&`、`$$`、花括号等不参与替换语法，也不再次解析。沿用`textContent`，HTML字样按文本显示。旧`PageInteractions.text`取词接口不变，回归见`sales_import_progress_checks.cjs`、`sales_import_results_checks.cjs`及`test_sales_import_results.py`。
+
 批次操作列新增的编辑/强制删除标签、受限原因、编辑说明和保存反馈也通过 `PageInteractions.text` 的 `batch*` 键维护，语言缺失时回退 zh-CN。旧普通删除按钮及其标签已移除，停用接口的稳定码`batch_delete_retired`映射到`batchDeleteRetired`提示刷新后使用作废入口。沿用已有表单标签；没有新增支持语言或变更导入/导出契约。
 
 认证关键提示集中于两份首页内联 `authText` 的局部 zh-CN 字典：`authLoginFailed`、`authSessionMissing`、`authProductsLoadFailed`。它们从公共交互字典移入页面，确保外部脚本不可用时仍能提示；按 `document.documentElement.lang` 选择并回退中文，不新增语言或依赖。商品首屏加载失败只显示固定文案，通过现有 `showMsg` 渲染；已有后端登录错误 detail 仍按原格式以 textContent 安全显示。

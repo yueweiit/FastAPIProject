@@ -2,13 +2,14 @@
 
 2026-11-10分类兼容：SaleResponse新增`business_kind=inventory_sale/opening_deduction/settlement`。列表、月度、导出及成本解释只取正常销售和原有独立结算；明确的初始化扣减保留单条详情供追溯，不计销量、损益成本或履约费。非实物规则命中后导入/待确认重试以原结算行确认，返回sales_created=0，金额/事件键保留，重复操作不再扣库。无新写入API或权限放宽。分类及规则的管理员维护见[流程](workflow.md#非实物结算与初始化扣减2026-11-10)。
 
-前缀 /sales，共 15 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
+前缀 /sales，共 16 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `POST /sales/import` | [import_sales_file](../../../routers/sales.py) | admin/operator | file、store_id | SalesImportResponse |
 | `POST /sales/import-stream` | import_sales_stream → _import_sales_file | admin/operator | 同上；不接收导入月份 | NDJSON阶段进度与最终结果 |
 | `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit | list[SalesImportBatchResponse] |
+| `GET /sales/imports/{import_batch_id}/result` | get_sales_import_result | admin/operator/viewer | import_batch_id | SalesImportResultResponse；当前批次信息及原始结果快照 |
 | `GET /sales/imports/{import_batch_id}/export` | export_sales_import → _build_sales_export | admin/operator/viewer | import_batch_id | 本次导入的原始结算对账及拆分明细Excel |
 | `POST /sales/imports/{import_batch_id}/rollback` | [rollback_sales_import](../../../routers/sales.py) | admin/operator | import_batch_id | SalesImportRollbackResponse |
 | `POST /sales/manual-settlements` | create_manual_settlement | admin/operator | 店铺、来源字段、人民币金额、request_key | 不扣库存的结算补录SaleResponse |
@@ -39,6 +40,14 @@ POST请求可以传`entry_ids`（正ID、去重、1–200项），或省略ID并
 响应含confirmed_rows/pending_rows/skipped_rows/sales_created及逐行results（id、status=confirmed/pending/skipped、reason_code、message）。HTTP200不等于全部完成，需检查pending_rows；未解决业务原因保留原行并更新原因，已确认行重复请求只跳过。已撤销来源409 `pending_import_rolled_back`，来源并发变化409 `pending_source_changed`，唯一键/完整性竞态409 `pending_retry_conflict`且整次回滚。人工确认仅影响该来源行，不更改原source_key和金额/日期/汇率。原导入统计随成功结果更新，原文件撤销仍能恢复此次生成的销售库存；已有财务引用时按原保护拒绝物理撤销。事务、审计及不可变版本边界见[流程](workflow.md#待确认与文件撤销)。
 
 新增静态`/sales-pending.js`供两份首页共用，先于后续销售加载使用；源脚本未加载时保留旧只读待确认展示。需要加载新增后端与脚本后才能使用筛选/处理功能，不通过启动服务执行预检。
+
+## 导入结果回看
+
+`GET /sales/imports/{import_batch_id}/result`返回原`SalesImportBatchResponse`字段及可空`result`。外层统计为当前批次信息；`result`为文件导入当时的`SalesImportResponse`，包含全部`warnings`、`errors`及新增`pending_details: [{row, message, identifier}]`，重试和撤销不会改写。历史或手工结算无快照时`result=null`，前端须提示无法还原，不能把现有统计当成原始成功结果。
+
+同原导入历史权限：管理员可读全部；运营和查看者仅可读当前绑定店铺，未绑定403，不存在或越店404 `sales_import_result_not_found`。已撤销批次允许回看，仍返回`status=rolled_back`。仅SELECT，响应`Cache-Control: private, no-store`，不扣库、不写来源或重新计算FIFO；历史列表保持原契约，不加载快照JSON。
+
+两个导入入口的成功响应均兼容追加`pending_details`，新快照在原导入事务内保存。失败仍整体回滚、不新增失败历史。须先准备可空`result_snapshot`字段并加载新后端及静态脚本，见[运行说明](../../../PROJECT_RUNBOOK.md#销售导入结果回看2026-11-23)。
 
 ## 导入进度流
 
