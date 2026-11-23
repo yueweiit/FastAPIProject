@@ -11,6 +11,7 @@ function setup(file) {
     };
     const c = vm.createContext({window: {}, URLSearchParams, AbortController,
         document: {documentElement: {lang: 'zh-CN'}, getElementById: element,
+            querySelectorAll: selector => selector === '[data-sales-import-export]' ? [element('import-export-button')] : [],
             createElement: () => {const link = {style: {}, click() {this.clicked = true;}, remove() {this.removed = true;}}; links.push(link); return link;},
             body: {appendChild: link => {link.appended = true;}}},
         URL: {createObjectURL: () => 'blob:sales', revokeObjectURL: url => revoked.push(url)},
@@ -20,7 +21,7 @@ function setup(file) {
     });
     vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
     vm.runInContext('let salesExportBusy=false,salesExportSessionEpoch=0,salesExportController=null;', c);
-    for (const name of ['setSalesExportStatus', 'setSalesExportBusy', 'resetSalesExportSession', 'exportSalesRecords']) {
+    for (const name of ['setSalesExportStatus', 'setSalesExportBusy', 'resetSalesExportSession', 'exportSalesRecords', 'loadSalesImports', 'escapeHtml']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source, name); vm.runInContext(source[0], c);
     }
@@ -85,6 +86,40 @@ async function main() {
         }
         c.fetch = async () => ({ok: false, status: 401}); await c.exportSalesRecords();
         equal(c.expired, 1); equal(e('sales-export-button').disabled, false);
+        // 批次导出不继承页面月份/商品筛选，与普通导出共用防重和会话隔离。
+        e('sales-month').value = '1900-01'; e('sales-product-keyword').value = 'not-this-import';
+        const batchRequest = deferred();
+        c.fetch = (url, options) => {requests.push({url, options}); return batchRequest.promise;};
+        const batchTask = c.exportSalesRecords(17); await c.exportSalesRecords(18);
+        equal(requests.at(-1).url, '/sales/imports/17/export');
+        equal(e('import-export-button').disabled, true);
+        batchRequest.resolve(success()); await batchTask;
+        equal(links.at(-1).download, 'sales_import_17.xlsx');
+        equal(e('import-export-button').disabled, false);
+        equal(e('sales-import-export-status').textContent, c.window.PageInteractions.text('salesExportReady'));
+        for (const [code, key, status] of [
+            ['sales_export_batch_not_found', 'salesImportExportNotFound', 404],
+            ['sales_export_batch_rolled_back', 'salesImportExportRolledBack', 409],
+        ]) {
+            c.fetch = async () => ({ok: false, status, text: async () => JSON.stringify({detail: {code}})});
+            await c.exportSalesRecords(17);
+            equal(e('sales-import-export-status').textContent, c.window.PageInteractions.text(key));
+            equal(e('import-export-button').disabled, false);
+        }
+        c.api = async () => [
+            {id: 17, status: 'completed', file_name: '<source>.xlsx', can_rollback: false},
+            {id: 18, status: 'rolled_back', file_name: 'removed.xlsx', can_rollback: false},
+        ];
+        await c.loadSalesImports();
+        equal(e('sales-imports-tbody').innerHTML.includes('exportSalesRecords(17)'), true);
+        equal(e('sales-imports-tbody').innerHTML.includes('exportSalesRecords(18)'), false);
+        equal(e('sales-imports-tbody').innerHTML.includes('&lt;source&gt;'), true);
+        equal(e('sales-imports-tbody').innerHTML.includes('导出本次对账'), true);
+        const late = deferred(); const downloadCount = links.length;
+        c.fetch = async () => ({...success(), blob: () => late.promise});
+        const lateTask = c.exportSalesRecords(17); await Promise.resolve(); await Promise.resolve();
+        c.resetSalesExportSession(); late.resolve({size: 100}); await lateTask;
+        equal(links.length, downloadCount); equal(e('sales-import-export-status').textContent, '');
     }
     console.log(JSON.stringify({checks, pages: 2, scope: 'actual sales export functions in VM'}));
 }

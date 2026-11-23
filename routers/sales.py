@@ -65,6 +65,7 @@ from services.financial_facts import (unlinked_settlement_events, count_unlinked
 from services.cost_layers import sale_cost_context, rounded_cost_components
 from services.sales_costs import attach_sale_impairment
 from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
+from services.sales_reconciliation import export_sources, reconciliation_rows, check_export_limit
 from auth import RequireOperator, RequireAnyRole
 
 from services.business_audit import BusinessAuditRoute
@@ -1441,13 +1442,14 @@ def _build_sale_response(
 
 
 async def _sale_import_context(
-    db: AsyncSession, sales: list[Sale]
+    db: AsyncSession, sales: list[Sale], *, source_entry_ids: set[int] | None = None
 ) -> tuple[dict[int, dict], dict[int, str]]:
-    """Resolve imported currency, fixed historical rate, and store."""
+    """Resolve imported amounts/metadata; exports may restrict their source rows."""
     if not sales:
         return {}, {}
 
     sale_by_id = {sale.id: sale for sale in sales}
+    source_filters = [SettlementEntry.id.in_(source_entry_ids)] if source_entry_ids is not None else []
     persisted_store_ids = {sale.store_id for sale in sales if sale.store_id is not None}
     store_by_sale: dict[int, str] = {}
     if persisted_store_ids:
@@ -1491,7 +1493,7 @@ async def _sale_import_context(
                 SettlementEntry.id == SettlementEntryAllocation.settlement_entry_id,
             )
             .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id)
-            .where(SettlementEntryAllocation.sale_id.in_(sale_by_id))
+            .where(SettlementEntryAllocation.sale_id.in_(sale_by_id), *source_filters)
         )
     ).all()
 
@@ -1608,7 +1610,7 @@ async def _sale_import_context(
     direct_entries = (await db.execute(select(SettlementEntry, SalesImportBatch.file_type)
         .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id).where(
         SettlementEntry.sale_id.in_(sale_by_id),
-        ~SettlementEntry.allocations.any(SettlementEntryAllocation.sale_id.is_not(None)))
+        ~SettlementEntry.allocations.any(SettlementEntryAllocation.sale_id.is_not(None)), *source_filters)
         .order_by(SettlementEntry.id))).all()
     for entry, source_file_type in direct_entries:
         context = import_context_by_sale.setdefault(entry.sale_id, {
@@ -2125,8 +2127,8 @@ async def monthly_sales_summary(
     return _monthly_sales_summary(sales, import_context_by_sale, events, await sale_cost_context(db, sales))
 
 
-async def _sale_response_rows(db, sales, *, cost_contexts=None):
-    import_context_by_sale, store_by_sale = await _sale_import_context(db, sales)
+async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids=None):
+    import_context_by_sale, store_by_sale = await _sale_import_context(db, sales, source_entry_ids=source_entry_ids)
 
     batch_ids = {detail.batch_id for sale in sales for detail in sale.cost_details}
     batch_map = {}
@@ -2254,7 +2256,7 @@ async def list_sales(
     return SalePageResponse(items=response, total=total, page=page, page_size=page_size)
 
 
-async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include_details=False):
+async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include_details=False, source_entry_ids=None):
     """按授权店铺+订单读取完整出库明细；不沿用商品、月份或页面筛选。"""
     if not seeds:
         return {}, {}, {}, {}
@@ -2293,7 +2295,7 @@ async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include
         all_sales.update({sale.id: sale for sale in loaded})
     values = list(all_sales.values())
     contexts = await sale_cost_context(db, values, include_details=include_details)
-    responses = await _sale_response_rows(db, values, cost_contexts=contexts)
+    responses = await _sale_response_rows(db, values, cost_contexts=contexts, source_entry_ids=source_entry_ids)
     impairment_details = await attach_sale_impairment(db, responses, include_details=include_details)
     products = {p.id: p for p in (await db.execute(select(Product).where(
         Product.id.in_({sale.product_id for sale in values})))).scalars().all()}
@@ -2370,33 +2372,78 @@ async def export_sales_records(
     if total > MAX_EXPORT_ROWS:
         raise HTTPException(422, detail={"code": "sales_export_too_large", "max_rows": MAX_EXPORT_ROWS,
             "message": f"单次最多导出{MAX_EXPORT_ROWS}条记录，请缩小月份或商品范围。"})
-    if not total:
-        raise HTTPException(404, detail={"code": "sales_export_empty", "message": "没有符合条件的销售记录可导出。"})
-    # 直接复用列表的完整响应，包含成本追溯、汇率空值及独立财务事件。
+    # 保留列表原有筛选和金额口径；另补同范围待确认来源并展开完整组件。
     items = await list_sales(product_id, normalized_keyword, month, None, 100, db, user)
-    if not items:
+    return await _build_sales_export(db, user, items, month=month, keyword=normalized_keyword, product_id=product_id)
+
+
+@router.get("/imports/{import_batch_id}/export")
+async def export_sales_import(
+    import_batch_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireAnyRole),
+):
+    conditions = [SalesImportBatch.id == import_batch_id]
+    if user.role != "admin":
+        conditions.append(SalesImportBatch.store_id == _require_bound_store(user))
+    batch = (await db.execute(select(SalesImportBatch).where(*conditions))).scalar_one_or_none()
+    if batch is None:
+        raise HTTPException(404, detail={"code": "sales_export_batch_not_found", "message": "导入记录不存在或无权访问。"})
+    if batch.status != "completed":
+        raise HTTPException(409, detail={"code": "sales_export_batch_rolled_back", "message": "该次导入已撤销，原始结算记录已移除，无法导出对账表。"})
+    return await _build_sales_export(db, user, [], month=None, keyword=None, product_id=None, import_batch=batch)
+
+
+async def _build_sales_export(db, user, items, *, month, keyword, product_id, import_batch=None):
+    check_export_limit(len(items), MAX_EXPORT_ROWS)
+    sources, links, shared_sales = await export_sources(db, user, items, month=month, keyword=keyword, product_id=product_id,
+        import_batch_id=import_batch.id if import_batch else None, limit=MAX_EXPORT_ROWS)
+    source_entry_ids = {entry.id for entry, _store_id, _file_type in sources}
+    sale_ids = {key for ids in links.values() for key in ids} | {item.id for item in items if item.id > 0}
+    conditions = [inventory_sales_condition(), Sale.id.in_(sale_ids)]
+    store_scope = _sale_store_scope(user)
+    if store_scope is not None:
+        conditions.append(store_scope)
+    seeds = list((await db.execute(select(Sale).where(*conditions).options(selectinload(Sale.cost_details))
+        .order_by(Sale.id).limit(MAX_EXPORT_ROWS + 1))).scalars().all()) if sale_ids else []
+    check_export_limit(len(seeds), MAX_EXPORT_ROWS)
+    known = {item.id for item in items}
+    # 列表响应可能聚合了其他批次/店铺来源；所有出库行均按本次获准来源重建只读金额与名称。
+    scoped_sales = await _sale_response_rows(db, seeds, source_entry_ids=source_entry_ids)
+    await attach_sale_impairment(db, scoped_sales)
+    scoped_by_id = {item.id: item for item in scoped_sales}
+    items = [scoped_by_id[item.id] if item.id > 0 else item for item in items
+             if item.id in scoped_by_id or (item.id < 0 and -item.id in source_entry_ids)]
+    items.extend(item for item in scoped_sales if item.id not in known)
+    source_store_ids = {store_id for _entry, store_id, _file_type in sources if store_id is not None}
+    stores = dict((await db.execute(select(Store.id, Store.name).where(Store.id.in_(source_store_ids)))).all()) if source_store_ids else {}
+    if import_batch:
+        events = await unlinked_settlement_events(db, None if user.role == "admin" else {_require_bound_store(user)},
+            None, None, entry_ids=list(source_entry_ids))
+        items.extend(_financial_event_response(event, stores.get(event.store_id)) for event in events)
+    check_export_limit(len(items), MAX_EXPORT_ROWS)
+    if not items and not sources and import_batch is None:
         raise HTTPException(404, detail={"code": "sales_export_empty", "message": "没有符合条件的销售记录可导出。"})
-    if len(items) > MAX_EXPORT_ROWS:
-        raise HTTPException(422, detail={"code": "sales_export_too_large", "max_rows": MAX_EXPORT_ROWS,
-            "message": f"单次最多导出{MAX_EXPORT_ROWS}条记录，请缩小月份或商品范围。"})
     ids = {item.product_id for item in items if item.product_id is not None}
     products = {p.id: p for p in (await db.execute(select(Product).where(Product.id.in_(ids)))).scalars().all()} if ids else {}
     rows = []
     for item in items:
         product = products.get(item.product_id)
-        rows.append({**item.model_dump(exclude={"cost_details"}), "sku": item.display_sku or (product.sku if product else "-"),
-                     "product_name": item.display_name or (product.name if product else "-")})
-    seeds = (await db.execute(select(Sale).where(Sale.id.in_([row.id for row in items if row.id > 0])))).scalars().all()
-    order_summaries, _groups, _costs, _impairments = await _order_cost_data(db, seeds, user)
+        rows.append({**item.model_dump(exclude={"cost_details"}), "sku": product.sku if product else None,
+                     "product_name": product.name if product else None})
+    originals = reconciliation_rows(sources, links, rows, stores, limit=MAX_EXPORT_ROWS, shared_sales=shared_sales)
+    order_summaries, _groups, _costs, _impairments = await _order_cost_data(db, seeds, user, source_entry_ids=source_entry_ids)
     unique_orders = {(value.store_id, value.order_no, None if value.complete else key): value.model_dump()
                      for key, value in order_summaries.items()}
     scope = "全部店铺" if user.role == "admin" else "账号绑定店铺"
+    batch_info = {"id": import_batch.id, "file_name": import_batch.file_name,
+        "total_rows": import_batch.total_rows, "skipped_duplicates": import_batch.skipped_duplicates} if import_batch else None
     await db.rollback()
-    output = await run_in_threadpool(build_sales_workbook, rows, month=month, keyword=normalized_keyword,
-                                    scope=scope, product_id=product_id, order_summaries=list(unique_orders.values()))
-    suffix = month.replace("-", "") if month else "all"
+    output = await run_in_threadpool(build_sales_workbook, rows, month=month, keyword=keyword,
+        scope=scope, product_id=product_id, order_summaries=list(unique_orders.values()), originals=originals, batch_info=batch_info)
+    suffix = f"import_{batch_info['id']}" if batch_info else month.replace("-", "") if month else "all"
     return StreamingResponse(output, media_type=SALES_EXPORT_MIME,
-        headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"'})
+        headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"', "Cache-Control": "private, no-store"})
 
 
 @router.get("/{sale_id}", response_model=SaleResponse)

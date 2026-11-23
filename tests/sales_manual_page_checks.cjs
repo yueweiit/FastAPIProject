@@ -34,6 +34,8 @@ function refreshHarness(file,held) {
  });
  vm.runInContext("let CURRENT_USER_ID=1;const API='';let allProducts=[{id:1,sku:'CACHED'}],allProductsPromise=null,salesPage=1,salesPageSize=20,salesTotal=0,salesMonth='2026-09',salesProductKeyword='',pendingConfirmationsPage=1,pendingConfirmationsPageSize=20,pendingConfirmationsTotal=0;",c);
  vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
+ vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
+ vm.runInContext('let salesExportBusy=false;',c);
  for(const name of ['api','loadProductOptions','loadSales','loadSalesImports','loadPendingConfirmations']){
   const match=html.match(new RegExp('^async function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}','m'));
   assert(match,name);vm.runInContext(match[0],c);

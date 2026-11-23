@@ -45,7 +45,7 @@ class OrderSearchTests(unittest.IsolatedAsyncioTestCase):
                 response = await self.request('GET', '/sales/export', params=params)
                 self.assertEqual(response.status_code, 200, response.text[:80])
                 book = load_workbook(io.BytesIO(response.content), data_only=True)
-                exported = list(book['销售记录'].values)[1:-1]
+                exported = list(book['销售拆分明细'].values)[1:-1]
                 self.assertEqual(len(exported), 3)
                 self.assertEqual({r[11] for r in exported}, {'000123-LOOKUP'})
                 self.assertEqual(book['说明']['A3'].value, '商品名称/SKU/订单号')
@@ -96,7 +96,7 @@ class OrderSearchTests(unittest.IsolatedAsyncioTestCase):
             summary = (await self.request('GET', '/sales/monthly-summary', params=params)).json()[0]
             self.assertEqual((summary['sales_count'],summary['settlement_event_count']), (2,1))
             exported = await self.request('GET', '/sales/export', params=params)
-            self.assertEqual(len(list(load_workbook(io.BytesIO(exported.content))['销售记录'].values)[1:-1]), 3)
+            self.assertEqual(len(list(load_workbook(io.BytesIO(exported.content))['销售拆分明细'].values)[1:-1]), 3)
         self.actor.store_id = None
         for route in ('/sales','/sales/monthly-summary','/sales/export'):
             self.assertEqual((await self.request('GET', route, params=params)).status_code, 403)

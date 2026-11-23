@@ -66,7 +66,7 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         return load_workbook(BytesIO(response.content), data_only=True)
 
     def rows(self, workbook):
-        return list(workbook["销售记录"].iter_rows(min_row=2, max_row=workbook["销售记录"].max_row-1, values_only=True))
+        return list(workbook["销售拆分明细"].iter_rows(min_row=2, max_row=workbook["销售拆分明细"].max_row-1, values_only=True))
 
     async def test_all_matching_records_and_events_export_beyond_current_page(self):
         batch = self.session.get(InventoryBatch, 1)
@@ -84,7 +84,7 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(row[4] for row in rows), 28)
         self.assertEqual(sum(row[12] != "销售" for row in rows), 2)
         summary = (await self.client.get("/sales/monthly-summary", params={"month": "2026-09"})).json()[0]
-        totals = list(workbook["销售记录"].values)[-1]
+        totals = list(workbook["销售拆分明细"].values)[-1]
         for column, key in ((7, "sales_revenue_cny"), (8, "sales_cost_cny"),
                             (9, "platform_fee_cny"), (10, "gross_profit_cny")):
             self.assertEqual(Decimal(str(totals[column])), Decimal(summary[key]))
@@ -145,7 +145,7 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         missing = next(row for row in rows if row[13] == "USD")
         for col in (5, 7, 9, 10, 14): self.assertIsNone(missing[col])
         self.assertIn("汇率缺失", missing[17])
-        total = list(workbook["销售记录"].values)[-1]
+        total = list(workbook["销售拆分明细"].values)[-1]
         for col in (7, 9, 10): self.assertIsNone(total[col])
         self.assertEqual(total[8], 40)
 
@@ -158,7 +158,7 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         self.session.get(Sale, 1).order_no = "=SUM(1,2)"
         self.session.commit()
         book = await self.exported(keyword="=1+2")
-        sheet = book["销售记录"]
+        sheet = book["销售拆分明细"]
         row = next(row for row in sheet if row[11].value == "=SUM(1,2)")
         for col in (0, 2, 3, 11, 27): self.assertEqual(row[col].data_type, "s")
         self.assertEqual(row[2].value, "0000123")

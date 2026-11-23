@@ -47,7 +47,7 @@ class OrderDisplayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(cost['order_summary']['order_no'], sale.order_no)
         exported = await self.request('GET', '/sales/export')
         book = load_workbook(io.BytesIO(exported.content), data_only=True)
-        self.assertEqual([r[11] for r in list(book['销售记录'].values)[1:-1]], ['000123-A-B'] * 2)
+        self.assertEqual([r[11] for r in list(book['销售拆分明细'].values)[1:-1]], ['000123-A-B'] * 2)
         orders = list(book['订单汇总'].values)[1:]
         self.assertEqual(len(orders), 2)
         self.assertEqual([r[1] for r in orders], ['000123-A-B'] * 2)
@@ -110,7 +110,7 @@ class OrderDisplayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({r['display_order_no'] for r in rows}, {'=1+2', '0007-CLAIM'})
         exported = await self.request('GET', '/sales/export')
         book = load_workbook(io.BytesIO(exported.content))
-        cells = [book['销售记录'].cell(row, 12) for row in (2, 3)]
+        cells = [book['销售拆分明细'].cell(row, 12) for row in (2, 3)]
         self.assertEqual({cell.value for cell in cells}, {'=1+2', '0007-CLAIM'})
         self.assertTrue(all(cell.data_type == 's' for cell in cells))
         self.assertEqual(book['订单汇总']['B2'].value, '=1+2')

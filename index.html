@@ -926,6 +926,7 @@
                 <h3>导入历史</h3>
                 <button class="btn btn-secondary" onclick="loadSalesImports()">刷新</button>
             </div>
+            <p id="sales-import-export-status" class="msg" role="status" aria-live="polite" style="display:none"></p>
             <div class="table-scroll">
             <table class="import-history-table">
                 <thead><tr><th>文件</th><th>店铺</th><th>导入人</th><th>导入时间</th><th>结算行</th><th>销售记录</th><th>待确认</th><th>状态</th><th>操作</th></tr></thead>
@@ -2947,7 +2948,7 @@ async function loadSalesImports() {
                 <td>${Number(item.sales_created).toLocaleString('zh-CN')}</td>
                 <td>${Number(item.pending_confirmation).toLocaleString('zh-CN')}</td>
                 <td><span class="status-pill ${statusClass}">${statusText}</span></td>
-                <td>${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
+                <td>${item.status === 'completed' ? `<button class="btn btn-secondary" data-sales-import-export type="button" style="padding:6px 10px;font-size:12px" onclick="exportSalesRecords(${Number(item.id)})" ${salesExportBusy ? 'disabled' : ''}>${escapeHtml(window.PageInteractions.text('salesImportExport'))}</button>` : ''} ${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
             </tr>`;
         }).join('');
         return true;
@@ -2978,16 +2979,20 @@ let salesExportBusy = false;
 let salesExportSessionEpoch = 0;
 let salesExportController = null;
 function setSalesExportStatus(message, error = false) {
-    const status = document.getElementById('sales-export-status');
-    status.textContent = message;
-    status.className = `msg${error ? ' msg-err' : ' msg-ok'}`;
-    status.style.display = message ? 'block' : 'none';
+    for (const id of ['sales-export-status', 'sales-import-export-status']) {
+        const status = document.getElementById(id);
+        if (!status) continue;
+        status.textContent = message;
+        status.className = `msg${error ? ' msg-err' : ' msg-ok'}`;
+        status.style.display = message ? 'block' : 'none';
+    }
 }
 function setSalesExportBusy(busy) {
     salesExportBusy = busy;
     for (const id of ['sales-export-button', 'sales-month', 'sales-product-keyword', 'sales-search-button', 'sales-clear-button']) {
         document.getElementById(id).disabled = busy;
     }
+    for (const button of document.querySelectorAll?.('[data-sales-import-export]') || []) button.disabled = busy;
 }
 function resetSalesExportSession() {
     salesExportSessionEpoch++;
@@ -2997,11 +3002,12 @@ function resetSalesExportSession() {
     setSalesExportStatus('');
 }
 window.SalesExport = {reset: resetSalesExportSession};
-async function exportSalesRecords() {
+async function exportSalesRecords(importBatchId = null) {
     if (salesExportBusy) return;
+    if (importBatchId !== null && (!Number.isSafeInteger(importBatchId) || importBatchId <= 0)) return;
     const epoch = salesExportSessionEpoch;
-    const month = document.getElementById('sales-month').value;
-    const keyword = document.getElementById('sales-product-keyword').value.trim();
+    const month = importBatchId === null ? document.getElementById('sales-month').value : '';
+    const keyword = importBatchId === null ? document.getElementById('sales-product-keyword').value.trim() : '';
     const params = new URLSearchParams();
     if (month) params.set('month', month);
     if (keyword) params.set('keyword', keyword);
@@ -3011,7 +3017,8 @@ async function exportSalesRecords() {
     setSalesExportBusy(true);
     setSalesExportStatus(text('salesExportLoading'));
     try {
-        const response = await fetch(`/sales/export?${params.toString()}`, {
+        const endpoint = importBatchId === null ? `/sales/export?${params.toString()}` : `/sales/imports/${importBatchId}/export`;
+        const response = await fetch(endpoint, {
             headers: authHeaders(), credentials: 'same-origin', signal: controller.signal,
         });
         if (epoch !== salesExportSessionEpoch) return;
@@ -3023,6 +3030,8 @@ async function exportSalesRecords() {
             try {detail = JSON.parse(raw).detail;} catch {}
             if (detail?.code === 'sales_export_empty') throw new Error(text('salesExportEmpty'));
             if (detail?.code === 'sales_export_too_large') throw new Error(text('salesExportTooLarge').replace('{limit}', detail.max_rows));
+            if (detail?.code === 'sales_export_batch_not_found') throw new Error(text('salesImportExportNotFound'));
+            if (detail?.code === 'sales_export_batch_rolled_back') throw new Error(text('salesImportExportRolledBack'));
             if (response.status === 404) throw new Error(text('salesExportUnavailable'));
             throw new Error(response.status >= 500 ? text('salesExportFailed') : formatApiError(detail, text('salesExportFailed')));
         }
@@ -3033,7 +3042,7 @@ async function exportSalesRecords() {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `sales_${month ? month.replace('-', '') : 'all'}.xlsx`;
+        link.download = importBatchId === null ? `sales_${month ? month.replace('-', '') : 'all'}.xlsx` : `sales_import_${importBatchId}.xlsx`;
         link.style.display = 'none';
         document.body.appendChild(link);
         try {

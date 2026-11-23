@@ -55,7 +55,7 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(D(row['platform_fee_cny']), D('9.6800213'))
         self.assertEqual(D(row['profit_cny']), D('16.3236397'))
         self.assertEqual(detail.json()['source_row_net_product_sales'], row['source_row_net_product_sales'])
-        sheet = workbook['销售记录']
+        sheet = workbook['销售拆分明细']
         headers = [c.value for c in sheet[1]]
         cells = next(c for c in sheet.iter_rows(min_row=2, max_row=sheet.max_row-1) if c[11].value == 'SALE')
         for label, expected in [('来源净商品销售额（原币，整行勿合计）', D('84.9')), ('来源结算总金额（原币，整行勿合计）', D('58.73'))]:
@@ -89,7 +89,7 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(D(filtered[0]['allocated_net_product_sales']), D(50))
         self.assertEqual(D(filtered[0]['allocated_settlement_total']), D(45))
         workbook = await self.exported()
-        sheet = workbook['销售记录']
+        sheet = workbook['销售拆分明细']
         headers = [cell.value for cell in sheet[1]]
         net_col = headers.index('分摊净商品销售额（原币）') + 1
         # 整单100、退款-20、赔付原始净额0，赔付5只进入店铺收入。
@@ -151,7 +151,7 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
     async def test_mixed_currencies_never_generate_an_original_currency_total(self):
         self.mxn_order()  # 其他退款/赔付仍为CNY。
         workbook = await self.exported()
-        sheet = workbook['销售记录']
+        sheet = workbook['销售拆分明细']
         headers = [cell.value for cell in sheet[1]]
         for label in ('分摊净商品销售额（原币）', '分摊结算总金额（原币）'):
             self.assertIsNone(sheet.cell(sheet.max_row, headers.index(label)+1).value)

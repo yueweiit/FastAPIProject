@@ -66,7 +66,7 @@ class ImportStoreTests(unittest.IsolatedAsyncioTestCase):
         mapping.components=[PlatformSkuComponent(product_id=1,quantity_per_sale=1)]
         self.session.add(mapping)
         self.session.commit()
-        self.actor=SimpleNamespace(id=1,role='admin',store_id=None)
+        self.actor=SimpleNamespace(id=1,username='admin',role='admin',store_id=None)
         self.db=Facade(self.session)
         app=FastAPI()
         app.include_router(sales.router)

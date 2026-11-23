@@ -100,9 +100,9 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         exported=next(r for r in self.rows(book) if r[11]=='SALE')
         self.assertEqual(exported[18:23],(20,8,4,8,1.8))
         self.assertEqual(sum(exported[18:22]),exported[8])
-        total=list(book['销售记录'].values)[-1]
+        total=list(book['销售拆分明细'].values)[-1]
         self.assertEqual(total[18:23],exported[18:23])
-        self.assertEqual(book['销售记录'].auto_filter.ref,'A1:AF4')
+        self.assertEqual(book['销售拆分明细'].auto_filter.ref,'A1:AO4')
         for event in (r for r in await self.listed() if r['id']<0):
             self.assert_parts(event,(0,0,0,0))
             self.assertEqual(D(event['impairment_cny']),0)
@@ -225,7 +225,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(D(row['total_cost']),40)
         self.assertEqual(D(row['impairment_cny']),D('1.8'))
         book=await self.exported()
-        total=list(book['销售记录'].values)[-1]
+        total=list(book['销售拆分明细'].values)[-1]
         self.assertTrue(all(total[i] is None for i in range(18,22)))
         self.assertEqual(total[8],40)
 
@@ -247,7 +247,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
                 if scenario!='before_arrival':
                     self.assertTrue(all(row[field] is None for field in FIELDS))
                     book=await self.exported()
-                    total=list(book['销售记录'].values)[-1]
+                    total=list(book['销售拆分明细'].values)[-1]
                     self.assertTrue(all(total[i] is None for i in range(18,23)))
                 self.assertEqual(D(row['total_cost']),40)
 
@@ -407,7 +407,7 @@ class ImportedSalesCostTests(unittest.IsolatedAsyncioTestCase):
         for key in ('order_date','age_days','daily_rate','impairment_cny'):
             self.assertIsNone(detail['impairment_batches'][0][key],key)
         book=load_workbook(BytesIO((await self.request('GET','/sales/export?month=2026-09')).content),data_only=True)
-        self.assertIsNone(book['销售记录']['W2'].value)
+        self.assertIsNone(book['销售拆分明细']['W2'].value)
         self.assertEqual(self.session.get(Sale,sale.id).sold_at,datetime(2026,9,2))
 
     async def test_legacy_csv_explicit_date_remains_usable(self):
@@ -446,7 +446,7 @@ class ImportedSalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({r['order_no'] for r in rows},{'OK-PLAT'})
         self.assertEqual(sum(D(r['order_total_cost_cny']) for r in rows),25)
         exported=await self.request('GET','/sales/export?month=2026-09')
-        sheet=load_workbook(BytesIO(exported.content),data_only=True).active
+        sheet=load_workbook(BytesIO(exported.content),data_only=True)['销售拆分明细']
         self.assertEqual(sheet['I4'].value,25)
         self.assertEqual(sum(sheet.cell(4,col).value for col in range(19,23)),25)
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,0)
