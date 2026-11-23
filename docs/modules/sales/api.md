@@ -2,10 +2,14 @@
 
 2026-11-10分类兼容：SaleResponse新增`business_kind=inventory_sale/opening_deduction/settlement`。列表、月度、导出及成本解释只取正常销售和原有独立结算；明确的初始化扣减保留单条详情供追溯，不计销量、损益成本或履约费。非实物规则命中后导入/待确认重试以原结算行确认，返回sales_created=0，金额/事件键保留，重复操作不再扣库。无新写入API或权限放宽。分类及规则的管理员维护见[流程](workflow.md#非实物结算与初始化扣减2026-11-10)。
 
-前缀 /sales，共 16 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
+前缀 /sales，共 20 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
+| `POST /sales/import-preview` | preview_sales_import | admin/operator | file、store_id | 只读扣库计划、preview_token |
+| `GET /sales/product-mappings` | list_sales_product_mappings | 按店铺授权的三种角色 | store_id | 全部版本、latest_version_id及组件资料 |
+| `POST /sales/product-mappings` | create_sales_product_mapping | admin/operator | SalesMappingCreate | 新版本id及effective_from，201 |
+| `POST /sales/pending-confirmations/preview` | preview_pending_confirmations | admin/operator | PendingRetryRequest | 只读扣库计划、preview_token |
 | `POST /sales/import` | [import_sales_file](../../../routers/sales.py) | admin/operator | file、store_id | SalesImportResponse |
 | `POST /sales/import-stream` | import_sales_stream → _import_sales_file | admin/operator | 同上；不接收导入月份 | NDJSON阶段进度与最终结果 |
 | `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit | list[SalesImportBatchResponse] |
@@ -33,13 +37,27 @@
 
 ## 待确认筛选与原记录处理
 
+规格兼容字段：列表及单条销售响应追加可空字符串`source_specification`（原SKU名称）、`local_sku/local_product_name/local_specification`（已关联本地商品当前资料），不改变原display_name/product_id语义。无来源或关联时为null，历史空规格保持null。仅增加读取字段，不回填销售或库存；所依赖的既有products.specification须已准备，见[运行说明](../../../PROJECT_RUNBOOK.md#商品规格字段2026-11-23)。
+
+待确认列表追加`requested_local_specification`，读取原raw_data中的可选本地规格列；`confirmed_components`保留原product_id/multiplier并追加可空sku/name/specification，供重新打开人工确认窗口识别同名商品。POST组件请求仍只提交product_id/multiplier，服务端按实际ID处理。文件导入及原行重试共用明确编码/已确认店铺映射解析，规格为可选一致性校验，具体表头与组合边界见[导入流程](workflow.md#文件导入)。
+
 GET及导出新增可选`reason`稳定码：stock_shortage/product_missing/product_ambiguous/expression_invalid/mapping_invalid/order_conflict/source_invalid/other；未知参数422。keyword最长255，匹配订单、SKU ID、产品名、SKU名称、文件名及原因文本。原page/page_size和店铺范围保持不变。列表追加reason_counts（权限/关键字范围的各分类数量），每项追加reason_code、confirmed_components（此前人工确认的product_id/multiplier）。旧字段仍保留；分类为动态字段，无DDL或历史回填。
 
 POST请求可以传`entry_ids`（正ID、去重、1–200项），或省略ID并传reason/keyword处理当前可见筛选全部记录；后一种超过200条422 `pending_retry_too_large`，不会只处理前200条。显式ID不叠加筛选，任一不存在/无权访问404 `pending_not_found`，不部分越权执行。可选`components: [{product_id>0,multiplier:1..2147483647}]`最多50项，只允许恰好一个entry_id，表示确认该行本地组件；非法或已删除商品422。重复组件按商品ID合并，件数超过Integer范围仍待确认。
 
-响应含confirmed_rows/pending_rows/skipped_rows/sales_created及逐行results（id、status=confirmed/pending/skipped、reason_code、message）。HTTP200不等于全部完成，需检查pending_rows；未解决业务原因保留原行并更新原因，已确认行重复请求只跳过。已撤销来源409 `pending_import_rolled_back`，来源并发变化409 `pending_source_changed`，唯一键/完整性竞态409 `pending_retry_conflict`且整次回滚。人工确认仅影响该来源行，不更改原source_key和金额/日期/汇率。原导入统计随成功结果更新，原文件撤销仍能恢复此次生成的销售库存；已有财务引用时按原保护拒绝物理撤销。事务、审计及不可变版本边界见[流程](workflow.md#待确认与文件撤销)。
+响应含confirmed_rows/pending_rows/skipped_rows/sales_created及逐行results（id、status=confirmed/pending/skipped、reason_code、message）。HTTP200不等于全部完成，需检查pending_rows；未解决业务原因保留原行并更新原因，已确认行重复请求只跳过。已撤销来源409 `pending_import_rolled_back`，来源并发变化409 `pending_source_changed`，唯一键/完整性竞态409 `pending_retry_conflict`且整次回滚。默认人工确认仅影响本行；save_mapping显式保存本店后续映射，不更改原source_key和金额/日期/汇率。原导入统计随成功结果更新，原文件撤销仍能恢复此次生成的销售库存；已有财务引用时按原保护拒绝物理撤销。事务、审计及不可变版本边界见[流程](workflow.md#待确认与文件撤销)。
 
 新增静态`/sales-pending.js`供两份首页共用，先于后续销售加载使用；源脚本未加载时保留旧只读待确认展示。需要加载新增后端与脚本后才能使用筛选/处理功能，不通过启动服务执行预检。
+
+## 店铺销售映射与扣库预览
+
+`SalesMappingCreate`：store_id>0、key_kind=platform_sku/merchant_sku/product_name、key_value（1–500字符）、effective_from日期、source_unit（1–32字符，默认份）、components（1–50项，product_id>0，multiplier为1–2147483647）、is_active默认true、expected_version_id（首次null，修改传最新保存ID）、confirm_name_unique默认false。同商品合并倍数，编码去首尾空白，名称做NFKC/大小写/空白归一化；名称须显式确认本店名称及装量唯一。无更新/删除历史版本API。管理员指定有效店铺，运营限绑定店铺，viewer只读；版本变化409 sales_mapping_version_conflict，引用竞态409 sales_mapping_conflict。
+
+GET版本组件含product_id/multiplier及当前sku/name/specification，每版latest_version_id按规范化标识计算。待确认列表追加mapping_identity（kind/value）及latest_mapping_version_id。`PendingRetryRequest.save_mapping`仅与单条entry_ids及明确components同时使用，含effective_from/expected_version_id/source_unit/confirm_name_unique；无有效标识或名称未确认422，版本冲突409。映射、来源、FIFO及可选审计同事务提交/回滚。
+
+两个preview接口复用提交解析/库存分配，返回rows（来源行/订单/商品/数量，status=deduct/pending/settlement、reason、resolution、本地组件所需/可用/预计扣量）、跳过数量或结果及preview_token。只读后回滚释放事务，不保存业务数据，不查外部汇率。格式/重复订单错误沿用400；空待确认筛选返回可确认空计划。
+
+页面必须先预览；原import/import-stream可附multipart preview_token，retry可附JSON preview_token。签名绑定用户、店铺/请求、文件/来源状态和实际计划，有效15分钟；无效400 sales_preview_invalid，变化/过期409 sales_preview_changed。不带token的旧请求兼容，但采用新安全匹配规则。共用静态入口`/sales-deduction-preview.js`，无新依赖。
 
 ## 导入结果回看
 
@@ -71,7 +89,7 @@ GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM�
 
 SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页/数组列表均包含独立财务事件：赔付record_type=compensation_income，其他退款/调整为settlement_adjustment，负id、quantity=0；不是sales主键，不能调用GET /sales/{sale_id}。物流/平台/物料赔付以结算总金额乘固化汇率计入收入，负数冲减收入、费用为0；缺失汇率仍返回null。先合并完整结果再分页；月度统计采用相同事件取数。商品筛选仅归属明确单一product_id的事件；组合份额未定的事件保留全店汇总，不猜测商品分摊。
 
-新导入的非赔付退款/调整可按产品名保留明确的单一product_id，因而纳入product_id/本地SKU筛选、月度统计及相同条件导出；识别不到仍接受为未归属结算，不强制商品匹配。组件关联不等于库存出入库，返回实际出库数量仍为0，来源数量保留原值。手工结算补录继续不关联商品，见[导入流程](workflow.md#文件导入)。
+新导入的非赔付退款/调整按明确编码或已确认映射保留可靠的单一product_id，因而纳入product_id/本地SKU筛选、月度统计及相同条件导出；识别不到仍接受为未归属结算，不强制商品匹配。组件关联不等于库存出入库，返回实际出库数量仍为0，来源数量保留原值。手工结算补录继续不关联商品，见[导入流程](workflow.md#文件导入)。
 
 ## 销售台账导出
 
@@ -100,7 +118,7 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 
 `GET /sales/imports/{import_batch_id}/export`仅按获准导入批次取数，忽略页面筛选；非管理员必须有绑定店铺，批次须属于该店铺，关联来源与销售也分别检查店铺范围。未绑定403、不存在/无权访问404 `sales_export_batch_not_found`、已撤销409 `sales_export_batch_rolled_back`。全部重复跳过的有效批次返回带说明的空工作表；文件名`sales_import_ID.xlsx`。没有新增数据库字段或写入操作。
 
-2026-11-23起，文件默认打开第一张“原始结算对账”（27列），第二张“销售拆分明细”（41列），另保留“说明”“字段口径说明”“订单汇总”。原拆分表前34列金额位置保留，第3/4列明确改为本地商品SKU/名称，来源字段移至追加的追溯列；使用旧工作表名或列数的外部脚本须适配。关联编号以E+结算ID标识原始行，无来源历史销售用S+销售ID；明细编号以S+销售ID或F+独立结算ID标识，两表保留来源文件/工作表/行号并支持跳转。单价、汇率不合计，未知金额及对应合计留空，原币只在同币种且完整时合计；所有业务文本按字面量写入。附件名仍为`sales_YYYYMM.xlsx`/`sales_all.xlsx`，MIME仍为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
+2026-11-23起，文件默认打开第一张“原始结算对账”（29列），第二张“销售拆分明细”（44列），另保留“说明”“字段口径说明”“订单汇总”。原拆分表前34列金额位置保留，第3/4列明确改为本地商品SKU/名称，来源字段移至追加的追溯列；规格支持在原始表第28–29列追加来源规格/导入指定规格，在拆分表第42–44列追加本地规格/来源规格/导入指定规格，不移动旧列。使用旧工作表名或固定列数的外部脚本须适配。关联编号以E+结算ID标识原始行，无来源历史销售用S+销售ID；明细编号以S+销售ID或F+独立结算ID标识，两表保留来源文件/工作表/行号并支持跳转。单价、汇率不合计，未知金额及对应合计留空，原币只在同币种且完整时合计；所有业务文本按字面量写入。附件名仍为`sales_YYYYMM.xlsx`/`sales_all.xlsx`，MIME仍为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
 
 只SELECT，不扣库、改成本、补快照或写导出记录。取数完成后释放只读事务，在线程生成文件。新接口须加载更新后的后端；前端未加载接口时会明确提示，不把错误网页下载为Excel。页面行为见[流程](workflow.md#销售台账导出)。
 
@@ -128,7 +146,7 @@ SaleResponse追加可空只读字段`unit_purchase_cost_cny`、`unit_head_shippi
 
 纯运费调整、全额退款冲账即使来源交易类型为“订单”且数量大于0，也可按金额证据仅保存结算，不创建销售/扣库存；不改原交易类型和来源数量。台账响应为既有settlement_adjustment，quantity=0、成本为0，费用仍为净商品销售额减结算总金额。按结算日期优先归月，列表/月度/计数/导出和店铺损益共用公共财务查询；详细识别条件见[文件导入](workflow.md#文件导入)，未增加公开字段。正常货品销售的订单/SKU在同一文件重复时，返回400及errors中的具体行号，尚未写入业务数据；已有数据库订单及并发冲突保护不变。未根据零收入或金额正负推断退货入库。
 
-multipart/form-data 的 file 支持 .csv、.xlsx、.xlsm。Excel 必须含“订单详情”，必要列为：结算日期、结算单 ID、付款 ID、状态、货币、交易类型、订单ID/调整单ID、SKU ID、数量，允许规定表头空白归一化。
+multipart/form-data 的 file 支持 .csv、.xlsx、.xlsm。Excel 必须含“订单详情”，必要列为：结算日期、结算单 ID、付款 ID、状态、货币、交易类型、订单ID/调整单ID、数量，允许规定表头空白归一化。
 
 同一multipart请求新增store_id表单字段（正整数）：管理员必须明确传入有效、启用的店铺，否则400；运营省略时兼容旧客户端，自动取当前绑定店铺，传入他店为403。非法字段类型/非正数422。导入批次、Sale和所有SettlementEntry统一固化该店铺，包括缺映射/库存不足的待确认行。新增错误码为import_store_required/import_store_forbidden/import_store_unavailable；响应字段和全局事件防重规则不变。历史store_id为空的记录不自动回填。
 
@@ -146,7 +164,7 @@ SalesImportResponse 返回 success、行统计、sales_created、skipped_duplica
 
 imports 的 limit 默认20、1–100；can_rollback 为 UI 提示，后端重新校验角色、店铺和 completed 状态。rollback 无请求体；已撤销409，越店403，库存恢复异常409；返回恢复件数、删除销售和结算行数。
 
-请求/响应定义见 [schemas.py](../../../schemas.py)，实际异常和兼容行为见 [sales.py](../../../routers/sales.py)。不存在销售编辑/普通删除、单行确认、完整退款恢复或平台同步接口。
+请求/响应定义见 [schemas.py](../../../schemas.py)，实际异常和兼容行为见 [sales.py](../../../routers/sales.py)。不存在销售编辑/普通删除、完整退款恢复或平台同步接口；单行确认使用待确认重试接口。
 
 ## 成本追溯兼容扩展
 

@@ -1,5 +1,11 @@
 # 销售模块代码映射
 
+店铺销售映射/扣库预览：`services/sales_mapping.py`统一标识归一化、版本选择、组件校验、Store锁和版本当前读取；`sales_preview.py`生成只读计划及绑定来源/用户的短期签名。`routers/sales.py`提供import-preview、product-mappings读写及原导入核验；`sales_pending.py`复用同一规则，原来源重试可显式保存映射。`static/sales-deduction-preview.js`为两份页面共用预览，`sales-pending.js`处理组件、保存映射及版本维护；`main.py`提供脚本入口。新表/离线DDL见[数据字典](database.md#sales_product_mappings)。
+
+[test_sales_mapping_workflow.py](../../../tests/test_sales_mapping_workflow.py)覆盖真实ASGI/隔离SQLite：未知编码不猜测、店铺隔离、编码冲突、组合装、有效/停用版本、名称唯一确认、文本长编号及数字精度、预览只读/过期/篡改/变化、重复确认防重、事务审计回滚、引用删除保护及MySQL当前读取SQL编译。另验等价本地SKU表达式/旧原文哈希兼容、待确认不重扣、完整SKU优先及商品改码。旧金额/成本测试的已核实场景明确提供本地SKU，不再隐式依赖名称自动扣库；纯名称解析测试仅验证候选解析。浏览器脚本验证预览取消、倍数、保存映射、新版本、移动端和旧会话隔离；不等于业务环境部署验收。
+
+[mysql_sales_mapping_concurrency.py](../../../tests/mysql_sales_mapping_concurrency.py)显式创建独立临时MySQL容器，验证导入/待确认与批次归属编辑、单笔销售的InnoDB锁序及重传幂等；不连接业务库或启动main，运行与清理边界见[测试约定](../../knowledge/conventions.md)。
+
 非实物/期初分类共用`services/sales_classification.py`；名称导入及重试读取`non_inventory_sku_rules`，独立结算沿用`financial_facts.SETTLEMENT_ONLY_REASONS`。`inventory_sales_condition`统一排除明确的opening_deduction，`report_exchange_rates.fulfillment_orders`另作内存兜底；`migrate.PENDING_MAPPING_REPAIR_SQL`保证重启不恢复为待确认。`tests/test_sales_classification.py`覆盖规则店铺隔离、停用、正金额结算、原记录重试/幂等、未来批次、数量/成本不变、正常异常保留、库存日结与准备/销售列表/月度/成本解释一致。结构见[离线 DDL](../../../migrations/add_sales_classification.py)，发布核对见[运行说明](../../../PROJECT_RUNBOOK.md#非实物结算与初始化分类2026-11-10)。
 
 销售跌价日期由`services/sales_costs.py:_sale_order_dates`统一读取获准销售的分摊/直接履约来源，沿用`financial_facts.is_fulfillment_settlement`排除退款及纯结算来源；实际来源创建日缺失或冲突保留null，legacy_csv/手工显式日期兼容，不改销售归属期。`attach_sale_impairment`比较成本差额的四位HALF_UP结果，避免先舍入总额的中点误判。`test_sales_costs`覆盖正负微小补差、真实差额拒绝、缺日期的列表/解释/Excel、直接/重复/冲突关联、来源日期与销售归属期不同、退款排除及旧CSV。
@@ -10,7 +16,8 @@
 | 补录产品名联想 | initializeManualProductSearch → ProductSearch.bind（static/product-search.js） | products.list_products | 复用库存候选/键盘/会话保护；选择仅填产品名，不改来源SKU或库存关联 |
 | 文件上传/真实进度 | importSalesFile → SalesImportProgress（static/sales-import-progress.js） | import_sales_stream / import_sales_file → _import_sales_file；services/import_progress.py | 同一导入核心、独立会话及单槽进度队列；完成摘要/详情/关闭与成功定时收起仅改变页面，无新表 |
 | 纯金额订单调整 | 导入结果、实际出库数量0的台账行 | _order_settlement_only_reason、_settlement_entry；financial_facts._unlinked_settlement_stmt | raw_data._settlement_only_reason；原数量/交易类型保留，不生成Sale/FIFO，所有财务入口共用 |
-| 产品名识别 | Excel产品名表达式 | _resolve_product_components(strict_names=True)、_resolve_product_name、_product_expression_parts | products、来源产品名；不读取平台映射 |
+| 标识及规格识别 | 明确本地SKU/店铺编码映射/确认名称别名 | services/sales_mapping.resolve；sales_product_identity.source_local_specification | 名称解析仅作候选；本地规格可选一致性校验，来源SKU名称独立 |
+| 来源/本地规格展示 | sales-ledger.js及sales-fields.zh-CN.json；sales-pending.js及ProductSearch.showSpecification | _sale_import_context、_attach_sale_product_identity、list_pending_confirmations；sales_reconciliation/sales_export | 来源sku_name、本地已关联商品当前规格、保存组件信息；批量读取，不补写历史 |
 | 中文产品名/历史展示 | 台账产品名、详情和Excel | _sale_import_context、_financial_event_response；FinancialEvent.display_product_name | 原始产品名优先，历史缺列用已关联Product.name；保存标题及历史成本不改 |
 | 原始订单号展示 | sales-ledger.js的orderNumber、计算标题与按钮；sales_export.py | _sale_import_context → _build_sale_response.display_order_no；_order_cost_data汇总展示字段 | 来源订单ID优先，无明确来源保留原编号；内部order_no/order_claim、同SKU组件分组与幂等不变 |
 | 库存预检/扣库 | 上传结果提示 | _allocate_available_stock、lock_fifo_batches、fifo_sell | inventory_batches、sale_cost_details |
@@ -37,6 +44,8 @@
 
 待确认回归：[test_sales_pending.py](../../../tests/test_sales_pending.py)在隔离SQLite/ASGI覆盖原因数量/筛选/Excel、店铺与角色、原金额日期汇率/事件键不变、人工组合倍数、整行库存不足及晚到库存、重复跳过、重名指定、财务引用保护、整次异常回滚及原文件撤销；不证明真实InnoDB并发。[sales_pending_browser_checks.cjs](../../../tests/sales_pending_browser_checks.cjs)使用两份真实页面与模拟API覆盖筛选、所选/全部筛选重试、组件确认/倍数换算、失败保留、取消、重复提交、旧401/同账号重登、viewer及移动端。前端本地字典和资源入口见[国际化](../../knowledge/internationalization.md)。
 
+规格回归：[test_sales_specification.py](../../../tests/test_sales_specification.py)在隔离SQLite/ASGI核对CSV/XLSX明确编码及可选规格校验、来源规格不猜测、歧义/冲突/组合待确认、历史空值、退款零扣库、原行重试/重传幂等、保存组件重新展示及Excel文本兼容。[test_sales_reconciliation_export.py](../../../tests/test_sales_reconciliation_export.py)检查来源规格仅取获准范围；前端检查本地规格、转义、按规格搜索及倍数实时更新。不证明目标库已具备规格列或已重载后端。
+
 原订单号回归：[test_sales_order_display.py](../../../tests/test_sales_order_display.py)验证同订单多SKU不合并、组合组件、列表/单条/计算/Excel一致、直接旧来源/缺少来源/旧CSV/手工回退、前导零/连字符/公式文本、防重重传、库存成本保持和店铺隔离。页面VM与浏览器脚本同步核对原始编号、安全转义及计算按钮/标题，不连接业务库。
 
 订单号搜索回归：[test_sales_order_search.py](../../../tests/test_sales_order_search.py)覆盖原编号/部分编号/空格、同订单多来源SKU、直接旧关联与展示原始编号、内部/手工/CSV回退、独立赔付、数组/分页/月度/全筛选导出一致、月份/product_id/店铺叠加、无绑定拒绝及查询仅SELECT。现有导出VM和浏览器脚本核对两份页面的翻译标签、回车重置分页、同条件统计及无分页导出。
@@ -55,6 +64,6 @@
 
 单件与解释入口：[sales-ledger.js](../../../static/sales-ledger.js)负责分组、公式问号、代入/批次/整单弹窗及会话代次；[sales-fields.zh-CN.json](../../../static/sales-fields.zh-CN.json)与[sales_fields.py](../../../services/sales_fields.py)为页面/Excel的单一字段说明资源。后端`_sale_response_rows/_order_cost_data/sale_cost_breakdown`复用原分项和回放，跨筛选取同店完整订单。回归[test_sales_cost_explanations.py](../../../tests/test_sales_cost_explanations.py)覆盖未舍入除法、同号跨店/旧绑定、映射缺失或冲突下整单ID/名称一致、未知范围、完整订单和导出资源；页面VM及浏览器夹具另覆盖待确认区域失败保留台账、合计/分页及重试恢复，VM覆盖旧会话失败隔离。原销售/财务回归继续执行。
 
-来源与补录回归：[test_sales_name_import.py](../../../tests/test_sales_name_import.py)覆盖名称/倍数/组合、无SKU映射、精确/歧义识别、份额跨筛选一致、来源字段/Excel、赔付、补录权限/幂等/唯一键竞态/撤销不扣库；另验已识别退款的商品筛选/月度/导出/产品线一致、组合/未知退款不部分关联且不改变库存。[sales_manual_page_checks.cjs](../../../tests/sales_manual_page_checks.cjs)执行两份页面补录模块和实际api/刷新函数，验证精度、重复点击、网络重试，以及保存后五类子请求的旧响应/正文/401/网络异常在同账号重登及换账号后的隔离，当前会话刷新失败仍反馈。真实浏览器另验来源列、补录重试和布局，以及产品名联想的名称/SKU、点击/键盘/输入法、空值/失败/自由输入、移动端和旧请求隔离；选中不会改来源SKU ID。
+来源与补录回归：[test_sales_name_import.py](../../../tests/test_sales_name_import.py)覆盖明确本地编码的倍数/组合、独立名称候选解析、精确/歧义识别、份额跨筛选一致、来源字段/Excel、赔付、补录权限/幂等/唯一键竞态/撤销不扣库；另验已识别退款的商品筛选/月度/导出/产品线一致、组合/未知退款不部分关联且不改变库存。[sales_manual_page_checks.cjs](../../../tests/sales_manual_page_checks.cjs)执行两份页面补录模块和实际api/刷新函数，验证精度、重复点击、网络重试，以及保存后五类子请求的旧响应/正文/401/网络异常在同账号重登及换账号后的隔离，当前会话刷新失败仍反馈。真实浏览器另验来源列、补录重试和布局，以及产品名联想的名称/SKU、点击/键盘/输入法、空值/失败/自由输入、移动端和旧请求隔离；选中不会改来源SKU ID。
 
 其中SettlementOnlyImportTests覆盖同订单运费正负调整与商品销售并存、只扣一次库存/成本、全额退款及赠品区别、跨文件/跨月调整、组合财务事件不猜测份额、伪造元字段、重导去重、分页/导出及撤销数量。NameParserTests另验缺失依据和非有限金额，FinancialFactsTests核对标记事件、计数与损益勾稽，关联销售仍排除以免重复入账。

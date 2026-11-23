@@ -86,6 +86,8 @@
 
 [tests/mysql_product_import.py](../../tests/mysql_product_import.py) 独立读取 PRODUCT_IMPORT_TEST_HOST/PORT/DATABASE/USER/PASSWORD，不复用业务库配置；只允许 127.0.0.1 和以 inventory_fifo_product_import_validation_ 开头的显式专用库。需要事先创建该库并授权，运行后保留测试表/数据，不删除业务数据；不可自动纳入常规 unittest。使用进程环境传递凭据，不把密码写进命令或验证输出。
 
+销售映射锁序可执行`python -m tests.mysql_sales_mapping_concurrency --run-isolated`：显式创建独立临时MySQL 8.0.46容器，使用已有镜像、随机回环端口和tmpfs，不复用业务数据库配置或启动main。只在该临时库建表/写测试记录，结束校验容器身份并停止自建容器。覆盖导入/待确认重试与归属编辑、单笔销售的真实InnoDB等待，保留旧编辑版本冲突、刷新后保存及等价SKU表达式重传不重扣；不自动纳入unittest。`test_sales_mapping_workflow`另覆盖旧事件键、换序/合并倍数、同文件重复、待确认重试和完整SKU优先，`test_batch_edit`检查两条编辑入口的历史店铺锁覆盖。
+
 ## 必须保持的业务约束
 
 - 库存扣减、销售和成本明细在同一事务；批次行锁等待后复查最新数据。

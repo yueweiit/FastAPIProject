@@ -1,5 +1,7 @@
 # 国际化现状与渐进扩展约定
 
+销售映射和扣库预览文本使用sales-pending.js及sales-deduction-preview.js的局部zh-CN字典，按页面lang回退；导入帮助复用PageInteractions.importDateHelp，审计标签复用operation-logs.js。key_kind、method、status为中立编码；API冲突使用稳定code及现有message。来源名称、规格、编码、单位按原业务文本安全显示，不自动翻译。当前仅中文，无新翻译依赖；Excel原列与语言契约保持。
+
 初始化扣减的来源编码opening_deduction在inventory-workspace.js的zh-CN字典集中展示；API business_kind使用inventory_sale/opening_deduction/settlement，规则匹配使用店铺ID和平台SKU，不判断中文名称。准备回放说明及维护原因沿用既有后端中文备注契约；无新语言/依赖。分类数量冲突返回稳定码opening_deduction_quantity_invalid。
 
 待确认分类、筛选/清空/所选及筛选重试、单条商品/组合确认、倍数换算、结果/错误、只读降级等文案集中在[static/sales-pending.js](../../static/sales-pending.js)的局部zh-CN字典，复用ProductSearch的候选状态，按页面lang回退中文。API以reason_code及稳定错误码表达状态，组件按product_id/multiplier传递，前端不解析中文做业务判断；原始名称、文件及原因文本转义展示。分类兼容旧自由文本由[services/sales_pending.py](../../services/sales_pending.py)统一识别，Excel分类中文标签集中于同文件REASON_LABELS，沿用现有中文导出契约；无新增支持语言或依赖。
@@ -7,6 +9,8 @@
 商品工作台合并后，列表/图册、资料筛选、侧栏、核算设置、明确导出范围及保存状态等新增文本集中在两份首页的productTypeText局部zh-CN字典。界面“跌价计提类型”仍对应product_type，Excel沿用“商品类型”表头及旧别名，不随界面标签修改导入契约；search_specification、completeness与内部筛选编码保持语言中立，无新增语言或依赖。
 
 ## 当前能力
+
+销售的来源规格、本地商品及本地规格列集中于[static/sales-fields.zh-CN.json](../../static/sales-fields.zh-CN.json)；确认窗口、候选及历史待补充提示复用sales-pending.js、sales-ledger.js、product-search.js的局部zh-CN字典。source_specification/local_specification等API字段保持语言中立，平台SKU名称和本地规格均为业务原文，不自动翻译后匹配。销售可选规格导入表头集中于[services/sales_product_identity.py](../../services/sales_product_identity.py)，Excel仍沿用中文表头契约，新增列追加表尾。尚无其他界面语言或新增翻译依赖。
 
 商品规格新增标签、必填/超长/非法字符错误、换行规则帮助、占位、历史待补充提示集中于两份首页`productTypeText`局部zh-CN字典（specification*键），按页面lang回退中文；稳定API字段为`specification`，写入错误使用`product_specification_required/product_specification_too_long/product_specification_invalid_characters`。后端Excel标签及写入校验文案集中于[product_specification.py](../../services/product_specification.py)，表头同时接受“规格/型号”“规格”“型号”和specification。规格是用户业务文本，换行按单行规则转为空格，页面转义、Excel按字面量写入；历史不支持字符以稳定码点 `[U+XXXX]` 展示并附中文说明批注，不改原数据；操作日志字段标签复用operation-logs.js字典。当前仍仅中文，无新增语言、翻译依赖或业务数据翻译模型。
 

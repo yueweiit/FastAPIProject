@@ -148,6 +148,8 @@ update_batch 接收 BatchUpdate（BatchCreate加edit_version/cost_edit_mode）�
 
 每次成功编辑（含无字段变化保存）同事务追加batch_change_logs：批次ID/编号、操作者身份、UTC时间和前后快照。先flush、refresh(with_for_update=True)，再当前读调整层；快照金额按字符串，展示实际叠加后的单价及edit_values金额，不记录计算版本或内部cost_basis。日志失败则批次、原成本依据、全部差额凭证及财务审计一起回滚。实现见update_batch、_batch_change_values、[batch_edits.py](../../../services/batch_edits.py)。
 
+包含归属重写的编辑先由[lock_edit_stores](../../../services/batch_store_allocations.py)读取本批次当前/历史/创建人回退及新选择的店铺范围，按ID取得Store共享锁后才锁库存批次，与销售导入的Store→FIFO同序。批次当前读后检查编辑版本及店铺锁覆盖范围；旧快照遗漏当前归属时返回原`batch_edit_conflict`，不能在批次锁后补锁新店铺。仅编辑成本/单号且未提交归属的请求保持原批次锁流程；数量、成本、店铺分摊口径不变。
+
 该表独立于财务增强开关，默认需建表；只提供 admin 的分页读取（兼容旧API），不提供修改/删除日志接口。action=update记录编辑，action=void记录管理员或运营作废；作废原因在after_values及批次字段中。日志不设批次/用户外键，保留当时身份和编号，后续账号改名、批次或账号删除不会级联丢失日志。不是防数据库管理员篡改机制；运行账号仍应按部署要求限制数据库权限。已有历史修改不反推或补造日志。新增表和生产准备步骤见 [运行说明](../../../PROJECT_RUNBOOK.md#批次跨创建人编辑与修改日志)。
 
 批次列表不再挂载日志弹窗；管理员统一在[操作日志](../operation-logs/overview.md)查询前后值。旧弹窗脚本与分页API只保留管理员兼容能力，内容转义，关闭、退出或降权后忽略旧响应；不删除原日志，也不影响运营编辑时同事务留痕。

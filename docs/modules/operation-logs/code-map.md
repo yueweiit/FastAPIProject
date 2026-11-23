@@ -1,5 +1,7 @@
 # 操作日志代码与测试
 
+店铺销售映射版本及组件纳入业务审计：POST /sales/product-mappings使用confirm_mapping，待确认同时保存映射使用process_pending；mapping_id关联批量取Store，组件不继承操作者当前店铺。映射、来源、FIFO和审计同事务提交/回滚，默认开关和管理员读取权限不变。字段/实体/操作标签位于operation-logs.js；回归见[test_sales_mapping_workflow.py](../../../tests/test_sales_mapping_workflow.py)。
+
 商品规格`specification`已纳入[业务审计字段白名单](../../../services/business_audit.py)及日志页面字段字典；创建/编辑/导入沿用原事务捕获和读取权限。规格前后值、审计失败时规格与其他商品修改共同回滚由[test_business_audit.py](../../../tests/test_business_audit.py)覆盖，不新增日志表或回填历史。
 
 | 能力 | 源码 | 来源 |

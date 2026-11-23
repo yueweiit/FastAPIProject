@@ -1,5 +1,17 @@
 # FastAPIProject 运行与维护说明
 
+## 店铺销售映射与扣库预览（2026-11-23）
+
+增加sales_product_mappings和sales_product_mapping_components两张基础表；ORM当前共36表。销售优先明确本地SKU或本店已确认映射，名称仅候选（确认唯一的本店别名例外），不要求每次补规格。旧全局映射/API、历史来源/扣库/成本保持，不自动转换或重导。
+
+1. 核验目标环境与备份，先离线生成待审核DDL：`.\.venv\Scripts\python.exe migrations/add_sales_product_mappings.py --write-sql output/sales_product_mappings.sql`。此脚本不连接数据库。核验父表、已有同名结构、引擎及索引，再由获授权维护者执行；MySQL DDL不能依赖事务回滚。
+2. 同时核验先前的products.specification和sales_import_batches.result_snapshot字段；缺少时按下节对应步骤准备。新代码依赖两表及这两列。停止并统一更新全部库存写入进程，避免新旧匹配规则并行；同步models/schemas、销售/商品/主数据路由、sales_mapping/sales_preview/sales_pending/business_audit及既有来源展示服务、main.py、两份首页和关联静态资源。
+3. 结构准备后按获准流程重载后端并刷新页面。页面先只读预览再提交；历史待确认通过原记录确认/重试，可显式保存映射；版本维护位于销售页“店铺销售映射”。本次只完成代码、隔离测试及离线DDL，未执行实际业务库迁移、历史回填、服务重启或部署。
+4. 升级后先验证本店映射、两种来源编码/仅名称、组合倍数、库存不足、预览取消与变化重验、重复文件/重复确认、导出及权限。真实MySQL并发、目标结构及真实来源仍需在获授权环境核验；SQLite/SQL编译不能代替InnoDB并发验收。回退保留新增表和raw_data快照，使用理解映射/幂等规则的兼容代码，不删除版本或重导历史。
+
+流程/API/字段统一见[销售模块](docs/modules/sales/overview.md)；回归入口为test_sales_mapping_workflow及原销售/FIFO/财务/审计用例，前端sales_pending_browser_checks、sales_import_page_checks、inventory_workspace_browser_checks。测试进程沿用项目默认FIFO_OPERATION_AUDIT_ENABLED=0，专项审计用例自行启用1并验证失败回滚，不改运行配置。
+
+
 ## 销售导入结果回看（2026-11-23）
 
 新增`sales_import_batches.result_snapshot JSON NULL`保存文件导入当时的完整结果，同原导入事务提交；待确认重试/撤销不覆盖，不改FIFO算法、锁序或库存口径。历史记录及未保存快照的手工结算显示“未保存完整结果”，不回填。
@@ -16,6 +28,8 @@
 5. 隔离回归入口：`test_sales_import_results/test_sales_import_progress`及既有销售/FIFO用例；前端`sales_import_progress_checks.cjs/sales_import_page_checks.cjs/sales_import_results_checks.cjs`。回看只SELECT、按店铺授权、不重跑导入；真实目标库DDL和InnoDB并发仍须按对应环境授权验证。本次未启动业务服务或部署。
 
 ## 商品规格字段（2026-11-23）
+
+销售规格展示及匹配同样依赖此字段：同步销售路由/契约、sales_product_identity、financial_facts、sales_reconciliation、sales_export及sales-ledger/sales-pending/product-search脚本和sales-fields.zh-CN.json；字段资源与脚本须成套更新。此扩展不新增销售数据库列，不回填历史规格、不重新扣库。若目标库仍无products.specification，先按下述原商品规格步骤准备结构；当前版本的文件导入也依赖上节result_snapshot。通过目标预检后再按获准流程重载Python进程并刷新页面，不能用静态页面已更新推断后端或数据库已升级。业务规则及隔离回归见[销售流程](docs/modules/sales/workflow.md#文件导入)和[代码映射](docs/modules/sales/code-map.md)。
 
 `products.specification VARCHAR(255) NULL` 用于规格/型号，历史记录保留 NULL；新增及编辑保存、Excel 新增均要求非空文本，换行转为空格后去首尾空白，最多255字符；拒绝XML非法字符。已有异常规格的导出以码点和批注提示，不回填原数据；此边界修复不再增加数据库结构。页面位置在产品名称后，列表空值显示待补充，导出空白保留未知值。旧模板须补规格列，已有SKU仍只跳过、不覆盖，详情见[商品流程](docs/modules/products/workflow.md)。库存/FIFO/成本和历史规则不回填。
 

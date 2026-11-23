@@ -8,7 +8,9 @@
 
 本模块维护销售、FIFO 明细、文件导入、原始结算和组件分摊。字段类型/默认基于 ORM，实际数据库约束需核验。通用关系见[数据库总览](../../knowledge/database.md)。
 
-名称识别不新增结构：Sale.product_id及SaleCostDetail仍保存实际出库组件；SettlementEntry保存来源SKU ID、产品名、交易类型和来源数量，原始商品标题等仍在raw_data。响应source_sku_id/source_product_name/source_quantity/source_type及transaction_type为派生字段，不回填历史数据。
+实际出库继续由Sale.product_id、SaleCostDetail及SettlementEntryAllocation保存。新店铺销售映射增加下述两表；来源SKU/名称/规格、数量和财务字段仍原样保存在SettlementEntry及raw_data，历史不回填。
+
+规格展示仍复用SettlementEntry.sku_name及Product.specification当前资料，文件可选本地规格列原样保留raw_data。新匹配/人工确认在raw_data._product_resolution保存method、version_id及实际本地product_id/sku/name/specification/multiplier快照，使用店铺映射时保存source_unit；人工确认新建映射另存saved_mapping_version_id（不冒充当次生效版本）。旧记录无快照保持缺失；列表/Excel本地规格当前值不等于历史快照。规格本身不改变已有来源事件键。
 
 产品名展示兼容旧文件：优先读取raw_data中的“产品名”，缺列或空值时使用已有关联的Product.name；无关联时保留SettlementEntry.product_name。历史保存的平台标题仍由source_product_name返回，现存product_name/raw_data、销售关联、成本与库存均不回填。列表、单条详情和导出规则见[销售流程](workflow.md#分组台账与字段计算说明)。
 
@@ -17,6 +19,31 @@
 新导入的正来源数量纯运费/退款冲账在 SettlementEntry.raw_data 保存应用元字段 `_settlement_only_reason`，值为 shipping_adjustment、goods_refund 或 amount_adjustment。命中店铺非实物规则时写入 non_inventory。标记用于区分库存影响，保留原始交易类型和来源数量。此类行的 sale_id 及组件 sale_id 为空，公开响应沿用 settlement_adjustment 类型，实际出库数量为 0。公共财务事实查询及计数使用同一标记。导入时由系统生成该标记，文件中的下划线字段会被移除。识别边界见[导入流程](workflow.md#文件导入)。
 
 手工补录复用SalesImportBatch（file_type=manual_settlement）及SettlementEntry，来源product_id/sale_id为空且不生成分摊。source_key使用manual:店铺ID:request_key占用现有唯一键，raw_data保存_manual_settlement及_manual_fingerprint用于来源识别与幂等内容校验；来源数量不等于出库数量，响应出库数为0。未新增表、字段或迁移。
+
+## sales_product_mappings
+
+来源：[models.SalesProductMapping](../../../models.py)，基础表，不受财务增强/扩展审计开关控制。仅追加版本，历史不更新或删除。
+
+| 字段 | 类型/约束 | 含义 |
+| --- | --- | --- |
+| id | INT主键自增 | 版本ID |
+| store_id | INT非空、索引、FK stores.id | 店铺范围 |
+| key_kind | VARCHAR(24)非空 | platform_sku / merchant_sku / product_name |
+| key_value | VARCHAR(500)非空 | 来源原标识 |
+| key_hash | VARCHAR(64)非空 | 规范化标识SHA256；避免数据库排序规则改变编码语义 |
+| effective_from | DATE非空 | 按销售自然日生效 |
+| source_unit | VARCHAR(32)非空、ORM默认份 | 来源数量单位，不自动换算 |
+| is_active | BOOL非空、ORM默认true | 该版本是否允许匹配 |
+| created_by | INT非空、FK users.id | 确认操作者 |
+| created_at | DATETIME非空、数据库当前时间 | 保存时间 |
+
+复合索引ix_sales_mapping_identity覆盖store_id/key_kind/key_hash/effective_from。同日允许追加版本，以ID决定顺序；在Store行锁内比较expected_version_id再追加，避免覆盖他人确认。停用版本有效时不回退旧版本。
+
+## sales_product_mapping_components
+
+来源：`models.SalesProductMappingComponent`。id为INT自增主键；mapping_id为非空INT/索引/FK sales_product_mappings.id；product_id为非空INT/索引/FK products.id；multiplier为非空INT，应用校验正整数及合并后上限2147483647。同版本/商品以uq_sales_mapping_product唯一。两表声明InnoDB/utf8mb4；引用商品或店铺不能物理删除，保留全部版本依据。
+
+离线DDL由[migrations/add_sales_product_mappings.py](../../../migrations/add_sales_product_mappings.py)生成，无数据库连接。旧PlatformSkuMapping/StoreProduct结构及API保留，不自动转换为已确认版本；启用前准备结构并成套发布，见[运行说明](../../../PROJECT_RUNBOOK.md#店铺销售映射与扣库预览2026-11-23)。
 
 ## sales
 

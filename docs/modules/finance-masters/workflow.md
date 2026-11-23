@@ -4,7 +4,7 @@
 
 admin 创建产品线，code 唯一；创建店铺，(platform,platform_store_id) 唯一。字段 strip，币种 upper，is_active 控制启用。更新直接保存当前记录，无独立变更审计表；重复约束由 _commit 回滚并返回409。
 
-删除产品线先检查 StoreProduct 引用；删除店铺检查店铺映射、用户绑定、销售和结算。导入批次、快照和人工损益等其他引用仍需核对，不可假定删除检查覆盖全部历史外键。依据：[finance_masters.py](../../../routers/finance_masters.py) 的各 CRUD 函数；[models.py](../../../models.py)。
+删除产品线先检查 StoreProduct 引用；删除店铺先锁Store，再检查销售映射版本（有引用409 store_has_sales_mappings）、店铺映射、用户绑定、销售和结算。导入批次、快照和人工损益等其他引用仍需核对，不可假定删除检查覆盖全部历史外键。依据：[finance_masters.py](../../../routers/finance_masters.py) 的各 CRUD 函数；[models.py](../../../models.py)。
 
 ## 店铺 SKU 生效映射
 
@@ -26,7 +26,7 @@ flowchart LR
     A["多个平台 SKU ID"] --> M["批量建立映射"]
     M --> P["组件列表：本地商品 + quantity_per_sale"]
     P --> S["历史映射API兼容；维护入口已隐藏"]
-    N["订单详情产品名"] --> F["按名称/倍数/组合识别后FIFO出库与分摊"]
+    N["明确本地SKU / 已确认店铺销售映射"] --> F["预览组件及倍数，再FIFO出库与分摊"]
 ```
 
 创建一次可提交最多100个 SKU ID，共用同一组件列表；不能为空、不能重复或与现有平台 SKU 冲突。组件至少一个、同商品不能重复、商品必须存在、每次销售数量≥1。创建映射启用，更新可停用并按商品 ID 差量增删组件；只有多个不同商品组件才标 is_bundle=true，单一商品倍数>1不因此标组合。

@@ -2,7 +2,7 @@
 
 ## 路由组织
 
-[main.py](../../main.py) 注册十组APIRouter，当前源码共有105个路由端点（按HTTP方法与路径计数），另有首页、静态脚本和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
+[main.py](../../main.py) 注册十组APIRouter，当前源码共有111个路由端点（按HTTP方法与路径计数），另有首页、静态脚本和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
 
 | 前缀 | 数量 | 文档 | 实现 |
 | --- | ---: | --- | --- |
@@ -10,7 +10,7 @@
 | /products | 10 | [商品 API](../modules/products/api.md) | [routers/products.py](../../routers/products.py) |
 | /batches | 8（含库存页独立归属维护及已停用DELETE） | [库存 API](../modules/inventory/api.md) | [routers/batches.py](../../routers/batches.py) |
 | /inventory | 8（含盘点记录保存及Excel导出） | [库存查看API](../modules/inventory/api.md#库存查看-api) | [routers/inventory.py](../../routers/inventory.py) |
-| /sales | 16（含待确认重试、结算补录、导入进度/结果回看、筛选/导入批次对账导出、单件/整单计算明细） | [销售 API](../modules/sales/api.md) | [routers/sales.py](../../routers/sales.py) |
+| /sales | 20（含店铺映射版本及只读预览、待确认重试、结算补录、导入进度/结果回看、筛选/导入批次对账导出、单件/整单计算明细） | [销售 API](../modules/sales/api.md) | [routers/sales.py](../../routers/sales.py) |
 | /finance-masters | 16 | [主数据 API](../modules/finance-masters/api.md) | [routers/finance_masters.py](../../routers/finance_masters.py) |
 | /financial-control | 22 | [财务增强API](../modules/financial-control/api.md) | [routers/financial_control.py](../../routers/financial_control.py) |
 | /reports | 8 | [报表 API](../modules/reports/api.md) | [routers/reports.py](../../routers/reports.py) |
