@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi import FastAPI
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import Base, get_db
 from models import (InventoryBatch, Product, User, BatchChangeLog, InventoryCostAdjustment,
-                    InventoryCostAdjustmentLine, Store, BatchImpairmentStore)
+                    InventoryCostAdjustmentLine, Store, BatchImpairmentStore, BatchImpairmentRule, BatchImpairmentRuleStore)
 from routers import batches
 
 
@@ -83,6 +83,50 @@ class BatchEditTests(unittest.IsolatedAsyncioTestCase):
         payload.update(changes)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url='http://test') as client:
             return await client.put('/batches/12', json=payload)
+
+    async def test_both_edit_routes_lock_current_historical_and_requested_stores_before_stock(self):
+        self.session.add(Store(id=8, platform_store_id='previous', name='历史归属', country_or_region='CN', settlement_currency='CNY'))
+        self.session.flush()
+        rule = BatchImpairmentRule(batch_id=12, effective_date=datetime(2026, 8, 30).date(), is_explicit=True)
+        self.session.add(rule)
+        self.session.flush()
+        self.session.add(BatchImpairmentRuleStore(rule_id=rule.id, store_id=8))
+        self.session.add(BatchImpairmentStore(batch_id=12, store_id=8))
+        self.session.commit()
+        self.session.expunge(rule)
+        locked = []
+        def capture(state):
+            if getattr(state.statement, '_for_update_arg', None) is not None:
+                statement = state.statement.params(**state.parameters) if isinstance(state.parameters, dict) else state.statement
+                locked.append(str(statement.compile(dialect=mysql.dialect(), compile_kwargs={'literal_binds': True})))
+        for route in ('assignment', 'batch'):
+            opened = (await self.request('GET', '/batches')).json()[0]
+            locked.clear()
+            event.listen(self.session, 'do_orm_execute', capture)
+            try:
+                if route == 'assignment':
+                    result = await self.request('PUT', '/batches/12/impairment-stores', json={
+                        'impairment_store_ids': [7], 'edit_version': opened['edit_version'],
+                        'impairment_change_mode': 'from_change_date'})
+                else:
+                    result = await self.save()
+            finally:
+                event.remove(self.session, 'do_orm_execute', capture)
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertIn('FROM stores', locked[0])
+            self.assertIn('stores.id IN (7, 8)', locked[0])
+            self.assertTrue(locked[0].endswith('LOCK IN SHARE MODE'))
+            self.assertIn('FROM inventory_batches', locked[1])
+
+    async def test_changed_store_lock_scope_rejects_edit_without_mutations(self):
+        self.session.add(BatchImpairmentStore(batch_id=12, store_id=7))
+        self.session.commit()
+        # 模拟早期RR快照未看到当前版本的店铺；不能在批次锁后补加店铺锁。
+        with patch('routers.batches.lock_edit_stores', new=AsyncMock(return_value=set())):
+            result = await self.save()
+        self.assertEqual(result.status_code, 409, result.text)
+        self.assertEqual(result.json()['detail']['code'], 'batch_edit_conflict')
+        self.assertEqual(self.session.scalars(select(BatchChangeLog)).all(), [])
 
     async def test_owner_can_update_quantity_and_exact_costs_and_clear_order_numbers(self):
         response = await self.save(quantity=14, dingtalk_order_no=None, shipping_cost_no=None,

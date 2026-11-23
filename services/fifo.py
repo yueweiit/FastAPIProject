@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import InventoryBatch, Sale, SaleCostDetail
+from models import InventoryBatch, Sale, SaleCostDetail, Store
 
 
 class InsufficientStockError(Exception):
@@ -55,6 +55,11 @@ async def fifo_sell(
 ) -> tuple[Sale, list[dict]]:
     if sold_at is None:
         sold_at = datetime.now()
+
+    # Sale的店铺外键也会加共享锁；提前取得，统一Store→库存的锁序。
+    # 导入已持有同店铺锁；保留的单笔销售入口也不能在扣库后才等待Store。
+    if store_id is not None:
+        await db.execute(select(Store.id).where(Store.id == store_id).with_for_update(read=True))
 
     # 锁住当前库存批次，等前一个销售事务提交后再读取最新剩余数量。
     batches = await lock_fifo_batches(db, [product_id])

@@ -8,7 +8,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 
-from models import BatchImpairmentStore, Store
+from models import BatchImpairmentStore, BatchImpairmentRule, BatchImpairmentRuleStore, InventoryBatch, Store, User
 from services.batch_impairment_history import rule_at, rule_segments
 
 
@@ -51,6 +51,26 @@ async def validate_stores(db, ids, *, existing=(), required=True):
     if len(stores) != len(ids) or any(not store.is_active and store.id not in existing for store in stores):
         raise HTTPException(422, detail={"code": "batch_impairment_store_invalid", "message": "请选择存在且启用的跌价归属店铺。"})
     return [{"id": store.id, "name": store.name, "is_active": store.is_active} for store in stores]
+
+
+async def lock_edit_stores(db, batch_id, requested_ids):
+    """批次归属重写前先锁涉及店铺，避免批次→Store与销售导入反向。
+
+    包含日规则重写涉及的旧店铺及无规则旧批次的创建人回退店铺。
+    这里只发现范围；调用方在批次当前读后还须检查版本及锁覆盖范围。
+    """
+    ids = set(requested_ids)
+    ids.update((await db.execute(select(BatchImpairmentStore.store_id).where(
+        BatchImpairmentStore.batch_id == batch_id))).scalars().all())
+    ids.update((await db.execute(select(BatchImpairmentRuleStore.store_id).join(
+        BatchImpairmentRule, BatchImpairmentRule.id == BatchImpairmentRuleStore.rule_id).where(
+        BatchImpairmentRule.batch_id == batch_id))).scalars().all())
+    ids.update((await db.execute(select(User.store_id).join(InventoryBatch, InventoryBatch.user_id == User.id).where(
+        InventoryBatch.id == batch_id, User.store_id.is_not(None)))).scalars().all())
+    if not ids:
+        return set()
+    return set((await db.execute(select(Store.id).where(Store.id.in_(sorted(ids)))
+        .order_by(Store.id).with_for_update(read=True))).scalars().all())
 
 
 async def replace_stores(db, batch_id, stores):

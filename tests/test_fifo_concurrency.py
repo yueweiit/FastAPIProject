@@ -36,6 +36,10 @@ class _Session:
         self.locked = False
 
     async def execute(self, statement):
+        if [table.name for table in statement.get_final_froms()] == ['stores']:
+            # 店铺共享锁彼此兼容；不能把它模拟成同一把库存排他锁。
+            assert statement._for_update_arg is not None and statement._for_update_arg.read
+            return _Rows([SimpleNamespace(id=7, is_active=True)])
         # Model a MySQL locking read: the second session sees the committed
         # quantity only after the first session finishes its transaction.
         if statement._for_update_arg is not None:

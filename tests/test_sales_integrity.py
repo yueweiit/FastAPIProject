@@ -117,7 +117,7 @@ class SalesIntegrityTests(unittest.IsolatedAsyncioTestCase):
         with (patch("routers.sales._build_sale_response",side_effect=lambda sale, details, **kwargs: sale),
               patch("routers.sales.attach_sale_impairment", new=AsyncMock()),
               patch("routers.sales.sale_cost_context", new=AsyncMock(return_value={}))):
-            outcomes = await asyncio.gather(submit(),submit())
+            outcomes = await asyncio.wait_for(asyncio.gather(submit(),submit()), timeout=5)
         self.assertEqual(sorted(outcomes), [200,409])
         self.assertEqual(len(inventory.sales),1)
         self.assertEqual(inventory.remaining_quantity,99)

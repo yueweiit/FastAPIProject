@@ -21,7 +21,7 @@ from services.cost_layers import load_cost_layers, AdjustedBatch
 from services.finance_config import financial_controls_enabled
 from services.batch_edits import freeze_cost_basis, restate_costs
 from services.batch_store_allocations import (AssignedBatch, load_batch_store_allocations, replace_stores,
-                                              validate_stores)
+                                              validate_stores, lock_edit_stores)
 from services.batch_impairment_history import load_rules, save_change, initialize_unassigned
 
 from services.business_audit import BusinessAuditRoute
@@ -138,7 +138,8 @@ async def create_batch(
     raise HTTPException(status_code=409, detail="批次号生成冲突，请稍后重试")
 
 
-async def _batch_edit_context(db, batch_id, edit_version):
+async def _batch_edit_context(db, batch_id, edit_version, *, store_ids=None):
+    locked_stores = await lock_edit_stores(db, batch_id, store_ids) if store_ids is not None else None
     batch = await _locked_batch(db, batch_id)
     if not batch:
         raise HTTPException(status_code=404, detail="批次不存在")
@@ -155,7 +156,9 @@ async def _batch_edit_context(db, batch_id, edit_version):
     current = AssignedBatch(AdjustedBatch(batch, layers), stores, history)
 
     # 行锁内读取当前版本；排队的编辑必须携带打开表单时的版本，不能覆盖中途修改。
-    if edit_version != current.edit_version:
+    referenced_stores = {store["id"] for store in stores} | {store["id"] for rule in history for store in rule.stores}
+    if (edit_version != current.edit_version
+        or locked_stores is not None and not referenced_stores.issubset(locked_stores)):
         raise HTTPException(409, detail={"code": "batch_edit_conflict",
             "message": "批次已被其他操作修改，本次未保存。请先保留填写内容，关闭编辑并刷新列表，核对最新数据后重新编辑。"})
 
@@ -170,7 +173,8 @@ async def update_batch(
     user: User = Depends(RequireOperator),
 ):
     """编辑共享批次；已售数量保留，受保护成本通过追加差额追溯。"""
-    batch, layers, stores, history, current = await _batch_edit_context(db, batch_id, data.edit_version)
+    batch, layers, stores, history, current = await _batch_edit_context(db, batch_id, data.edit_version,
+        store_ids=data.impairment_store_ids if "impairment_store_ids" in data.model_fields_set else None)
 
     consumed = batch.quantity - batch.remaining_quantity
     if consumed < 0 or batch.remaining_quantity < 0:
@@ -275,7 +279,8 @@ async def update_batch_impairment_stores(
     db: AsyncSession = Depends(get_db), user: User = Depends(RequireOperator),
 ):
     """库存页独立维护归属，不接收或改写批次数量、成本和到货日期。"""
-    batch, layers, stores, history, _current = await _batch_edit_context(db, batch_id, data.edit_version)
+    batch, layers, stores, history, _current = await _batch_edit_context(db, batch_id, data.edit_version,
+        store_ids=data.impairment_store_ids)
     before = _batch_change_values(batch, layers, stores, history)
     selected = await validate_stores(db, data.impairment_store_ids, existing=[store["id"] for store in stores])
     history = await save_change(db, batch, stores, selected, history, data.impairment_change_mode,
