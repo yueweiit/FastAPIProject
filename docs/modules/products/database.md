@@ -11,6 +11,7 @@
 | `id` | `Integer` | 否 | 自增主键 | 主键 |
 | `sku` | `String(64)` | 否 | 本地商品 SKU | 唯一；索引 |
 | `name` | `String(255)` | 否 | 名称 | — |
+| `specification` | `String(255)` | 是 | 规格/型号 | 历史允许 NULL；新建/编辑/导入将换行转为空格后去首尾空白，要求 1–255 字符，拒绝 XML 非法字符 |
 | `image` | `String(500)` | 是 | 图片访问路径 | — |
 | `product_type` | `String(16)` | 否 | stable / new / no_impairment（旧safe_stock兼容为stable），详见[业务规则](overview.md#业务规则) | Python 默认：'stable' |
 | `safe_stock_quantity` | `Integer` | 否 | 安全库存数量 | Python 默认：0 |
@@ -39,7 +40,9 @@
 
 ProductImpairmentRule 的 (product_id,effective_date) 唯一，按商品和生效日建复合索引；relationship 使用 all/delete-orphan，外键 ON DELETE CASCADE。同日修改覆盖当日规则，按日而非精确时间保留版本。
 
-products.sku 唯一；name 没有唯一约束，名称匹配可出现歧义。product_type/safe_stock_quantity 没有数据库级枚举或非负约束，主要依赖路由和导入服务校验。商品不含 store_id、user_id，不能推定是单店商品。
+products.sku 唯一；name/specification 没有唯一约束，名称匹配可出现歧义。规格不是库存或销售关联键。product_type/safe_stock_quantity 没有数据库级枚举或非负约束，主要依赖路由和导入服务校验。商品不含 store_id、user_id，不能推定是单店商品。
+
+2026-11-23新增 `specification VARCHAR(255) NULL`，不建新表/索引、不回填历史行。服务端 [normalize_product_specification](../../../services/product_specification.py) 统一写入校验；ORM 可空用于保留历史未知值。启动兼容迁移的 MIGRATIONS 已登记该列，先检查存在再添加；[离线 DDL 生成脚本](../../../migrations/add_product_specification.py)不连接数据库，执行前提与回退见[运行说明](../../../PROJECT_RUNBOOK.md#商品规格字段2026-11-23)。数据库迁移不等于运行整套启动修复。
 
 2026-10-28扩展两种类型复用原有String(16)，没有新增列、表或迁移。历史`stable`+正安全库存的规则仍按安全库存保护解释，不批量回填；`no_impairment`仅停止后续增提，历史准备保留。旧月末快照和财务月度版本均不重写。
 
@@ -47,6 +50,6 @@ products 被批次、销售、店铺映射、组件、结算及快照引用，�
 
 ## 批量新增的数据边界
 
-商品导入不增加表或字段。预览读取 `products` 及 information_schema.COLUMNS 的 SKU 排序规则；确认只向 `products` 与 `product_impairment_rules` 写入，一条新增商品对应一条当日规则，两表统一提交。已有 SKU 不 UPDATE，不创建库存批次；图片和历史日期不参与导入。依据：[product_import.py](../../../services/product_import.py) 的 preview_product_import、confirm_product_import。
+商品导入复用上述商品字段，不建立独立导入表。预览读取 `products` 及 information_schema.COLUMNS 的 SKU 排序规则；确认只向 `products`（含规格）与 `product_impairment_rules` 写入，一条新增商品对应一条当日规则，两表统一提交。已有 SKU 不 UPDATE，不创建库存批次；图片和历史日期不参与导入。依据：[product_import.py](../../../services/product_import.py) 的 preview_product_import、confirm_product_import。
 
 SKU 查重必须遵循实库 `products.sku` 的排序规则及唯一索引，不能仅通过大小写转换认定唯一。预览凭据不落库，结果清单由客户端回传行数据生成，不是新的导入日志表。规则生效日沿用 date.today，运行环境时区的通用边界仍需遵循现有商品规则约定。

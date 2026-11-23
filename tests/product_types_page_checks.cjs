@@ -11,7 +11,7 @@ async function verify(path) {
     const source = scripts.join('\n');
     const names = ['productTypeText', 'productTypeValue', 'productTypeLabel', 'productTypeTagClass',
         'initializeProductTypes', 'toggleSafeStockField', 'escapeHtml', 'renderProductPage',
-        'openEditProduct', 'renderProductImportReport', 'createProduct', 'saveEditProduct'];
+        'openEditProduct', 'renderProductImportReport', 'readProductSpecification', 'formatApiError', 'createProduct', 'saveEditProduct'];
     const functions = names.map(name => {
         const start = source.search(new RegExp(`^(?:async )?function ${name}\\(`, 'm'));
         assert(start >= 0, name);
@@ -21,13 +21,13 @@ async function verify(path) {
     }).join('\n');
     const elements = new Map();
     const element = id => {
-        if (!elements.has(id)) elements.set(id, {value: '', files: [], style: {}, dataset: {}, innerHTML: '', textContent: '', addEventListener() {}});
+        if (!elements.has(id)) elements.set(id, {value: '', files: [], style: {}, dataset: {}, innerHTML: '', textContent: '', addEventListener() {}, setCustomValidity(message) {this.validationMessage=message;}, reportValidity() {return !this.validationMessage;}});
         return elements.get(id);
     };
     const textNodes = [...html.matchAll(/data-product-type-text="([^"]+)"/g)]
         .map(match => ({dataset: {productTypeText: match[1]}, textContent: ''}));
     const labels = {stable: '稳健商品', new: '新品', no_impairment: '不跌价商品'};
-    const products = Object.keys(labels).map((kind, i) => ({id: i + 1, sku: kind, name: `<${kind}>`,
+    const products = Object.keys(labels).map((kind, i) => ({id: i + 1, sku: kind, name: `<${kind}>`, specification: `<${kind}> / 标准款`,
         product_type: kind, safe_stock_quantity: kind === 'stable' ? 40 : 0, stock_quantity: 100, stock_value: 1000}));
     products.push({...products[0], id:4, sku:'old-safe', product_type:'safe_stock', safe_stock_quantity:40});
     products.push({...products[0], id:5, sku:'legacy', product_type:'stable', safe_stock_quantity:25});
@@ -70,10 +70,13 @@ async function verify(path) {
         await vm.runInContext('saveEditProduct()', context);
         const saved = requests.at(-1).options.body;
         assert.equal(saved.get('product_type'), product.product_type);
+        assert.equal(saved.get('specification'), product.specification);
         assert.equal(saved.get('safe_stock_quantity'), String(product.safe_stock_quantity));
         element('p-product-type').value = product.product_type;
         element('p-safe-stock-quantity').value = product.safe_stock_quantity;
+        element('p-specification').value = ' 黑色 / 标准款 ';
         await vm.runInContext('createProduct()', context);
+        assert.equal(requests.at(-1).options.body.get('specification'), '黑色 / 标准款');
         assert.equal(requests.at(-1).options.body.get('product_type'), product.product_type);
         assert.equal(element('p-product-type').value, 'stable');
         assert.equal(element('p-safe-stock-quantity').disabled, false);

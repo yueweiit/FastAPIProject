@@ -39,6 +39,7 @@ MIGRATIONS = (
     ("sales", "order_claim", "VARCHAR(64) NULL"),
     ("sales_import_batches", "result_snapshot", "JSON NULL"),
     ("products", "image", "VARCHAR(500) NULL"),
+    ("products", "specification", "VARCHAR(255) NULL"),
     ("products", "product_type", "VARCHAR(16) NOT NULL DEFAULT 'stable'"),
     ("products", "safe_stock_quantity", "INT NOT NULL DEFAULT 0"),
     ("settlement_entries", "store_id", "INT NULL"),

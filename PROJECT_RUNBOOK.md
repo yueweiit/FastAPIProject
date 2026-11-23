@@ -15,6 +15,15 @@
 4. 按获准发布流程重启后端并刷新页面；只更新HTML不能启用新增`GET /sales/imports/{id}/result`及脚本入口。成功5秒、待核对8秒消失，失败手动关闭；悬停、聚焦、展开暂停计时。历史“查看导入结果”可只读回看完整警告/待确认原因，旧记录及已撤销记录有明确说明。
 5. 隔离回归入口：`test_sales_import_results/test_sales_import_progress`及既有销售/FIFO用例；前端`sales_import_progress_checks.cjs/sales_import_page_checks.cjs/sales_import_results_checks.cjs`。回看只SELECT、按店铺授权、不重跑导入；真实目标库DDL和InnoDB并发仍须按对应环境授权验证。本次未启动业务服务或部署。
 
+## 商品规格字段（2026-11-23）
+
+`products.specification VARCHAR(255) NULL` 用于规格/型号，历史记录保留 NULL；新增及编辑保存、Excel 新增均要求非空文本，换行转为空格后去首尾空白，最多255字符；拒绝XML非法字符。已有异常规格的导出以码点和批注提示，不回填原数据；此边界修复不再增加数据库结构。页面位置在产品名称后，列表空值显示待补充，导出空白保留未知值。旧模板须补规格列，已有SKU仍只跳过、不覆盖，详情见[商品流程](docs/modules/products/workflow.md)。库存/FIFO/成本和历史规则不回填。
+
+1. 离线生成待审核DDL：`python migrations/add_product_specification.py --write-sql output/product_specification.sql`。脚本不连接数据库。执行前核验目标库、备份及加列锁表影响；已有同名列先核对类型/长度/可空性，不重复执行ALTER。
+2. 同步 models.py、schemas.py、migrate.py、商品路由/导入/规格校验服务、审计字段、两份首页及日志页面；字段准备完成后再按原流程重载后端并刷新页面。旧POST/PUT调用方须同步提交specification；仅更新HTML或仅更新数据库均不足以启用。
+3. 启动兼容迁移已登记该可空列，按列存在性检查添加；不要用启动服务代替迁移预检，启动仍执行其他建表/兼容修复/快照逻辑。回退代码时保留规格列及已填数据，不以删列回退。
+4. 回归使用隔离SQLite/ASGI和页面测试，未执行本地业务库或生产DDL、历史数据回填、服务重启及部署；真实目标MySQL结构与上线表现需在获准环境核验。验证入口见[商品代码映射](docs/modules/products/code-map.md)。
+
 ## 历史汇率来源与原币对账（2026-11-19）
 
 `FIFO_FX_PROVIDER=frankfurter`为默认兼容值；切换为`baidu`后，新导入及实时重算的损益/产品线使用百度历史日线**收盘价**。Compose已透传该变量，更新代码及`.env`后需构建镜像并重建web，使Python与静态字段资源同时生效；只改`.env`或只build不会替换运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率，旧固定报表版本保留原值；当前报表会按新来源重新换算各核算月，因此与旧台账人民币列可能不同。

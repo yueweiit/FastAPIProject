@@ -2,7 +2,10 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_serializer, field_validator
+
+from services.product_specification import normalize_product_specification
 
 
 class FinancialMoneyRequest(BaseModel):
@@ -109,6 +112,15 @@ class UserResponse(BaseModel):
 class ProductCreate(BaseModel):
     sku: str = Field(..., max_length=64, examples=["SKU-001"])
     name: str = Field(..., max_length=255, examples=["蓝牙耳机"])
+    specification: str = Field(..., min_length=1, max_length=255, examples=["黑色 / 标准版"])
+
+    @field_validator("specification", mode="before")
+    @classmethod
+    def validate_specification(cls, value):
+        try:
+            return normalize_product_specification(value)
+        except HTTPException as error:
+            raise ValueError(error.detail["message"]) from error
 
 
 class ProductResponse(BaseModel):
@@ -117,6 +129,7 @@ class ProductResponse(BaseModel):
     id: int
     sku: str
     name: str
+    specification: str | None = None
     image: str | None = None
     product_type: str = "stable"
     safe_stock_quantity: int = 0
@@ -133,6 +146,7 @@ class ProductOptionResponse(BaseModel):
     id: int
     sku: str
     name: str
+    specification: str | None = None
     image: str | None = None
 
 
@@ -152,6 +166,7 @@ class ProductImportRow(BaseModel):
     row_number: int = Field(ge=2, le=10001)
     sku: str = Field(default="", max_length=128)
     name: str = Field(default="", max_length=512)
+    specification: str = Field(default="", max_length=512)
     product_type: str | None = Field(default=None, max_length=64)
     safe_stock_quantity: int | None = None
     status: Literal["new", "skipped", "error", "created"] = "new"

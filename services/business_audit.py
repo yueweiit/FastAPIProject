@@ -21,7 +21,7 @@ from services.log_http import PrivateLogRoute
 TABLE_NAME='business_operation_logs'
 CTX='business_audit_context'; PENDING='business_audit_pending'; CHECKPOINTS='business_audit_checkpoints'
 FIELDS={
-    Product:('sku','name','image','product_type','safe_stock_quantity'),
+    Product:('sku','name','specification','image','product_type','safe_stock_quantity'),
     User:('username','role','is_active','store_id'),
     Store:('platform','platform_store_id','name','country_or_region','settlement_currency','timezone','legal_entity','is_active'),
     ProductLine:('code','name','is_active'),

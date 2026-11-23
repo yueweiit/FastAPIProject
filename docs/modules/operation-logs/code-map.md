@@ -1,5 +1,7 @@
 # 操作日志代码与测试
 
+商品规格`specification`已纳入[业务审计字段白名单](../../../services/business_audit.py)及日志页面字段字典；创建/编辑/导入沿用原事务捕获和读取权限。规格前后值、审计失败时规格与其他商品修改共同回滚由[test_business_audit.py](../../../tests/test_business_audit.py)覆盖，不新增日志表或回填历史。
+
 | 能力 | 源码 | 来源 |
 | --- | --- | --- |
 | 选项/列表/详情 | [routers/operation_logs.py](../../../routers/operation_logs.py) | RequireAdmin；服务层查库前再次拒绝非管理员，保留来源/日期及开关校验 |

@@ -51,7 +51,7 @@
             document_date:'单据日期',amount_cny:'人民币金额',report_month:'核算月份',version_no:'版本号',report_type:'报表类型',subject:'科目',
             source_mode:'取数方式',source:'来源',platform_type:'平台类型',transaction_type:'交易类型',classification:'分类',
             settlement_entry_id:'结算来源ID',payout_id:'付款批次号',receipt_date:'回款日期',received_at:'回款时间',
-            reversed_by_id:'冲销记录ID',reverses_id:'被冲销记录ID',sku:'商品编码',name:'名称',image:'图片路径',product_type:'商品类型',safe_stock_quantity:'安全库存数量',
+            reversed_by_id:'冲销记录ID',reverses_id:'被冲销记录ID',sku:'商品编码',name:'名称',specification:'规格/型号',image:'图片路径',product_type:'商品类型',safe_stock_quantity:'安全库存数量',
             username:'用户名',role:'角色',is_active:'启用状态',password_set:'已设置密码（不记录内容）',password_changed:'已变更密码（不记录内容）',
             platform:'平台',platform_store_id:'平台店铺ID',country_or_region:'国家 / 地区',settlement_currency:'结算币种',timezone:'时区',legal_entity:'主体',code:'编码',
             product_line_id:'产品线ID',platform_product_id:'平台商品ID',platform_sku_id:'平台SKU ID',store_sku:'店铺SKU',effective_from:'生效日期',effective_to:'失效日期',

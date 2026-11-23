@@ -63,7 +63,7 @@ class ProductTypeRuleTests(unittest.TestCase):
             layer = self.layer(kind, 40)
             self.assertEqual(replay_inventory_provisions([layer], [], self.cutoff).balances[self.cutoff][1].impairment_units, Decimal(expected))
             self.assertEqual(batch_impairments([layer], self.cutoff)[1].impairment_units, Decimal(expected))
-        legacy = parsed([["OLD1", "旧商品", "安全库存商品", 40], ["OLD2", "旧商品", "safe_stock", 25]])
+        legacy = parsed([["OLD1", "旧商品", "standard", "安全库存商品", 40], ["OLD2", "旧商品", "standard", "safe_stock", 25]])
         self.assertTrue(all(not row.errors for row in legacy.rows))
         self.assertEqual([(row.product_type, row.safe_stock_quantity) for row in legacy.rows], [("stable",40),("stable",25)])
 
@@ -139,13 +139,13 @@ class ProductTypeRuleTests(unittest.TestCase):
         rows = []
         for kind, label in PRODUCT_TYPE_NAMES.items():
             for value in (kind, label):
-                rows.append([f"SKU-{len(rows)}", "商品", value, 40 if kind == "stable" else 0])
-        rows.append(["LEGACY", "旧文件", "稳健商品", 25])
+                rows.append([f"SKU-{len(rows)}", "商品", "standard", value, 40 if kind == "stable" else 0])
+        rows.append(["LEGACY", "旧文件", "standard", "稳健商品", 25])
         data = parsed(rows)
         self.assertTrue(all(not row.errors for row in data.rows))
         self.assertEqual([row.product_type for row in data.rows],
                          [kind for kind in PRODUCT_TYPE_NAMES for _ in range(2)] + ["stable"])
-        invalid = parsed([["INVALID", "商品", "不计跌价商品", 20]])
+        invalid = parsed([["INVALID", "商品", "standard", "不计跌价商品", 20]])
         self.assertEqual(invalid.rows[0].status, "error")
         template = load_workbook(build_product_import_template())
         options = template.active.data_validations.dataValidation[0].formula1
@@ -177,7 +177,7 @@ class ProductTypeApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_create_edit_history_and_export_round_trip(self):
         ids = {}
         for kind in PRODUCT_TYPE_NAMES:
-            response = await self.client.post("/products", data={"sku": kind, "name": kind,
+            response = await self.client.post("/products", data={"sku": kind, "name": kind, "specification": "标准款",
                 "product_type": kind, "safe_stock_quantity": 40 if kind == "stable" else 0})
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(response.json()["product_type"], kind)
@@ -185,7 +185,7 @@ class ProductTypeApiTests(unittest.IsolatedAsyncioTestCase):
         exported = await self.client.get("/products/export")
         self.assertEqual(exported.status_code, 200)
         sheet = load_workbook(BytesIO(exported.content)).active
-        self.assertEqual({sheet.cell(row, 5).value for row in range(2, sheet.max_row + 1)}, set(PRODUCT_TYPE_NAMES.values()))
+        self.assertEqual({sheet.cell(row, 6).value for row in range(2, sheet.max_row + 1)}, set(PRODUCT_TYPE_NAMES.values()))
         imported = parse_product_import("export.xlsx", exported.content)
         self.assertTrue(all(not row.errors for row in imported.rows))
         original = self.session.scalar(select(ProductImpairmentRule).where(
@@ -193,7 +193,7 @@ class ProductTypeApiTests(unittest.IsolatedAsyncioTestCase):
         original.effective_date = date(2026, 1, 1)
         self.session.commit()
         updated = await self.client.put(f"/products/{ids['stable']}", data={
-            "sku": "safe_stock", "name": "safe_stock", "product_type": "no_impairment"})
+            "sku": "safe_stock", "name": "safe_stock", "specification": "标准款", "product_type": "no_impairment"})
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertEqual(updated.json()["safe_stock_quantity"], 0)
         rules = self.session.scalars(select(ProductImpairmentRule).where(
@@ -202,10 +202,10 @@ class ProductTypeApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([(r.product_type, r.safe_stock_quantity) for r in rules],
                          [("stable", 40), ("no_impairment", 0)])
         self.assertEqual((await self.client.post("/products", data={
-            "sku": "bad", "name": "bad", "product_type": "unknown"})).status_code, 422)
+            "sku": "bad", "name": "bad", "specification": "标准款", "product_type": "unknown"})).status_code, 422)
 
     async def test_three_types_import_to_product_and_rule_together(self):
-        data = parsed([[kind, kind, kind, 40 if kind == "stable" else 0] for kind in PRODUCT_TYPE_NAMES])
+        data = parsed([[kind, kind, "standard", kind, 40 if kind == "stable" else 0] for kind in PRODUCT_TYPE_NAMES])
         # 使用真实SQLite提交；仅查重排序规则由既有模拟器提供。
         duplicate_check = FakeSession(data.rows)
         with patch.object(self.db, "execute", side_effect=duplicate_check.execute):

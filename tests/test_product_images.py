@@ -81,7 +81,7 @@ class ProductImageTests(unittest.IsolatedAsyncioTestCase):
         db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None)),
                              commit=AsyncMock())
         with patch("routers.products._save_product_image", new_callable=AsyncMock) as save, self.assertRaises(HTTPException):
-            await create_product(sku="IMG-TEST", name="Test", product_type="new", safe_stock_quantity=0,
+            await create_product(sku="IMG-TEST", name="Test", specification="standard", product_type="new", safe_stock_quantity=0,
                                  image=UploadFile(BytesIO(b"<html/>"), filename="image.html"), db=db,
                                  user=SimpleNamespace(role="viewer"))
         save.assert_not_awaited()
@@ -99,7 +99,7 @@ class ProductImageTests(unittest.IsolatedAsyncioTestCase):
             old = root / "existing.png"
             old.write_bytes(image_bytes())
             with patch("routers.products.UPLOAD_DIR", root), self.assertRaises(RuntimeError):
-                await create_product(sku="IMG-TEST", name="Test", product_type="new", safe_stock_quantity=0,
+                await create_product(sku="IMG-TEST", name="Test", specification="standard", product_type="new", safe_stock_quantity=0,
                                      image=UploadFile(BytesIO(image_bytes()), filename="photo.png"), db=db,
                                      user=SimpleNamespace(role="viewer"))
             self.assertEqual(list(root.iterdir()), [old])
@@ -115,7 +115,7 @@ class ProductImageTests(unittest.IsolatedAsyncioTestCase):
             old = root / "existing.png"
             old.write_bytes(image_bytes())
             with patch("routers.products.UPLOAD_DIR", root), self.assertRaises(RuntimeError):
-                await update_product(1, sku="IMG-TEST", name="Test", product_type=None, safe_stock_quantity=None,
+                await update_product(1, sku="IMG-TEST", name="Test", specification="standard", product_type=None, safe_stock_quantity=None,
                                      image=UploadFile(BytesIO(image_bytes()), filename="photo.png"), db=db,
                                      user=SimpleNamespace(role="viewer"))
             self.assertEqual(list(root.iterdir()), [old])

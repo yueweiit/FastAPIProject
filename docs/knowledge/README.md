@@ -27,7 +27,7 @@
 | 模块 | 主要内容 | 入口 |
 | --- | --- | --- |
 | 认证与用户 | EIMS/本地登录、Cookie/CSRF、用户启停/管理、店铺绑定 | [auth/overview.md](../modules/auth/overview.md) |
-| 商品 | SKU、Excel 批量新增、图片、图册、安全库存与商品类型历史 | [products/overview.md](../modules/products/overview.md) |
+| 商品 | SKU、规格/型号、Excel 批量新增、图片、图册、安全库存与商品类型历史 | [products/overview.md](../modules/products/overview.md) |
 | 入库与库存 | 批次、库存总览/每日进出、采购和物流成本、库存编辑约束 | [inventory/overview.md](../modules/inventory/overview.md) |
 | 销售与导入 | FIFO、平台文件、组合 SKU、人民币金额、待确认和撤销 | [sales/overview.md](../modules/sales/overview.md) |
 | 财务主数据 | 店铺、产品线、店铺 SKU 和平台 SKU 映射 | [finance-masters/overview.md](../modules/finance-masters/overview.md) |

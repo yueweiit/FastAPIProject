@@ -9,6 +9,7 @@ from services.cost_layers import adjusted_cost_expression
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import select, func, or_, case
@@ -44,6 +45,10 @@ from services.product_import import (
     preview_product_import,
 )
 from services.product_images import read_product_image
+from services.product_specification import (
+    SPECIFICATION_EXPORT_WARNING, SPECIFICATION_LABEL,
+    normalize_product_specification, specification_export_text,
+)
 from services.business_audit import BusinessAuditRoute
 
 router = APIRouter(prefix="/products", tags=["商品管理"], route_class=BusinessAuditRoute)
@@ -79,6 +84,7 @@ async def _save_product_image(normalized: tuple[str, bytes] | None) -> Path | No
 async def create_product(
     sku: str = Form(...),
     name: str = Form(...),
+    specification: str = Form(...),
     product_type: str = Form(default=PRODUCT_TYPE_STABLE),
     safe_stock_quantity: int = Form(default=0),
     image: UploadFile | None = File(None),
@@ -86,6 +92,7 @@ async def create_product(
     user: User = Depends(RequireAnyRole),
 ):
     """添加商品 - 所有角色可操作。"""
+    specification = normalize_product_specification(specification)
     existing = await db.execute(select(Product).where(Product.sku == sku))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"SKU已存在: {sku}")
@@ -97,6 +104,7 @@ async def create_product(
     product = Product(
         sku=sku,
         name=name,
+        specification=specification,
         image=f"/uploads/{saved_image.name}" if saved_image else None,
         product_type=product_type,
         safe_stock_quantity=safe_stock_quantity,
@@ -200,6 +208,7 @@ def _product_summary_stmt():
             Product.id,
             Product.sku,
             Product.name,
+            Product.specification,
             Product.image,
             Product.product_type,
             Product.safe_stock_quantity,
@@ -289,7 +298,7 @@ async def export_products(
     sheet = workbook.active
     sheet.title = "商品数据"
     sheet.append([
-        "图片", "商品ID", "SKU", "商品名称", "商品类型", "安全库存",
+        "图片", "商品ID", "SKU", "商品名称", SPECIFICATION_LABEL, "商品类型", "安全库存",
         "库存数量", "库存价值", "最近入库", "创建时间",
     ])
     header_fill = PatternFill("solid", fgColor="5B9BD5")
@@ -300,15 +309,18 @@ async def export_products(
     sheet.freeze_panes = "A2"
 
     for row_index, (product, stock_qty, stock_value, last_batch) in enumerate(rows, start=2):
+        specification = specification_export_text(product.specification)
         sheet.append([
-            "", product.id, product.sku, product.name,
+            "", product.id, product.sku, product.name, specification,
             PRODUCT_TYPE_NAMES[effective_product_type(product.product_type, product.safe_stock_quantity)],
             product.safe_stock_quantity, stock_qty, stock_value, last_batch, product.created_at,
         ])
-        # 导入的 SKU/名称按原始文本导出，保留前导零并避免被当作公式。
-        for column in (3, 4):
+        # 用户文本按字面量导出，保留前导零并避免被当作公式。
+        for column in (3, 4, 5):
             sheet.cell(row_index, column).data_type = "s"
             sheet.cell(row_index, column).number_format = "@"
+        if specification != product.specification:
+            sheet.cell(row_index, 5).comment = Comment(SPECIFICATION_EXPORT_WARNING, "FIFO")
         image_path = None
         if product.image:
             candidate = (BASE_DIR / product.image.lstrip("/")).resolve()
@@ -330,14 +342,14 @@ async def export_products(
     for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row):
         for cell in row:
             cell.alignment = Alignment(vertical="center", wrap_text=True)
-    for cell in sheet["H"][1:]:
+    for cell in sheet["I"][1:]:
         cell.number_format = '¥#,##0.00'
-    for column in ("I", "J"):
+    for column in ("J", "K"):
         for cell in sheet[column][1:]:
             cell.number_format = "yyyy-mm-dd hh:mm"
     for column, width in {
-        "A": 12, "B": 10, "C": 18, "D": 24, "E": 12, "F": 12,
-        "G": 12, "H": 16, "I": 20, "J": 20,
+        "A": 12, "B": 10, "C": 18, "D": 24, "E": 28, "F": 12,
+        "G": 12, "H": 12, "I": 16, "J": 20, "K": 20,
     }.items():
         sheet.column_dimensions[column].width = width
     sheet.auto_filter.ref = sheet.dimensions
@@ -358,6 +370,7 @@ def _enrich_product(product, stock_qty, stock_val, last_batch):
         id=product.id,
         sku=product.sku,
         name=product.name,
+        specification=product.specification,
         image=product.image,
         product_type=product.product_type,
         safe_stock_quantity=product.safe_stock_quantity,
@@ -378,6 +391,7 @@ async def update_product(
     product_id: int,
     sku: str = Form(...),
     name: str = Form(...),
+    specification: str = Form(...),
     product_type: str | None = Form(default=None),
     safe_stock_quantity: int | None = Form(default=None),
     image: UploadFile | None = File(None),
@@ -385,6 +399,7 @@ async def update_product(
     user: User = Depends(RequireAnyRole),
 ):
     """编辑商品 - 所有角色可操作。"""
+    specification = normalize_product_specification(specification)
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
@@ -397,6 +412,7 @@ async def update_product(
     normalized_image = await read_product_image(image)
     product.sku = sku
     product.name = name
+    product.specification = specification
     if product_type is not None or safe_stock_quantity is not None:
         previous_product_type = product.product_type
         previous_safe_stock_quantity = product.safe_stock_quantity

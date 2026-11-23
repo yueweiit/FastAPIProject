@@ -85,16 +85,16 @@ async def main() -> None:
         # 真实排序规则识别文件内大小写/重音差异造成的唯一键冲突。
         before = await counts()
         _, report, _ = await prepare([
-            [prefix + "CAFÉ", "甲", "稳健商品", 1],
-            [prefix.lower() + "cafe", "乙", "新品", 0],
+            [prefix + "CAFÉ", "甲", "standard", "稳健商品", 1],
+            [prefix.lower() + "cafe", "乙", "standard", "新品", 0],
         ])
         assert report.error_count == 2 and not report.can_import
         assert await counts() == before
         checks.append("实库排序规则查重及预览零写入")
 
         content = spreadsheet([
-            [prefix + "0001", "前导零商品", "新品", 0],
-            [prefix + "CAFÉ", "稳健商品", "稳健商品", 12],
+            [prefix + "0001", "前导零商品", "standard", "新品", 0],
+            [prefix + "CAFÉ", "稳健商品", "standard", "稳健商品", 12],
         ])
         parsed = parse_product_import("test.xlsx", content)
         async with sessions() as db:
@@ -110,11 +110,11 @@ async def main() -> None:
             assert len(rules) == 2 and all(rule.effective_date == date.today() for rule in rules)
         checks.append("商品与当日规则统一提交")
 
-        _, report, _ = await prepare([[prefix.lower() + "cafe", "不覆盖旧名称", "新品", 0]])
+        _, report, _ = await prepare([[prefix.lower() + "cafe", "不覆盖旧名称", "standard", "新品", 0]])
         assert report.skipped_count == 1 and report.rows[0].existing_product_name == "稳健商品"
         _, report, _ = await prepare([
-            [prefix + "0001", "前导零商品", "新品", 0],
-            [prefix + "CAFÉ", "稳健商品", "稳健商品", 12],
+            [prefix + "0001", "前导零商品", "standard", "新品", 0],
+            [prefix + "CAFÉ", "稳健商品", "standard", "稳健商品", 12],
         ])
         assert report.skipped_count == 2 and not report.can_import
         async with sessions() as db:
@@ -126,7 +126,7 @@ async def main() -> None:
                 raise AssertionError("旧预览被重复执行")
         checks.append("重复导入跳过且旧预览拒绝再次提交")
 
-        parsed, _, token = await prepare([[prefix + "STALE", "旧预览", "新品", 0]])
+        parsed, _, token = await prepare([[prefix + "STALE", "旧预览", "standard", "新品", 0]])
         async with sessions() as db:
             db.add(Product(sku=prefix + "STALE", name="并发手工新增", product_type="new"))
             await db.commit()
@@ -151,8 +151,8 @@ async def main() -> None:
 
         failing_sessions = async_sessionmaker(engine, class_=FailingRuleSession, expire_on_commit=False)
         parsed, _, token = await prepare([
-            [prefix + "ROLLBACK-A", "回滚甲", "新品", 0],
-            [prefix + "ROLLBACK-B", "回滚乙", "稳健商品", 1],
+            [prefix + "ROLLBACK-A", "回滚甲", "standard", "新品", 0],
+            [prefix + "ROLLBACK-B", "回滚乙", "standard", "稳健商品", 1],
         ])
         before = await counts()
         async with failing_sessions() as db:
@@ -178,8 +178,8 @@ async def main() -> None:
         candidates = []
         for side in ("A", "B"):
             candidates.append(await prepare([
-                [prefix + "CONCURRENT", "并发共享 SKU", "新品", 0],
-                [prefix + "CONCURRENT-" + side, "并发独有 SKU", "新品", 0],
+                [prefix + "CONCURRENT", "并发共享 SKU", "standard", "新品", 0],
+                [prefix + "CONCURRENT-" + side, "并发独有 SKU", "standard", "新品", 0],
             ]))
 
         async def contender(candidate):
@@ -197,7 +197,7 @@ async def main() -> None:
         assert await counts() == (before[0] + 2, before[1] + 2)
         checks.append("真实并发冲突仅一批成功且另一批完整回滚")
 
-        rows = [[prefix + f"LIMIT-{index:04d}", "上限商品", "新品", 0]
+        rows = [[prefix + f"LIMIT-{index:04d}", "上限商品", "standard", "新品", 0]
                 for index in range(MAX_IMPORT_ROWS)]
         parsed, report, token = await prepare(rows)
         assert report.new_count == MAX_IMPORT_ROWS and report.can_import
@@ -225,7 +225,7 @@ async def main() -> None:
             response = await client.get("/products/import-template")
             assert response.status_code == 200
             assert load_workbook(BytesIO(response.content)).sheetnames == ["商品导入", "填写说明"]
-            content = spreadsheet([[prefix + "HTTP", "HTTP 商品", "新品", 0]])
+            content = spreadsheet([[prefix + "HTTP", "HTTP 商品", "standard", "新品", 0]])
             response = await client.post("/products/import/preview", files={"file": ("products.xlsx", content)})
             assert response.status_code == 200 and response.json()["can_import"]
             response = await client.post("/products/import", files={"file": ("products.xlsx", content)},

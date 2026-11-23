@@ -156,20 +156,23 @@ class AuditRouteTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_actual_product_and_master_routes_keep_old_permissions_and_rollback_on_audit_failure(self):
         self.actor=NS(id=1,username='actor',role='viewer',store_id=7)
-        response=await self.client.post('/products',data={'sku':'P1','name':'商品','product_type':'stable','safe_stock_quantity':'2'})
+        response=await self.client.post('/products',data={'sku':'P1','name':'商品','specification':'黑色','product_type':'stable','safe_stock_quantity':'2'})
         self.assertEqual(response.status_code,200,response.text)
         key=response.json()['id'];self.assertEqual(len(self.rows()),1)
-        response=await self.client.put(f'/products/{key}',data={'sku':'P1','name':'更名','product_type':'stable','safe_stock_quantity':'3'})
+        response=await self.client.put(f'/products/{key}',data={'sku':'P1','name':'更名','specification':'白色','product_type':'stable','safe_stock_quantity':'3'})
         self.assertEqual(response.status_code,200,response.text);self.assertEqual(len(self.rows()),2)
         self.assertEqual(self.rows()[1].before_values['safe_stock_quantity'],2)
+        self.assertEqual(self.rows()[1].before_values['specification'],'黑色')
+        self.assertEqual(self.rows()[1].after_values['specification'],'白色')
         self.actor=NS(id=1,username='actor',role='admin',store_id=None)
         response=await self.client.post('/finance-masters/product-lines',json={'code':'A','name':'分类'})
         self.assertEqual(response.status_code,201,response.text)
         self.assertEqual(self.rows()[-1].module,'masters')
         BusinessOperationLog.__table__.drop(self.engine)
-        response=await self.client.put(f'/products/{key}',data={'sku':'P1','name':'不能提交'})
+        response=await self.client.put(f'/products/{key}',data={'sku':'P1','name':'不能提交','specification':'不能提交'})
         self.assertEqual(response.status_code,503,response.text)
         self.assertEqual(self.session.get(Product,key).name,'更名')
+        self.assertEqual(self.session.get(Product,key).specification,'白色')
 
     async def test_account_route_never_captures_request_password_and_keeps_actor_snapshot(self):
         with patch('routers.auth.hash_password',return_value='hashed-sensitive-fixture'):

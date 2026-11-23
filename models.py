@@ -133,6 +133,7 @@ class Product(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     sku: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
+    specification: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image: Mapped[str | None] = mapped_column(String(500), nullable=True)  # 图片路径
     product_type: Mapped[str] = mapped_column(String(16), default="stable")
     safe_stock_quantity: Mapped[int] = mapped_column(Integer, default=0)

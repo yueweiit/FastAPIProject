@@ -4,7 +4,7 @@
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
-| `POST /products` | [create_product](../../../routers/products.py) | admin/operator/viewer | sku、name、product_type、safe_stock_quantity、image | ProductResponse |
+| `POST /products` | [create_product](../../../routers/products.py) | admin/operator/viewer | sku、name、specification、product_type、safe_stock_quantity、image | ProductResponse |
 | `GET /products/import-template` | [product_import_template](../../../routers/products.py) | admin/operator/viewer | 无 | 商品导入模板 .xlsx |
 | `POST /products/import/preview` | [preview_products](../../../routers/products.py) | admin/operator/viewer | multipart：file | ProductImportResponse；只读预览 |
 | `POST /products/import` | [import_products](../../../routers/products.py) | admin/operator/viewer | multipart：file、preview_token | ProductImportResponse；整批新增 |
@@ -12,18 +12,18 @@
 | `GET /products/options` | [list_product_options](../../../routers/products.py) | admin/operator/viewer | 无 | list[ProductOptionResponse] |
 | `GET /products` | [list_products](../../../routers/products.py) | admin/operator/viewer | keyword、page、page_size、prioritize_exact_sku | list[ProductResponse] \| ProductPageResponse |
 | `GET /products/export` | [export_products](../../../routers/products.py) | admin/operator/viewer | product_ids | Excel 文件 |
-| `PUT /products/{product_id}` | [update_product](../../../routers/products.py) | admin/operator/viewer | product_id、sku、name、product_type、safe_stock_quantity、image | ProductResponse |
+| `PUT /products/{product_id}` | [update_product](../../../routers/products.py) | admin/operator/viewer | product_id、sku、name、specification、product_type、safe_stock_quantity、image | ProductResponse |
 | `DELETE /products/{product_id}` | [delete_product](../../../routers/products.py) | admin/operator/viewer | product_id | ok |
 
 ## 请求和查询
 
-单条商品 POST/PUT 使用 multipart/form-data；sku、name 必填，image 可选。POST 的 product_type 默认 stable、safe_stock_quantity 默认 0；PUT 的两个规则字段可不传，保留现值。PUT 是商品表单更新，不是 JSON ProductCreate；schemas.py 中 ProductCreate 不能直接当该接口的接收契约。
+单条商品 POST/PUT 使用 multipart/form-data；sku、name、specification 必填，image 可选。规格先将 CRLF/CR/LF 及 Unicode 行/段分隔符转为空格，再去首尾空白，须为 1–255 字符；缺参/空串由 FastAPI 返回 422，空白或超长返回 422 和稳定 code `product_specification_required` / `product_specification_too_long`，附兼容 message。原文中出现 XML 1.0 不支持的控制字符、孤立代理项或 U+FFFE/U+FFFF 时返回 `product_specification_invalid_characters`，首尾字符也不静默删除。历史记录可以读取空规格，但任何编辑保存都必须补齐，旧写入客户端需同步传参。POST 的 product_type 默认 stable、safe_stock_quantity 默认 0；PUT 的两个规则字段可不传，保留现值。PUT 是商品表单更新，不是 JSON ProductCreate；schemas.py 中 ProductCreate 不能直接当该接口的接收契约。
 
 `product_type`正常写入为stable、new、no_impairment三种；兼容旧safe_stock输入并规范为stable。未知值或负安全库存返回422；稳健商品保留安全库存，新品/不跌价商品保存为0。查询不批量改写旧存储，前端及导出将safe_stock显示为稳健商品并保留数量。历史规则、当日生效事务及数组/分页契约不变，详见[业务规则](overview.md#业务规则)。
 
 图片仅接受可解码的JPEG/PNG/GIF/WebP；扩展名不支持、内容伪造或损坏返回422，原文件超过5 MiB、像素超过2000万或重新编码后超过10 MiB返回413。图片会重新编码，动图保留首帧；保存和静态访问规则见[图片流程](workflow.md#创建与图片)。`/uploads`中非图片扩展名返回404，已有图片地址仍公开。
 
-GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认20，1–100）；名称或 SKU 模糊查询。不传 page 是数组，传 page 是 ProductPageResponse。options 返回 id、sku、name、image，适合下拉选择。
+GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认20，1–100）；名称或 SKU 模糊查询。不传 page 是数组，传 page 是 ProductPageResponse。列表及 options 新增可空 specification；options 返回 id、sku、name、specification、image，适合下拉选择。
 
 联想组件显式传prioritize_exact_sku=true：有非空keyword时，先将忽略大小写的完整SKU字面匹配置顶，再按商品ID倒序排列，最后分页；即使存在超过20个近似SKU，精确项仍在第一页。百分号/下划线仅在已有模糊过滤中保留通配语义，精确排序使用相等比较。参数默认false，普通列表和内部库存查询的顺序、总数、分页/数组格式及权限保持兼容；不传关键字或没有精确项时沿用原顺序。图册搜索复用此参数，分页沿用同一keyword，没有新增筛选接口或改变商品共享权限。
 
@@ -33,7 +33,7 @@ GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认
 
 ## 批量新增契约
 
-模板四列为 SKU、商品名称、商品类型、安全库存，详细校验规则及事务边界由[导入流程](workflow.md#商品-excel-批量新增)维护。模板与结果均为 openpyxl 生成的 .xlsx，上传只支持 .xlsx，最多 5 MB、2,000 个非空数据行。预览不写数据，确认必须重新上传同一文件和服务端签发的 preview_token；仅提交前端 rows 不会新增商品。
+模板五列为 SKU、商品名称、规格/型号、商品类型、安全库存，详细校验规则及事务边界由[导入流程](workflow.md#商品-excel-批量新增)维护。模板与结果均为 openpyxl 生成的 .xlsx，上传只支持 .xlsx，最多 5 MB、2,000 个非空数据行。预览不写数据，确认必须重新上传同一文件和服务端签发的 preview_token；仅提交前端 rows 不会新增商品。
 
 `ProductImportResponse` 字段：
 
@@ -47,10 +47,10 @@ GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认
 | can_import | 有可新增行且所有行无错误时为 true |
 | preview_token | 仅可提交的预览返回；绑定用户/文件/结果，有效 15 分钟 |
 | message | 中文处理说明 |
-| rows | 每行原始 row_number、sku、name、product_type、safe_stock_quantity、status、message、errors、已有商品 ID/名称、新增 product_id |
+| rows | 每行原始 row_number、sku、name、specification、product_type、safe_stock_quantity、status、message、errors、已有商品 ID/名称、新增 product_id |
 
 行状态：new 可新增、skipped 已存在跳过、error 需修正、created 已新增。errors 为 `{field,message}` 数组。字段错误及文件内重复 SKU 的预览返回 HTTP 200，error_count > 0、can_import=false、preview_token=null；文件格式、表头、条数等无法解析错误返回 400，超 5 MB 返回 413。缺少必需参数返回 422，无效预览返回 400，过期/变更/并发唯一键冲突返回 409，确认失败不会保留部分新增。
 
-结果下载接收 `ProductImportResultRequest(rows)`，最多 2,000 行，经 Pydantic 校验后将当前清单转换为 Excel，不读取或写入数据库。它只生成展示文件，不能作为服务器对客户端行状态的真实性背书。原始行号、商品 ID、状态和错误保留；SKU、名称等文本不会被转换为 Excel 公式。实现：[product_import.py](../../../services/product_import.py)；测试：[test_product_import.py](../../../tests/test_product_import.py)。
+结果下载接收 `ProductImportResultRequest(rows)`，最多 2,000 行，经 Pydantic 校验后将当前清单转换为 Excel，不读取或写入数据库。它只生成展示文件，不能作为服务器对客户端行状态的真实性背书。原始行号、商品 ID、状态和错误保留；SKU、名称、规格等文本不会被转换为 Excel 公式。实现：[product_import.py](../../../services/product_import.py)；测试：[test_product_import.py](../../../tests/test_product_import.py)。
 
 商品已有盘点记录时删除返回409 `inventory_count_product_referenced`，保留历史；并发外键冲突回滚并返回409 product_referenced。图片仅在数据库删除提交后清理，清理失败保留日志并返回成功及product_image_cleanup_failed警示，不提前删除图片。依据：routers/products.py的delete_product。

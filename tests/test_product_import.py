@@ -86,14 +86,18 @@ class ProductImportParsingTests(unittest.TestCase):
         sheet = workbook["商品导入"]
         self.assertEqual([cell.value for cell in sheet[1]], list(IMPORT_HEADERS))
         self.assertEqual(sheet["A2"].number_format, "@")
-        self.assertEqual(len(sheet.data_validations.dataValidation), 2)
+        self.assertEqual(len(sheet.data_validations.dataValidation), 3)
+        self.assertEqual(sheet["C2"].number_format, "@")
+        self.assertEqual(str(sheet.data_validations.dataValidation[0].sqref), "D2:D2001")
+        self.assertEqual(str(sheet.data_validations.dataValidation[1].sqref), "E2:E2001")
+        self.assertEqual(str(sheet.data_validations.dataValidation[2].sqref), "C2:C2001")
         self.assertIn("填写说明", workbook.sheetnames)
         with self.assertRaises(HTTPException) as error:
             parse_product_import("template.xlsx", content)
         self.assertIn("没有可导入", error.exception.detail)
 
     def test_parsing_trims_strings_preserves_zeroes_and_normalizes_types(self):
-        data = parsed([[" 0000123 ", " 商品 A ", "新品", None], ["SKU-B", "商品 B", "stable", "12"]])
+        data = parsed([[" 0000123 ", " 商品 A ", "standard", "新品", None], ["SKU-B", "商品 B", "standard", "stable", "12"]])
         self.assertEqual(data.rows[0].sku, "0000123")
         self.assertEqual(data.rows[0].name, "商品 A")
         self.assertEqual(data.rows[0].product_type, "new")
@@ -103,11 +107,11 @@ class ProductImportParsingTests(unittest.TestCase):
 
     def test_invalid_cells_are_reported_by_original_row_and_field(self):
         data = parsed([
-            [None, "", "未知类型", -1],
-            [1234, "商品", "新品", 1],
-            ["A" * 65, "B" * 256, "稳健商品", 1.5],
-            ["SKU-D", "商品", "稳健商品", True],
-            ["SKU-E", "商品", "稳健商品", 2147483648],
+            [None, "", "standard", "未知类型", -1],
+            [1234, "商品", "standard", "新品", 1],
+            ["A" * 65, "B" * 256, "standard", "稳健商品", 1.5],
+            ["SKU-D", "商品", "standard", "稳健商品", True],
+            ["SKU-E", "商品", "standard", "稳健商品", 2147483648],
         ])
         self.assertEqual(data.rows[0].row_number, 2)
         self.assertEqual({error.field for error in data.rows[0].errors},
@@ -118,24 +122,24 @@ class ProductImportParsingTests(unittest.TestCase):
     def test_import_columns_reject_formulas_and_ignore_inventory_columns(self):
         data = parse_product_import(
             "products.xlsx",
-            spreadsheet([["SKU-A", "=2+2", "新品", 0, 1000]],
+            spreadsheet([["SKU-A", "=2+2", "standard", "新品", 0, 1000]],
                         (*IMPORT_HEADERS, "库存数量")),
         )
         self.assertEqual(data.rows[0].errors[0].field, "商品名称")
         valid = parse_product_import("export.xlsx", spreadsheet(
-            [["SKU-A", "商品", "新品", 0, "=2+2"]], (*IMPORT_HEADERS, "库存数量"),
+            [["SKU-A", "商品", "standard", "新品", 0, "=2+2"]], (*IMPORT_HEADERS, "库存数量"),
         ))
         self.assertFalse(valid.rows[0].errors)
 
     def test_excel_error_cells_are_not_imported_as_literal_product_values(self):
-        data = parsed([["#N/A", "#VALUE!", "#REF!", "#NUM!"]])
+        data = parsed([["#N/A", "#VALUE!", "standard", "#REF!", "#NUM!"]])
         row = data.rows[0]
         self.assertEqual(row.status, "error")
         self.assertEqual({error.field for error in row.errors}, {"SKU", "商品名称", "商品类型", "安全库存"})
         self.assertIsNone(row.safe_stock_quantity)
 
     def test_empty_lines_preserve_excel_row_numbers(self):
-        data = parsed([[None, None, None, None], ["SKU-A", "商品", "新品", 0]])
+        data = parsed([[None, None, None, None, None], ["SKU-A", "商品", "standard", "新品", 0]])
         self.assertEqual(data.rows[0].row_number, 3)
 
     def test_bad_headers_missing_and_duplicate_columns_are_file_errors(self):
@@ -154,10 +158,10 @@ class ProductImportParsingTests(unittest.TestCase):
             self.assertEqual(error.exception.status_code, status)
 
     def test_row_limit_accepts_2000_and_rejects_2001(self):
-        rows = [[f"SKU-{index}", "商品", "新品", 0] for index in range(MAX_IMPORT_ROWS)]
+        rows = [[f"SKU-{index}", "商品", "standard", "新品", 0] for index in range(MAX_IMPORT_ROWS)]
         self.assertEqual(len(parsed(rows).rows), MAX_IMPORT_ROWS)
         with self.assertRaises(HTTPException):
-            parsed(rows + [["OVER-LIMIT", "商品", "新品", 0]])
+            parsed(rows + [["OVER-LIMIT", "商品", "standard", "新品", 0]])
 
     def test_xml_entities_macros_and_archive_expansion_are_rejected(self):
         for filename, content, cap in (
@@ -201,7 +205,7 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sheet["C2"].number_format, "@")
 
     async def test_preview_does_not_write_and_existing_skus_are_skipped(self):
-        data = parsed([["SKU-A", "新名字", "新品", 0], ["SKU-B", "商品 B", "稳健商品", 12]])
+        data = parsed([["SKU-A", "新名字", "standard", "新品", 0], ["SKU-B", "商品 B", "standard", "稳健商品", 12]])
         db = FakeSession(data.rows, {"SKU-A": (1, "已有名字")})
         report = await preview_product_import(db, data)
         self.assertEqual((report.new_count, report.skipped_count, report.error_count), (1, 1, 0))
@@ -211,19 +215,20 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data.rows[0].status, "new")
 
     async def test_file_duplicates_block_the_whole_batch_even_if_sku_already_exists(self):
-        data = parsed([["SKU-A", "A", "新品", 0], ["SKU-A", "B", "新品", 0], ["SKU-C", "C", "新品", 0]])
+        data = parsed([["SKU-A", "A", "standard", "新品", 0], ["SKU-A", "B", "standard", "新品", 0], ["SKU-C", "C", "standard", "新品", 0]])
         report = await preview_product_import(FakeSession(data.rows, duplicates={"SKU-A"}), data)
         self.assertFalse(report.can_import)
         self.assertEqual((report.error_count, report.new_count), (2, 1))
 
     async def test_confirm_creates_products_and_rules_in_one_commit(self):
-        data = parsed([["SKU-A", "A", "新品", 0], ["SKU-B", "B", "稳健商品", 12]])
+        data = parsed([["SKU-A", "A", "standard", "新品", 0], ["SKU-B", "B", "standard", "稳健商品", 12]])
         db = FakeSession(data.rows, {"SKU-A": (1, "保留")})
         preview = await preview_product_import(db, data)
         token = issue_product_import_token(data, preview, 1, "test-signing-key")
         result = await confirm_product_import(db, data, token, 1, "test-signing-key")
         self.assertEqual((result.created_count, result.skipped_count), (1, 1))
         self.assertEqual(len(db.added), 2)
+        self.assertEqual(db.added[0].specification, "standard")
         self.assertEqual(db.added[1].product_id, db.added[0].id)
         self.assertEqual(db.added[1].product_type, "stable")
         self.assertEqual(db.added[1].safe_stock_quantity, 12)
@@ -231,7 +236,7 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.rows[1].status, "created")
 
     async def test_changed_database_requires_new_preview_without_writes(self):
-        data = parsed([["SKU-A", "A", "新品", 0]])
+        data = parsed([["SKU-A", "A", "standard", "新品", 0]])
         db = FakeSession(data.rows)
         token = issue_product_import_token(data, await preview_product_import(db, data), 1, "test-key")
         db.existing = {"SKU-A": (2, "其他用户添加")}
@@ -242,7 +247,7 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         db.commit.assert_not_awaited()
 
     async def test_constraint_conflict_rolls_back_entire_transaction(self):
-        data = parsed([["SKU-A", "A", "新品", 0]])
+        data = parsed([["SKU-A", "A", "standard", "新品", 0]])
         db = FakeSession(data.rows)
         token = issue_product_import_token(data, await preview_product_import(db, data), 1, "test-key")
         db.flush_error = IntegrityError("insert", {}, Exception("duplicate"))
@@ -253,7 +258,7 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         db.commit.assert_not_awaited()
 
     async def test_rule_commit_failure_also_rolls_back(self):
-        data = parsed([["SKU-A", "A", "新品", 0]])
+        data = parsed([["SKU-A", "A", "standard", "新品", 0]])
         db = FakeSession(data.rows)
         token = issue_product_import_token(data, await preview_product_import(db, data), 1, "test-key")
         db.commit.side_effect = RuntimeError("rule write failed")
@@ -262,10 +267,10 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
         db.rollback.assert_awaited_once()
 
     async def test_all_existing_or_invalid_rows_have_no_confirmation_token(self):
-        data = parsed([["SKU-A", "A", "新品", 0]])
+        data = parsed([["SKU-A", "A", "standard", "新品", 0]])
         report = await preview_product_import(FakeSession(data.rows, {"SKU-A": (1, "A")}), data)
         self.assertFalse(report.can_import)
-        invalid = parsed([["SKU-B", "", "新品", 0]])
+        invalid = parsed([["SKU-B", "", "standard", "新品", 0]])
         report = await preview_product_import(FakeSession(invalid.rows), invalid)
         self.assertFalse(report.can_import)
         self.assertEqual(report.error_count, 1)
@@ -273,13 +278,13 @@ class ProductImportTransactionTests(unittest.IsolatedAsyncioTestCase):
 
 class ProductImportTokenTests(unittest.TestCase):
     def setUp(self):
-        self.data = parsed([["SKU-A", "A", "新品", 0]])
+        self.data = parsed([["SKU-A", "A", "standard", "新品", 0]])
         self.report = SimpleNamespace(rows=self.data.rows)
         with patch("services.product_import.time.time", return_value=100):
             self.token = issue_product_import_token(self.data, self.report, 7, "test-key")
 
     def test_token_is_bound_to_user_file_signature_and_expiry(self):
-        changed = parsed([["SKU-B", "B", "新品", 0]])
+        changed = parsed([["SKU-B", "B", "standard", "新品", 0]])
         for token, data, user, secret, now in (
             (self.token, self.data, 8, "test-key", 101),
             (self.token, changed, 7, "test-key", 101),
@@ -296,7 +301,7 @@ class ProductImportTokenTests(unittest.TestCase):
 
 class ProductImportApiTests(unittest.TestCase):
     def setUp(self):
-        self.content = spreadsheet([["SKU-A", "商品", "新品", 0]])
+        self.content = spreadsheet([["SKU-A", "商品", "standard", "新品", 0]])
         self.db = FakeSession(parse_product_import("products.xlsx", self.content).rows)
         app = FastAPI()
         app.include_router(router)
@@ -322,7 +327,7 @@ class ProductImportApiTests(unittest.TestCase):
         self.assertEqual(confirmed.json()["created_count"], 1)
         downloaded = self.client.post("/products/import/result", json={"rows": confirmed.json()["rows"]})
         self.assertEqual(downloaded.status_code, 200)
-        self.assertEqual(load_workbook(BytesIO(downloaded.content)).active["F2"].value, "已新增")
+        self.assertEqual(load_workbook(BytesIO(downloaded.content)).active["G2"].value, "已新增")
 
     def test_template_and_missing_preview_token(self):
         response = self.client.get("/products/import-template")
@@ -332,7 +337,7 @@ class ProductImportApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_invalid_rows_preview_has_no_token_and_file_errors_use_http_400(self):
-        self.content = spreadsheet([["SKU-A", "", "新品", 0]])
+        self.content = spreadsheet([["SKU-A", "", "standard", "新品", 0]])
         self.db.rows = parse_product_import("products.xlsx", self.content).rows
         response = self.client.post("/products/import/preview", files={"file": ("products.xlsx", self.content)})
         self.assertEqual(response.status_code, 200)

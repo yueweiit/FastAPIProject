@@ -23,9 +23,10 @@
         #sec-batches > .card:first-child .form-row, #edit-batch-modal .form-row { display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)); gap:14px; }
         .form-group { display:flex; flex-direction:column; gap:6px; min-width:0; }
         .form-group label { font-size:12px; color:var(--muted); font-weight:600; }
-        .form-group input, .form-group select { padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; width:170px; background:#fff; color:var(--ink); transition:.18s ease; }
+        .form-group input, .form-group select, .form-group .product-specification-input { padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; width:170px; background:#fff; color:var(--ink); transition:.18s ease; }
+        .product-specification-input { font-family:inherit; line-height:18px; min-height:40px; resize:vertical; }
         #sec-batches > .card:first-child .form-group input, #sec-batches > .card:first-child .form-group select, #edit-batch-modal .form-group input, #edit-batch-modal .form-group select { width:100%; }
-        .form-group input:focus, .form-group select:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
+        .form-group input:focus, .form-group select:focus, .form-group .product-specification-input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
         button.btn { padding:10px 18px; border:1px solid transparent; border-radius:7px; cursor:pointer; font-size:13px; font-weight:700; transition:.18s ease; }
         .btn-primary { background:var(--accent); color:#fff; box-shadow:0 3px 8px rgba(233,69,96,.2); }
         .btn-primary:hover { background:var(--accent-dark); transform:translateY(-1px); }
@@ -535,12 +536,14 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="p-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="p-name" placeholder="蓝牙耳机"></div>
+                    <div class="form-group"><label id="p-specification-label" for="p-specification" data-product-type-text="specificationRequiredLabel"></label><textarea id="p-specification" class="product-specification-input" rows="1" maxlength="255" required aria-required="true"></textarea></div>
                     <div class="form-group"><label id="p-type-label">商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
                     <div class="form-group"><label>安全库存</label><input id="p-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片</label><input id="p-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createProduct()">添加</button></div>
                 </div>
                 <p class="product-import-hint" data-help-tip data-help-anchor="#p-type-label" data-product-type-text="ruleHelp"></p>
+                <p class="product-import-hint" data-help-tip data-help-anchor="#p-specification-label" data-product-type-text="specificationHelp"></p>
                 <div id="p-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
@@ -559,7 +562,7 @@
             <div id="product-import-summary" class="product-import-summary" hidden></div>
             <div id="product-import-preview" class="product-import-preview" hidden>
                 <table>
-                    <thead><tr><th>原行号</th><th>SKU</th><th>商品名称</th><th>商品类型</th><th>安全库存</th><th>处理结果</th><th>说明</th></tr></thead>
+                    <thead><tr><th>原行号</th><th>SKU</th><th>商品名称</th><th data-product-type-text="specification"></th><th>商品类型</th><th>安全库存</th><th>处理结果</th><th>说明</th></tr></thead>
                     <tbody id="product-import-tbody"></tbody>
                 </table>
             </div>
@@ -575,12 +578,14 @@
                 <div class="form-row">
                     <div class="form-group"><label>SKU</label><input id="ep-sku" placeholder="BT-001"></div>
                     <div class="form-group"><label>产品名称</label><input id="ep-name" placeholder="蓝牙耳机"></div>
+                    <div class="form-group"><label id="ep-specification-label" for="ep-specification" data-product-type-text="specificationRequiredLabel"></label><textarea id="ep-specification" class="product-specification-input" rows="1" maxlength="255" required aria-required="true" aria-describedby="ep-specification-help"></textarea><small id="ep-specification-help" data-product-type-text="specificationLegacyHelp" hidden></small></div>
                     <div class="form-group"><label id="ep-type-label">商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
                     <div class="form-group"><label>安全库存</label><input id="ep-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
                     <div class="form-group"><label>产品图片(留空不换)</label><input id="ep-image" type="file" accept="image/*"></div>
                     <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditProduct()">保存</button></div>
                 </div>
                 <p class="product-import-hint" data-help-tip data-help-anchor="#ep-type-label" data-product-type-text="ruleHelp"></p>
+                <p class="product-import-hint" data-help-tip data-help-anchor="#ep-specification-label" data-product-type-text="specificationHelp"></p>
                 <div id="ep-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
             </form>
         </div>
@@ -635,7 +640,7 @@
             </div>
             <div class="table-scroll">
             <table class="product-table">
-                <thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)" aria-label="全选商品"></th><th>图片</th><th>SKU</th><th>名称</th><th>类型</th><th>安全库存</th><th>库存</th><th>库存价值</th><th>最近入库</th><th>操作</th></tr></thead>
+                <thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)" aria-label="全选商品"></th><th>图片</th><th>SKU</th><th>名称</th><th data-product-type-text="specification"></th><th>类型</th><th>安全库存</th><th>库存</th><th>库存价值</th><th>最近入库</th><th>操作</th></tr></thead>
                 <tbody id="products-tbody"></tbody>
             </table>
             </div>
@@ -1082,6 +1087,8 @@ function formatApiError(detail, fallback) {
     }
     if (detail && typeof detail === 'object') {
         if (detail.code === 'sales_import_result_not_found') return window.PageInteractions?.text('importResultNotFound') || detail.message;
+        const productErrorKey = {product_specification_required: 'specificationRequired', product_specification_too_long: 'specificationTooLong', product_specification_invalid_characters: 'specificationInvalidCharacters'}[detail.code];
+        if (productErrorKey) return productTypeText(productErrorKey);
         const batchErrorKey = {batch_edit_version_required: 'batchEditVersionRequired', batch_edit_conflict: 'batchEditConflict',
             batch_quantity_inconsistent: 'batchQuantityInconsistent', batch_quantity_below_sold: 'batchQuantityBelowSold',
             batch_cost_controls_required: 'batchCostControlsRequired', batch_delete_retired: 'batchDeleteRetired',
@@ -1469,9 +1476,16 @@ function clearImage() {
 
 function productTypeText(key) {
     const messages = {'zh-CN': {
+        specification: '规格/型号', specificationRequiredLabel: '规格/型号（必填）',
+        specificationPlaceholder: '例如：黑色 / 标准版、500 mL',
+        specificationRequired: '请填写规格/型号', specificationTooLong: '规格/型号不能超过 255 字符',
+        specificationInvalidCharacters: '规格/型号含无法保存到 Excel 的字符，请删除后重试',
+        specificationHelp: '规格/型号必填，最多255字符。换行保存时统一转为空格，避免词语拼接；不支持的特殊字符需删除后再保存。',
+        specificationMissing: '待补充', specificationLegacyHelp: '此商品尚未填写规格/型号，请补齐后保存。',
+        saveFailed: '商品保存失败',
         stable: '稳健商品', new: '新品', safe_stock: '稳健商品', no_impairment: '不跌价商品',
         ruleHelp: '三选一：稳健商品每日计提1%，设置安全库存时仅对超出部分计提；新品全部库存每日0.5%；不跌价商品停止新增计提。累计上限90%，已有准备保留并随销售转销。',
-        importHelp: '新增商品基础资料，已有 SKU 自动跳过。库存、成本和图片通过对应功能单独维护；新品和不跌价商品安全库存填0。安全库存仅适用于稳健商品；旧安全库存商品兼容为稳健商品。',
+        importHelp: '新增商品基础资料，规格/型号必填；旧模板需补充该列，历史空规格需补齐后导入。已有 SKU 校验后跳过、不更新。库存、成本和图片通过对应功能单独维护；新品和不跌价商品安全库存填0。安全库存仅适用于稳健商品；旧安全库存商品兼容为稳健商品。',
     }};
     return (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 }
@@ -1496,6 +1510,9 @@ function initializeProductTypes() {
     });
     toggleSafeStockField('p');
     toggleSafeStockField('ep');
+    for (const prefix of ['p', 'ep']) {
+        document.getElementById(`${prefix}-specification`).placeholder = productTypeText('specificationPlaceholder');
+    }
 }
 
 function toggleSafeStockField(prefix) {
@@ -1505,9 +1522,25 @@ function toggleSafeStockField(prefix) {
     if (!supportsSafeStock) input.value = 0;
 }
 
+function readProductSpecification(prefix) {
+    const input = document.getElementById(`${prefix}-specification`);
+    const raw = input.value;
+    const value = raw.replace(/\r\n|[\r\n\u2028\u2029]/g, ' ').trim();
+    const error = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ud800-\udfff\ufffe\uffff]/u.test(raw) ? productTypeText('specificationInvalidCharacters')
+        : !value ? productTypeText('specificationRequired')
+        : [...value].length > 255 ? productTypeText('specificationTooLong') : '';
+    input.setCustomValidity(error);
+    if (error) {
+        input.reportValidity();
+        throw new Error(error);
+    }
+    return value;
+}
+
 async function createProduct() {
     try {
         const formData = new FormData();
+        formData.append('specification', readProductSpecification('p'));
         formData.append('sku', document.getElementById('p-sku').value);
         formData.append('name', document.getElementById('p-name').value);
         formData.append('product_type', document.getElementById('p-product-type').value);
@@ -1516,12 +1549,13 @@ async function createProduct() {
         if (imageFile) formData.append('image', imageFile);
         const res = await fetch('/products', { method: 'POST', body: formData, headers: authHeaders() });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        if (!res.ok) throw new Error(formatApiError(data.detail, productTypeText('saveFailed')));
         showMsg(`商品创建成功: ${data.sku} (ID: ${data.id})`);
         invalidateProductOptions();
         loadProducts();
         document.getElementById('p-sku').value = '';
         document.getElementById('p-name').value = '';
+        document.getElementById('p-specification').value = '';
         document.getElementById('p-product-type').value = 'stable';
         document.getElementById('p-safe-stock-quantity').value = 0;
         toggleSafeStockField('p');
@@ -1653,7 +1687,7 @@ function renderProductImportReport(report) {
         const errors = row.errors.map(error => `${error.field}：${error.message}`).join('；');
         const existing = row.existing_product_name ? `已有商品：${row.existing_product_name}；` : '';
         return `<tr><td>${row.row_number}</td><td>${escapeHtml(row.sku)}</td>
-            <td>${escapeHtml(row.name)}</td><td>${escapeHtml(type || '-')}</td>
+            <td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.specification || productTypeText('specificationMissing'))}</td><td>${escapeHtml(type || '-')}</td>
             <td>${row.safe_stock_quantity ?? '-'}</td><td><span class="tag ${css}">${label}</span></td>
             <td>${escapeHtml(existing + (errors || row.message))}</td></tr>`;
     }).join('');
@@ -1745,6 +1779,7 @@ function renderProductPage() {
         <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
         <td><strong>${escapeHtml(p.sku)}</strong></td>
         <td>${escapeHtml(p.name)}</td>
+        <td>${escapeHtml(p.specification || productTypeText('specificationMissing'))}</td>
         <td><span class="tag ${productTypeTagClass(p)}">${escapeHtml(productTypeLabel(p))}</span></td>
         <td>${productTypeValue(p) === 'stable' ? `${p.safe_stock_quantity}件` : '-'}</td>
         <td><span class="tag ${p.stock_quantity > 0 ? 'tag-green' : 'tag-red'}">${p.stock_quantity}件</span></td>
@@ -1755,7 +1790,7 @@ function renderProductPage() {
             <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditProduct(${p.id})">✏️</button>
             <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>
         </td>
-    </tr>`).join('') : '<tr><td colspan="10" class="empty">暂无商品</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="11" class="empty">暂无商品</td></tr>';
     renderPagination('products-pagination', productPage, pageCount, productTotal, productPageSize);
     updateProductSelectionState();
 }
@@ -2013,6 +2048,9 @@ async function openEditProduct(id) {
     editingProductId = id;
     document.getElementById('ep-sku').value = p.sku;
     document.getElementById('ep-name').value = p.name;
+    document.getElementById('ep-specification').value = p.specification || '';
+    document.getElementById('ep-specification').setCustomValidity('');
+    document.getElementById('ep-specification-help').hidden = Boolean(p.specification);
     document.getElementById('ep-product-type').value = productTypeValue(p);
     document.getElementById('ep-safe-stock-quantity').value = p.safe_stock_quantity || 0;
     toggleSafeStockField('ep');
@@ -2039,6 +2077,7 @@ function closeEditProduct() {
 async function saveEditProduct() {
     try {
         const formData = new FormData();
+        formData.append('specification', readProductSpecification('ep'));
         formData.append('sku', document.getElementById('ep-sku').value);
         formData.append('name', document.getElementById('ep-name').value);
         formData.append('product_type', document.getElementById('ep-product-type').value);
@@ -2052,7 +2091,7 @@ async function saveEditProduct() {
             headers: authHeaders()
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        if (!res.ok) throw new Error(formatApiError(data.detail, productTypeText('saveFailed')));
         showMsg(`商品 ${data.sku} 更新成功`);
         invalidateProductOptions();
         closeEditProduct();

@@ -2,11 +2,13 @@
 
 ## 功能
 
-维护共享本地 SKU、名称、图片、商品类型和安全库存；提供搜索、服务端分页、下拉选项、图册、带图片 Excel 导出及商品 Excel 批量新增。依据：[routers/products.py](../../../routers/products.py)、[模板商品和图册区](../../../templates/index.html)、[product_import.py](../../../services/product_import.py)。
+维护共享本地 SKU、名称、规格/型号、图片、商品类型和安全库存；提供搜索、服务端分页、下拉选项、图册、带图片 Excel 导出及商品 Excel 批量新增。依据：[routers/products.py](../../../routers/products.py)、[模板商品和图册区](../../../templates/index.html)、[product_import.py](../../../services/product_import.py)。
 
 三种角色均有创建/修改/删除权限，服务端使用 RequireAnyRole。商品/库存查询不按创建人或店铺隔离；该行为由 [test_product_feature_permissions.py](../../../tests/test_product_feature_permissions.py)记录。
 
 ## 业务规则
+
+规格/型号位于产品名称后，新建、编辑保存及 Excel 新增均必填，换行统一转为空格，再去首尾空白，结果为 1–255 字符的文本；拒绝 Excel/XML 不支持的控制字符及非法 Unicode 字符。历史商品的 `specification` 可为空，列表显示“待补充”、Excel 留空，编辑时补齐；不伪造默认规格或批量回填。已有异常规格导出时用 `[U+XXXX]` 标记不支持的字符并附单元格批注，不修改数据库原值。规格只描述商品，不替代 SKU 唯一性，不改变库存、FIFO、成本及规则历史。字段兼容与上线前提见[数据字典](database.md#products)及[运行说明](../../../PROJECT_RUNBOOK.md#商品规格字段2026-11-23)。
 
 SKU唯一；商品类型仅三选一：`stable`（稳健商品，每日1%，先扣除独立的安全库存数量）、`new`（新品，全部库存每日0.5%）、`no_impairment`（不跌价商品，不新增计提）。安全库存为0–2147483647整数，仅稳健商品可设置，新品/不跌价商品保存为0；安全库存大于库存时新增计提数量为0。各数量层累计上限90%，已有准备不因保护或停止计提清零，仍随销售转销。历史`safe_stock`及旧Excel“安全库存商品”兼容为稳健商品并保留安全库存；新写入用stable，不批量改写旧商品或历史规则。依据：[inventory_impairment.py](../../../services/inventory_impairment.py)的`effective_product_type/protected_stock_quantity`及路由`_impairment_settings`。
 

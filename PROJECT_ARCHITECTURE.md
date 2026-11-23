@@ -1,5 +1,9 @@
 # FastAPIProject 项目架构与改造基线
 
+## 2026-11-23 商品规格
+
+商品增加可空`specification VARCHAR(255)`兼容历史未知规格，新建/编辑/Excel写入由同一规格校验函数要求非空、换行转为空格后去首尾空白、最多255字符，并拒绝XML非法字符。不改变SKU唯一性、商品ID关联、共享库存及FIFO核算。创建/编辑/列表、Excel模板/预览/结果/导出和可选审计同步覆盖；数据库兼容及旧客户端更新前提见[运行说明](PROJECT_RUNBOOK.md#商品规格字段2026-11-23)，字段事实维护于[商品数据字典](docs/modules/products/database.md)。
+
 ## 2026-11-10 非实物结算与初始化分类
 
 新增non_inventory_sku_rules基础表及sales.business_metadata JSON可空字段（ORM共34表），由sales_classification统一店铺/SKU非实物规则和显式期初扣减分类。非实物复用既有独立结算事实；初始化扣减保留原销售/FIFO凭据，库存/准备基线扣减但不作真实销售、成本和履约统计。原数量、成本、日期和旧月度版本保留，真实销售的缺失归属继续待核对。结构、部署、验证与回退统一见[运行说明](PROJECT_RUNBOOK.md#非实物结算与初始化分类2026-11-10)，业务边界见[销售流程](docs/modules/sales/workflow.md#非实物结算与初始化扣减2026-11-10)。

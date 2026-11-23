@@ -15,6 +15,7 @@ from zipfile import BadZipFile, ZipFile
 
 from fastapi import HTTPException
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy import String, func, literal, select, text, union_all
@@ -27,6 +28,10 @@ from services.inventory_impairment import (
     PRODUCT_TYPE_NAMES, PRODUCT_TYPE_NEW, PRODUCT_TYPE_NO_IMPAIRMENT,
     effective_product_type,
 )
+from services.product_specification import (
+    SPECIFICATION_EXPORT_WARNING, SPECIFICATION_LABEL, SPECIFICATION_MAX_LENGTH,
+    normalize_product_specification, specification_export_text,
+)
 
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
@@ -36,9 +41,11 @@ MAX_SHEET_ROWS = 10001
 MAX_SAFE_STOCK = 2147483647
 PREVIEW_TTL_SECONDS = 15 * 60
 IMPORT_SHEET = "商品导入"
-IMPORT_HEADERS = ("SKU", "商品名称", "商品类型", "安全库存")
+IMPORT_HEADERS = ("SKU", "商品名称", SPECIFICATION_LABEL, "商品类型", "安全库存")
 HEADER_FIELDS = {
     "sku": "sku", "商品名称": "name", "产品名称": "name",
+    SPECIFICATION_LABEL: "specification", "规格": "specification", "型号": "specification",
+    "specification": "specification",
     "商品类型": "product_type", "安全库存": "safe_stock_quantity",
 }
 TYPE_NAMES = PRODUCT_TYPE_NAMES
@@ -76,19 +83,20 @@ def build_product_import_template() -> BytesIO:
     sheet.title = IMPORT_SHEET
     sheet.append(IMPORT_HEADERS)
     _style_header(sheet)
-    for column, width in {"A": 24, "B": 36, "C": 18, "D": 18}.items():
+    for column, width in {"A": 24, "B": 36, "C": 32, "D": 18, "E": 18}.items():
         sheet.column_dimensions[column].width = width
     for row in range(2, MAX_IMPORT_ROWS + 2):
         sheet.cell(row, 1).number_format = "@"
         sheet.cell(row, 2).number_format = "@"
-        sheet.cell(row, 4).number_format = "0"
+        sheet.cell(row, 3).number_format = "@"
+        sheet.cell(row, 5).number_format = "0"
     types = DataValidation(type="list", formula1='"' + ",".join(TYPE_NAMES.values()) + '"', allow_blank=False)
     types.errorTitle = "商品类型无效"
     types.error = "请选择" + TYPE_OPTIONS
     types.showErrorMessage = True
     types.errorStyle = "stop"
     sheet.add_data_validation(types)
-    types.add(f"C2:C{MAX_IMPORT_ROWS + 1}")
+    types.add(f"D2:D{MAX_IMPORT_ROWS + 1}")
     stock = DataValidation(
         type="whole", operator="between", formula1=0, formula2=MAX_SAFE_STOCK,
         allow_blank=True,
@@ -98,32 +106,46 @@ def build_product_import_template() -> BytesIO:
     stock.showErrorMessage = True
     stock.errorStyle = "stop"
     sheet.add_data_validation(stock)
-    stock.add(f"D2:D{MAX_IMPORT_ROWS + 1}")
+    stock.add(f"E2:E{MAX_IMPORT_ROWS + 1}")
+    specification = DataValidation(
+        type="textLength", operator="between", formula1=1,
+        formula2=SPECIFICATION_MAX_LENGTH, allow_blank=False,
+    )
+    specification.errorTitle = SPECIFICATION_LABEL + "无效"
+    specification.error = SPECIFICATION_LABEL + "必填，最多 255 字符；请按文本填写"
+    specification.showErrorMessage = True
+    specification.errorStyle = "stop"
+    sheet.add_data_validation(specification)
+    specification.add(f"C2:C{MAX_IMPORT_ROWS + 1}")
     instructions = workbook.create_sheet("填写说明")
     for note in (
         "在“商品导入”工作表填写数据；一行一个商品，最多 2000 条，文件不超过 5 MB。",
         "SKU 必须按文本填写，最多 64 字符；数字 SKU 丢失的前导零无法自动恢复。",
         "商品名称必填，最多 255 字符；商品类型必填，选择" + TYPE_OPTIONS + "。",
+        SPECIFICATION_LABEL + "必填，按文本填写，最多 255 字符，例如“黑色 / 标准版”；旧模板须补充此列。",
+        "规格中的换行统一转为空格后校验长度、保存；不接受 Excel/XML 不支持的字符。",
         "安全库存留空按 0 处理；新品和不跌价商品必须为 0；关键列不接受公式。",
         "稳健商品仅超出安全库存部分每日计提1%；新品全部库存每日0.5%；不跌价商品不新增准备。",
         "兼容旧文件：安全库存商品归为稳健商品并保留安全库存；已有历史准备不因停止计提而清零。",
         "数据库已有 SKU 默认跳过；文件内重复 SKU 为错误，需修正后再导入。",
         "预览包含隐藏行；有错误时整批不写入。确认时会再次校验数据库状态。",
         "这里只新增商品基础资料及当天规则，不导入图片、库存数量、成本或历史日期。",
-        "兼容商品导出的四个同名字段；商品 ID、图片、库存、金额和日期等列不参与导入。",
+        "兼容商品导出的五个同名字段；历史商品空规格需补齐后才可预览，已有 SKU 仍只跳过、不更新。",
+        "商品 ID、图片、库存、金额和日期等列不参与导入。",
         "下方仅为填写示例，不会作为导入数据。",
     ):
         instructions.append([note])
     instructions.append([])
     instructions.append(list(IMPORT_HEADERS))
-    instructions.append(["DEMO001", "示例商品 A", "新品", 0])
-    instructions.append(["DEMO002", "示例商品 B", "稳健商品", 0])
-    instructions.append(["DEMO003", "示例商品 C", "稳健商品", 100])
-    instructions.append(["DEMO004", "示例商品 D", "不跌价商品", 0])
+    instructions.append(["DEMO001", "示例商品 A", "黑色 / 标准版", "新品", 0])
+    instructions.append(["DEMO002", "示例商品 B", "500 mL", "稳健商品", 0])
+    instructions.append(["DEMO003", "示例商品 C", "白色 / L", "稳健商品", 100])
+    instructions.append(["DEMO004", "示例商品 D", "单件装", "不跌价商品", 0])
     instructions.column_dimensions["A"].width = 105
     instructions.column_dimensions["B"].width = 30
-    instructions.column_dimensions["C"].width = 18
+    instructions.column_dimensions["C"].width = 32
     instructions.column_dimensions["D"].width = 18
+    instructions.column_dimensions["E"].width = 18
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -200,7 +222,7 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
             def error(field, message):
                 errors.append(ProductImportError(field=field, message=message))
 
-            labels = {"sku": "SKU", "name": "商品名称", "product_type": "商品类型",
+            labels = {"sku": "SKU", "name": "商品名称", "specification": SPECIFICATION_LABEL, "product_type": "商品类型",
                       "safe_stock_quantity": "安全库存"}
             invalid_fields = {field for field, cell in selected.items() if cell.data_type in ("f", "e")}
             for field in invalid_fields:
@@ -221,6 +243,13 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
                 elif len(raw_name.strip()) > 255:
                     error("商品名称", "商品名称不能超过 255 字符")
             raw_type = selected["product_type"].value
+            raw_specification = selected["specification"].value
+            specification = _display(raw_specification, 512)
+            if "specification" not in invalid_fields:
+                try:
+                    specification = normalize_product_specification(raw_specification)
+                except HTTPException as exc:
+                    error(SPECIFICATION_LABEL, exc.detail["message"])
             type_value = TYPE_VALUES.get(str(raw_type or "").strip().casefold())
             if "product_type" not in invalid_fields and type_value is None:
                 error("商品类型", "请选择" + TYPE_OPTIONS)
@@ -247,7 +276,7 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
             if type_value is not None and stock_value is not None:
                 type_value = effective_product_type(type_value, stock_value)
             rows.append(ProductImportRow(
-                row_number=row_number, sku=sku, name=name,
+                row_number=row_number, sku=sku, name=name, specification=specification,
                 product_type=type_value or _display(raw_type, 64) or None,
                 safe_stock_quantity=stock_value, errors=errors,
                 status="error" if errors else "new",
@@ -382,7 +411,7 @@ async def confirm_product_import(
         raise HTTPException(400, report.message)
     candidates = [row for row in report.rows if row.status == "new"]
     products = [Product(
-        sku=row.sku, name=row.name, product_type=row.product_type,
+        sku=row.sku, name=row.name, specification=row.specification, product_type=row.product_type,
         safe_stock_quantity=row.safe_stock_quantity,
     ) for row in candidates]
     try:
@@ -417,17 +446,20 @@ def build_product_import_result(rows: list[ProductImportRow]) -> BytesIO:
     _style_header(sheet)
     for row in rows:
         notes = "；".join(f"{error.field}：{error.message}" for error in row.errors) or row.message
+        specification = specification_export_text(row.specification)
         sheet.append([
-            row.row_number, row.sku, row.name, TYPE_NAMES.get(row.product_type, row.product_type),
+            row.row_number, row.sku, row.name, specification, TYPE_NAMES.get(row.product_type, row.product_type),
             row.safe_stock_quantity, STATUS_NAMES[row.status],
             row.product_id or row.existing_product_id, row.existing_product_name, notes,
         ])
-        for index in (2, 3, 4, 6, 8, 9):
+        for index in (2, 3, 4, 5, 7, 9, 10):
             _set_text(sheet.cell(sheet.max_row, index), sheet.cell(sheet.max_row, index).value)
+        if specification != row.specification:
+            sheet.cell(sheet.max_row, 4).comment = Comment(SPECIFICATION_EXPORT_WARNING, "FIFO")
         for cell in sheet[sheet.max_row]:
             cell.alignment = Alignment(vertical="center", wrap_text=True)
-    for column, width in {"A": 16, "B": 24, "C": 36, "D": 18, "E": 18,
-                          "F": 20, "G": 14, "H": 36, "I": 65}.items():
+    for column, width in {"A": 16, "B": 24, "C": 36, "D": 32, "E": 18,
+                          "F": 18, "G": 20, "H": 14, "I": 36, "J": 65}.items():
         sheet.column_dimensions[column].width = width
     sheet.auto_filter.ref = sheet.dimensions
     output = BytesIO()
