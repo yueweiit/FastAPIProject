@@ -2874,6 +2874,7 @@ function resetSalesImportState() {
     window.SalesImportResults?.reset();
     salesStoreRequestId++;
     salesImportSessionId++;
+    window.SalesDeductionPreview?.reset();
     salesImportBusy = false;
     salesImportStoresReady = false;
     document.getElementById('sales-import-store').innerHTML = '';
@@ -2945,11 +2946,11 @@ async function importSalesFile(input) {
         showMsg(salesImportText('chooseImportStore'), false); input.value = ''; return;
     }
     const sessionId = salesImportSessionId;
-    if (!window.SalesImportProgress) {
+    if (!window.SalesImportProgress || !window.SalesDeductionPreview) {
         showMsg(salesImportText('importProgressUnavailable'), false); input.value = ''; return;
     }
     const storeSelect = document.getElementById('sales-import-store');
-    const progressToken = window.SalesImportProgress.begin(file, storeSelect.selectedOptions?.[0]?.textContent || String(storeId));
+    let progressToken;
     const formData = new FormData();
     formData.append('file', file);
     formData.append('store_id', String(storeId));
@@ -2957,6 +2958,16 @@ async function importSalesFile(input) {
     updateSalesImportControls();
     let resultDetails;
     try {
+        const previewResponse = await fetch('/sales/import-preview', {method:'POST',headers:authHeaders(),body:formData});
+        if (sessionId !== salesImportSessionId) return;
+        if (previewResponse.status === 401) { handleSessionExpired(); return; }
+        const plan = await previewResponse.json();
+        if (sessionId !== salesImportSessionId) return;
+        if (!previewResponse.ok || plan.success === false) throw new Error(formatApiError(plan.detail, plan.errors?.map(row=>row.message).join('；') || salesImportText('importFailed')));
+        const previewToken = await window.SalesDeductionPreview.confirm(plan, {isCurrent:()=>sessionId === salesImportSessionId});
+        if (sessionId !== salesImportSessionId || !previewToken) return;
+        formData.append('preview_token', previewToken);
+        progressToken = window.SalesImportProgress.begin(file, storeSelect.selectedOptions?.[0]?.textContent || String(storeId));
         const res = await fetch('/sales/import-stream', {
             method: 'POST', headers: authHeaders(), body: formData,
         });
@@ -2979,7 +2990,8 @@ async function importSalesFile(input) {
     } catch (e) {
         if (sessionId === salesImportSessionId) {
             const message = e instanceof TypeError ? salesImportText('importConnectionLost') : e.message;
-            window.SalesImportProgress.fail(message, progressToken, resultDetails);
+            if (progressToken) window.SalesImportProgress.fail(message, progressToken, resultDetails);
+            else showMsg(message, false);
         }
     } finally {
         if (sessionId === salesImportSessionId) { salesImportBusy = false; input.value = ''; updateSalesImportControls(); }
@@ -3732,6 +3744,7 @@ initializeAuth();
 <script src="/sales-import-results.js" defer></script>
 <script src="/product-search.js" defer></script>
 <script src="/sales-ledger.js" defer></script>
+<script src="/sales-deduction-preview.js" defer></script>
 <script src="/sales-pending.js" defer></script>
 <script src="/inventory-workspace.js" defer></script>
 <script src="/inventory-assessment.js" defer></script>

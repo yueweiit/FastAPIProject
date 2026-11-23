@@ -268,7 +268,7 @@ class AuditPendingTests(unittest.IsolatedAsyncioTestCase):
     async def test_deleted_only_component_uses_source_store_when_admin_has_no_store_binding(self):
         await self.upload([{'name':'商品*2','quantity':20}])
         entry=self.session.scalar(select(SettlementEntry))
-        self.session.get(Product,1).name='改名后无法按原名识别';self.session.commit()
+        self.session.get(Product,1).sku='CHANGED-CODE';self.session.commit()
         response=await self.request('POST','/sales/pending-confirmations/retry',json={'entry_ids':[entry.id]})
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(list(self.session.scalars(select(SettlementEntryAllocation))),[])

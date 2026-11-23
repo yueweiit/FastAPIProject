@@ -16,6 +16,7 @@ from models import (
     PlatformSkuComponent,
     PlatformSkuMapping,
     Sale,
+    SalesProductMapping,
     SettlementEntry,
     Store,
     StoreProduct,
@@ -314,9 +315,12 @@ async def delete_store(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAdmin),
 ):
-    store = await db.get(Store, store_id)
+    store = await db.scalar(select(Store).where(Store.id == store_id).with_for_update())
     if not store:
         raise HTTPException(status_code=404, detail="店铺不存在")
+    if await db.scalar(select(SalesProductMapping.id).where(SalesProductMapping.store_id == store_id).limit(1)):
+        raise HTTPException(409, detail={"code": "store_has_sales_mappings",
+            "message": "店铺已有销售映射版本，不能删除；可停用店铺。"})
     from models import NonInventorySkuRule
     if await db.scalar(select(NonInventorySkuRule.id).where(NonInventorySkuRule.store_id == store_id).limit(1)):
         raise HTTPException(409, detail={"code":"store_has_non_inventory_rules",

@@ -69,6 +69,7 @@ class FinancialEvent:
     source_type: str = ""
     display_product_name: str = ""
     source_row_net_product_sales: Decimal | None = None
+    source_specification: str | None = None
 
 
 def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword=None, entry_ids=None):
@@ -140,6 +141,7 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
             source_type="manual_settlement" if manual else "import",
             display_product_name=(entry.product_name or "") if manual else str(raw_data.get("产品名") or "").strip(),
             source_row_net_product_sales=entry.net_product_sales,
+            source_specification=entry.sku_name,
         ))
     return result
 

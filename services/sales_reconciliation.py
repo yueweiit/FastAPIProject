@@ -8,6 +8,7 @@ from sqlalchemy import and_, func, or_, select
 
 from models import Product, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, User
 from services.financial_facts import settlement_amounts, valid_rate
+from services.sales_product_identity import source_local_specification
 
 
 TEXT = {"zh-CN": {
@@ -159,6 +160,8 @@ def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=())
             source_file=entry.source_file, source_sheet=entry.source_sheet, source_row_number=entry.source_row_number,
             order_no=raw.get("订单ID/调整单ID") or entry.order_id,
             sku=entry.platform_sku_id, product_name=_source_product_name(entry),
+            source_specification=entry.sku_name,
+            requested_local_specification=source_local_specification(raw) or None,
             transaction_type=entry.transaction_type, quantity=entry.quantity, order_created_at=entry.order_created_at,
             settlement_date=entry.settlement_date, currency=entry.currency,
             net_product_sales=original_net, settlement_total=original_total, status=labels[status],
@@ -178,10 +181,12 @@ def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=())
                 source_sheet="\n".join(entry.source_sheet or "" for entry in parents),
                 source_row_number="\n".join(str(entry.source_row_number) for entry in parents),
                 source_sku_id="\n".join(entry.platform_sku_id or "" for entry in parents),
-                source_product_name="\n".join(_source_product_name(entry) or "" for entry in parents))
+                source_product_name="\n".join(_source_product_name(entry) or "" for entry in parents),
+                source_specification="\n".join(entry.sku_name or "" for entry in parents),
+                requested_local_specification="\n".join(source_local_specification(entry.raw_data or {}) for entry in parents))
         else:
             row.update(source_ref=row["detail_id"], source_file=None, source_sheet=None, source_row_number=None,
-                       source_sku_id=None, source_product_name=None)
+                       source_sku_id=None, source_product_name=None, source_specification=None, requested_local_specification=None)
             result.append(dict(source_ref=row["source_ref"], store_name=row.get("store_name"),
                 order_no=row.get("display_order_no") or row["order_no"], sku=row.get("sku"),
                 product_name=row.get("product_name"), status=labels["legacy"], reason=labels["no_source"],

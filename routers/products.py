@@ -22,6 +22,7 @@ from models import (
     InventoryBatch,
     InventoryStockCount,
     PlatformSkuComponent,
+    SalesProductMappingComponent,
     Product,
     ProductImpairmentRule,
     User,
@@ -494,6 +495,8 @@ async def delete_product(
 
     if await db.scalar(select(InventoryStockCount.id).where(InventoryStockCount.product_id == product_id).limit(1)):
         raise HTTPException(409, detail={"code": "inventory_count_product_referenced", "message": "商品已有盘点记录，不能删除，以保留盘点历史。"})
+    if await db.scalar(select(SalesProductMappingComponent.id).where(SalesProductMappingComponent.product_id == product_id).limit(1)):
+        raise HTTPException(409, detail={"code": "sales_mapping_product_referenced", "message": "商品已有销售映射版本，不能删除，以保留历史扣库依据。"})
 
     platform_sku_mapping_count = await db.scalar(
         select(func.count()).select_from(PlatformSkuComponent).where(

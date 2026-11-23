@@ -30,6 +30,20 @@ def source_file(rows,extra_headers=()):
     return output.getvalue().encode('utf-8-sig')
 
 
+def declared_source_file(session, rows, extra_headers=()):
+    """为金额/显示夹具明确声明已核对的本地编码；不模拟生产自动名称匹配。"""
+    declared=[]
+    products=session.scalars(select(Product)).all()
+    for row in rows:
+        item=dict(row)
+        if '本地SKU' not in item:
+            parts,_=_resolve_product_components({'产品名':row.get('name','商品*4'),**row},products,[],None,strict_names=True)
+            if parts:
+                item['本地SKU']='+'.join(f"{p['product'].sku}*{p['multiplier']}" for p in parts)
+        declared.append(item)
+    return source_file(declared, extra_headers if '本地SKU' in extra_headers else (*extra_headers,'本地SKU'))
+
+
 class NameParserTests(unittest.TestCase):
     def test_financial_only_classifier_preserves_zero_price_goods_and_missing_evidence(self):
         fee={'商品原价小计':0,'商家资助的折扣':0,'商品退款':0,'净运费':20}
@@ -66,8 +80,10 @@ class NameImportTests(unittest.IsolatedAsyncioTestCase):
     request=fixtures.ImportStoreTests.request
 
     async def upload(self,rows,*,extra_headers=()):
+        # 旧金额/成本/导出用例显式声明夹具的本地编码，代表已核对的导入资料；
+        # 新的无映射/名称待确认策略由test_sales_mapping_workflow直接上传验证。
         return await self.request('POST','/sales/import',data={'store_id':'7'},
-            files={'file':('source.csv',source_file(rows,extra_headers),'text/csv')})
+            files={'file':('source.csv',declared_source_file(self.session,rows,extra_headers),'text/csv')})
 
     def add_bundle_products(self):
         self.session.add_all([Product(id=2,sku='BLACK',name='吸盘逗猫棒（黑色）'),
@@ -94,11 +110,11 @@ class NameImportTests(unittest.IsolatedAsyncioTestCase):
         workbook=Workbook();sheet=workbook.active;sheet.title='订单详情'
         headers=['结算日期','结算单 ID','付款 ID','状态','货币','交易类型','订单ID/调整单ID',
                  'SKU ID','数量','商品名称','SKU 名称','订单创建日期','结算总金额','净商品销售额']
-        headers += [None]*(56-len(headers))+['产品名']
+        headers += [None]*(56-len(headers))+['产品名','本地SKU']
         row={'结算日期':'2026-09-02','结算单 ID':'BE-BILL','付款 ID':'PAY','状态':'已结算','货币':'CNY',
              '交易类型':'订单','订单ID/调整单ID':'BE-ORDER','SKU ID':'00123456789012345678','数量':2,
              '商品名称':'Juguete para Perro con Material','SKU 名称':'Kit Negro+Blanco',
-             '订单创建日期':'2026-09-01','结算总金额':180,'净商品销售额':200,'产品名':expression}
+             '订单创建日期':'2026-09-01','结算总金额':180,'净商品销售额':200,'产品名':expression,'本地SKU':'BLACK*2+WHITE'}
         sheet.append(headers);sheet.append([row.get(header) for header in headers])
         self.assertEqual(sheet['BE1'].value,'产品名')
         output=io.BytesIO();workbook.save(output);workbook.close()

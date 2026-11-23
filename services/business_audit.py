@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from models import (BusinessOperationLog, InventoryBatch, PlatformSkuComponent, PlatformSkuMapping,
                     Product, ProductLine, Sale, SettlementEntry, SettlementEntryAllocation,
-                    Store, StoreProduct, StoreProfitLossReport, User)
+                    Store, StoreProduct, StoreProfitLossReport, User, SalesProductMapping, SalesProductMappingComponent)
 from services.log_http import PrivateLogRoute
 
 TABLE_NAME='business_operation_logs'
@@ -28,6 +28,8 @@ FIELDS={
     StoreProduct:('store_id','product_id','product_line_id','platform_product_id','platform_sku_id','store_sku','effective_from','effective_to','is_active'),
     PlatformSkuMapping:('platform','platform_sku_id','is_active'),
     PlatformSkuComponent:('platform_sku_mapping_id','product_id','quantity_per_sale'),
+    SalesProductMapping:('store_id','key_kind','key_value','effective_from','source_unit','is_active','created_by'),
+    SalesProductMappingComponent:('mapping_id','product_id','multiplier'),
     InventoryBatch:('product_id','batch_no','quantity','remaining_quantity','purchase_price','unit_cost','total_amount',
         'shipping_cost','last_mile_cost','other_cost','dingtalk_order_no','shipping_cost_no','last_mile_cost_no','other_cost_no','shipping_date','arrived_at'),
     Sale:('product_id','store_id','order_no','quantity','selling_price','platform_fee','total_cost','profit','sold_at'),
@@ -112,7 +114,7 @@ def collect(session,_context,_instances):
 
 
 def label(values,identity):
-    for key in ('batch_no','order_no','order_id','username','store_sku','platform_sku_id','component_name','report_month'):
+    for key in ('batch_no','order_no','order_id','username','store_sku','platform_sku_id','key_value','component_name','report_month'):
         if values.get(key): return str(values[key])[:512]
     parts=[values.get('sku') or values.get('code'),values.get('name')]
     return ' · '.join(str(part) for part in parts if part)[:512] or str(identity)
@@ -144,6 +146,12 @@ def write(session):
         allocation_entries.discard(None)
         owners={row.id:row.store_id for row in session.execute(select(SettlementEntry.id,SettlementEntry.store_id)
             .where(SettlementEntry.id.in_(allocation_entries))).all()} if allocation_entries else {}
+        mapping_ids={values.get('mapping_id') for values in after.get(SalesProductMappingComponent,{}).values()}
+        mapping_ids.update(item.before.get('mapping_id') for item,model,_identity,_deleted in valid
+            if model is SalesProductMappingComponent)
+        mapping_ids.discard(None)
+        mapping_owners={row.id:row.store_id for row in session.execute(select(SalesProductMapping.id,SalesProductMapping.store_id)
+            .where(SalesProductMapping.id.in_(mapping_ids))).all()} if mapping_ids else {}
         audit=[]
         for item,model,identity,deleted in valid:
             values={} if deleted else after.get(model,{}).get(identity)
@@ -155,6 +163,7 @@ def write(session):
             store_id=data.get('store_id')
             if model is Store: store_id=identity
             if model is SettlementEntryAllocation: store_id=owners.get(data.get('settlement_entry_id'))
+            if model is SalesProductMappingComponent: store_id=mapping_owners.get(data.get('mapping_id'))
             audit.append(BusinessOperationLog(module=ctx['module'],action='delete' if deleted else ctx['action'] or ('create' if item.created else 'update'),
                 entity_type=model.__tablename__,entity_id=identity,entity_label=label(data,identity),
                 product_id=identity if model is Product else data.get('product_id'),store_id=store_id,
@@ -198,7 +207,8 @@ def policy(path,methods):
     if path.startswith('/finance-masters'): return 'masters',(Store,ProductLine,StoreProduct,PlatformSkuMapping,PlatformSkuComponent),None
     if path=='/batches' and 'POST' in methods: return 'batches',(InventoryBatch,),None
     if path=='/sales' and 'POST' in methods: return 'sales',(Sale,),None
-    if path=='/sales/pending-confirmations/retry': return 'sales',(SettlementEntry,SettlementEntryAllocation),'process_pending'
+    if path=='/sales/pending-confirmations/retry': return 'sales',(SettlementEntry,SettlementEntryAllocation,SalesProductMapping,SalesProductMappingComponent),'process_pending'
+    if path=='/sales/product-mappings': return 'sales',(SalesProductMapping,SalesProductMappingComponent),'confirm_mapping'
     if path=='/reports/store-profit-loss' and 'PUT' in methods: return 'reports',(StoreProfitLossReport,),None
     return None
 

@@ -565,6 +565,37 @@ class NonInventorySkuRule(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class SalesProductMapping(Base):
+    """店铺销售标识的不可变确认版本；旧全局映射保持原有语义。"""
+    __tablename__ = "sales_product_mappings"
+    __table_args__ = (Index("ix_sales_mapping_identity", "store_id", "key_kind", "key_hash", "effective_from"),
+                     {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(Integer, ForeignKey("stores.id"), index=True)
+    key_kind: Mapped[str] = mapped_column(String(24))
+    key_value: Mapped[str] = mapped_column(String(500))
+    key_hash: Mapped[str] = mapped_column(String(64))
+    effective_from: Mapped[date] = mapped_column(Date)
+    source_unit: Mapped[str] = mapped_column(String(32), default="份")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    components: Mapped[list["SalesProductMappingComponent"]] = relationship(back_populates="mapping", cascade="all, delete-orphan")
+
+
+class SalesProductMappingComponent(Base):
+    __tablename__ = "sales_product_mapping_components"
+    __table_args__ = (UniqueConstraint("mapping_id", "product_id", name="uq_sales_mapping_product"),
+                     {"mysql_engine": "InnoDB", "mysql_charset": "utf8mb4"})
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    mapping_id: Mapped[int] = mapped_column(Integer, ForeignKey("sales_product_mappings.id"), index=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), index=True)
+    multiplier: Mapped[int] = mapped_column(Integer)
+    mapping: Mapped["SalesProductMapping"] = relationship(back_populates="components")
+
+
 class PlatformSkuMapping(Base):
     """Global platform SKU mapping, independent of individual stores."""
     __tablename__ = "platform_sku_mappings"

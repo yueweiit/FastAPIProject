@@ -428,6 +428,10 @@ class SaleResponse(BaseModel):
     transaction_type: str = "订单"
     source_sku_id: str | None = None
     source_product_name: str | None = None
+    source_specification: str | None = None
+    local_sku: str | None = None
+    local_product_name: str | None = None
+    local_specification: str | None = None
     source_quantity: int | None = None
     source_type: str | None = None
 
@@ -574,11 +578,28 @@ class PendingComponent(BaseModel):
     multiplier: int = Field(default=1, gt=0, le=2147483647)
 
 
+class SalesMappingSave(BaseModel):
+    effective_from: date
+    expected_version_id: int | None = Field(default=None, gt=0)
+    source_unit: str = Field(default="份", min_length=1, max_length=32)
+    confirm_name_unique: bool = False
+
+
+class SalesMappingCreate(SalesMappingSave):
+    store_id: int = Field(gt=0)
+    key_kind: Literal["platform_sku", "merchant_sku", "product_name"]
+    key_value: str = Field(min_length=1, max_length=500)
+    components: list[PendingComponent] = Field(min_length=1, max_length=50)
+    is_active: bool = True
+
+
 class PendingRetryRequest(BaseModel):
     entry_ids: list[int] | None = Field(default=None, min_length=1, max_length=200)
     reason: PendingReasonCode | None = None
     keyword: str | None = Field(default=None, max_length=255)
     components: list[PendingComponent] | None = Field(default=None, min_length=1, max_length=50)
+    save_mapping: SalesMappingSave | None = None
+    preview_token: str | None = Field(default=None, max_length=2048)
 
     @model_validator(mode="after")
     def check_selection(self):
@@ -588,6 +609,8 @@ class PendingRetryRequest(BaseModel):
             self.entry_ids = sorted(set(self.entry_ids))
         if self.components is not None and (self.entry_ids is None or len(self.entry_ids) != 1):
             raise ValueError("components require exactly one entry_id")
+        if self.save_mapping is not None and self.components is None:
+            raise ValueError("save_mapping requires explicit components")
         return self
 
 
@@ -606,6 +629,12 @@ class PendingRetryResponse(BaseModel):
     results: list[PendingRetryItem]
 
 
+class PendingResolvedComponent(PendingComponent):
+    sku: str | None = None
+    name: str | None = None
+    specification: str | None = None
+
+
 class PendingConfirmationResponse(BaseModel):
     id: int
     source_file: str | None = None
@@ -616,13 +645,16 @@ class PendingConfirmationResponse(BaseModel):
     mapping_status: str
     mapping_error: str | None = None
     reason_code: PendingReasonCode = "other"
-    confirmed_components: list[PendingComponent] = Field(default_factory=list)
+    confirmed_components: list[PendingResolvedComponent] = Field(default_factory=list)
     store_name: str | None = None
     settlement_date: datetime | None = None
     order_created_at: datetime | None = None
     quantity: int
     product_name: str | None = None
     sku_name: str | None = None
+    requested_local_specification: str | None = None
+    mapping_identity: dict | None = None
+    latest_mapping_version_id: int | None = None
     settlement_total: Decimal
     transaction_type: str | None = None
     currency: str | None = None

@@ -21,6 +21,7 @@ function setup(file,role='admin') {
         showMsg:(msg)=>c.message=msg,refreshSalesWorkspace:()=>c.refreshed=(c.refreshed||0)+1});
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
     vm.runInContext(fs.readFileSync('static/sales-import-progress.js','utf8'),c);
+    c.window.SalesDeductionPreview={confirm:async()=> 'vm-preview',reset:()=>{}};
     vm.runInContext(`let salesStoreRequestId=0,salesImportSessionId=0,salesImportBusy=false,salesImportStoresReady=false;
         let CURRENT_USER_ID=1,CURRENT_ROLE=${JSON.stringify(role)},salesPage=1;
         const salesImportText=key=>window.PageInteractions.text(key);
@@ -77,13 +78,22 @@ async function main(){
         {
             const {c,element:e}=setup(file);await c.loadManualSaleStores();e('sales-import-store').value='8';
             c.fetch=async()=>({ok:false,status:403,json:async()=>({detail:{code:'import_store_forbidden',message:'不能越店'}})});
-            await c.importSalesFile(e('import-csv'));equal(e('sales-import-progress-brief').textContent,'不能越店');equal(e('import-csv').disabled,false);
-            equal(c.message,undefined); // 完成/失败仅显示浮动结果，不再重复调用全局提示。
+            await c.importSalesFile(e('import-csv'));equal(c.message,'不能越店');equal(e('import-csv').disabled,false);
+            equal(e('sales-import-progress-panel').dataset.state,undefined); // 只读预览失败尚未开始导入。
             c.fetch=async()=>({ok:false,status:401});await c.importSalesFile(e('import-csv'));
             equal(e('sales-import-store').innerHTML,'');equal(e('import-csv').disabled,true);
         }
         {
             const {c,element:e}=setup(file,'viewer');await c.loadManualSaleStores();equal(e('import-csv').disabled,true);
+        }
+        {
+            const {c,element:e}=setup(file);await c.loadManualSaleStores();e('sales-import-store').value='8';
+            const requests=[];c.fetch=async url=>{requests.push(url);return ok;};
+            c.window.SalesDeductionPreview.confirm=async()=>null;
+            await c.importSalesFile(e('import-csv'));equal(requests,['/sales/import-preview']);
+            equal(c.refreshed,undefined);equal(e('import-csv').disabled,false);
+            c.fetch=async()=>({ok:true,status:200,json:async()=>({success:false,errors:[{row:2,message:'编码冲突'}]})});
+            await c.importSalesFile(e('import-csv'));equal(c.message,'编码冲突');
         }
     }
     console.log(JSON.stringify({checks,scope:'actual import functions in VM; not browser/database acceptance'}));

@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 
 from models import InventoryBatch, Product, Sale, SaleCostDetail, SettlementEntry, SettlementEntryAllocation
 from tests import test_sales_import_store as fixtures
-from tests.test_sales_name_import import source_file
+from tests.test_sales_name_import import declared_source_file
 
 
 class OrderDisplayTests(unittest.IsolatedAsyncioTestCase):
@@ -19,7 +19,7 @@ class OrderDisplayTests(unittest.IsolatedAsyncioTestCase):
 
     async def upload(self, rows):
         response = await self.request('POST', '/sales/import', data={'store_id':'7'},
-            files={'file':('orders.csv', source_file(rows), 'text/csv')})
+            files={'file':('orders.csv', declared_source_file(self.session, rows), 'text/csv')})
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
 

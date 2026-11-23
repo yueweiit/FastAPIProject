@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 from services.product_import import _set_text, _style_header
 from services.sales_fields import sales_field_help
 from services.sales_reconciliation import TEXT
+from services.product_specification import specification_export_text
 
 MAX_EXPORT_ROWS = 20_000
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -19,7 +20,8 @@ HEADERS = ("店铺", "日期", "本地商品 SKU", "本地商品名称", "实际
            "单件采购（元/件）", "单件头程（元/件）", "单件尾程（元/件）", "单件其他入库成本（元/件）", "交易类型", "来源数量",
            "来源净商品销售额（原币，整行勿合计）", "来源结算总金额（原币，整行勿合计）", "汇率来源",
            "分摊净商品销售额（原币）", "分摊结算总金额（原币）",
-           "关联编号", "来源文件", "来源工作表", "原文件行号", "来源 SKU ID", "来源产品名", "销售明细编号")
+           "关联编号", "来源文件", "来源工作表", "原文件行号", "来源 SKU ID", "来源产品名", "销售明细编号",
+           "本地商品规格/型号", "来源规格（SKU 名称）", "导入指定规格/型号")
 SOURCE_FIELDS = (
     ("source_ref", "关联编号"), ("store_name", "店铺"), ("source_file", "来源文件"),
     ("source_sheet", "来源工作表"), ("source_row_number", "原文件行号"), ("order_no", "订单号"),
@@ -30,6 +32,7 @@ SOURCE_FIELDS = (
     ("revenue", "来源收入（折人民币）"), ("cost", "销售成本（元）"), ("expense", "来源费用（折人民币）"),
     ("profit", "毛利（元）"), ("rate", "汇率"), ("rate_date", "汇率日期"), ("detail_ids", "销售明细编号"),
     ("cost_status", "成本状态"),
+    ("source_specification", "来源规格（SKU 名称）"), ("requested_local_specification", "导入指定规格/型号"),
 )
 RECORD_NAMES = {"sale": "销售", "other_expense": "赔付费用", "compensation_income": "赔付收入", "manual_settlement": "手工结算补录", "settlement_adjustment": "退款/结算调整"}
 COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": "待核对"}
@@ -37,6 +40,8 @@ COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": 
 
 def _append(sheet, values, row_number):
     for column, value in enumerate(values, 1):
+        if isinstance(value, str):
+            value = specification_export_text(value)
         cell = sheet.cell(row_number, column, value)
         if isinstance(value, str):
             _set_text(cell, value)
@@ -58,12 +63,12 @@ def _source_sheet(workbook, originals):
         totals[key] = None if None in parts else sum(parts, Decimal(0))
     _append(sheet, [totals.get(key) for key, _label in SOURCE_FIELDS], len(originals) + 2)
     _style_header(sheet)
-    widths = (16, 22, 36, 24, 14, 30, 24, 40, 18, 14, 20, 20, 12, 26, 26, 20, 64, 16, 18, 26, 24, 26, 22, 18, 16, 26, 30)
+    widths = (16, 22, 36, 24, 14, 30, 24, 40, 18, 14, 20, 20, 12, 26, 26, 20, 64, 16, 18, 26, 24, 26, 22, 18, 16, 26, 30, 32, 32)
     for column, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     for cells in sheet.iter_rows(min_row=2):
         for cell, (key, _label) in zip(cells, SOURCE_FIELDS):
-            cell.alignment = Alignment(vertical="center", wrap_text=key in ("product_name", "reason", "detail_ids"))
+            cell.alignment = Alignment(vertical="center", wrap_text=key in ("product_name", "reason", "detail_ids", "source_specification", "requested_local_specification"))
             if key in ("net_product_sales", "settlement_total"):
                 cell.number_format = '#,##0.00##'
             elif key in ("revenue", "cost", "expense", "profit"):
@@ -114,6 +119,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
             row.get("allocated_net_product_sales"), row.get("allocated_settlement_total"),
             row.get("source_ref"), row.get("source_file"), row.get("source_sheet"), row.get("source_row_number"),
             row.get("source_sku_id"), row.get("source_product_name"), row.get("detail_id"),
+            row.get("local_specification"), row.get("source_specification"), row.get("requested_local_specification"),
         ])
         _append(sheet, values[-1], number)
     totals = [None] * len(HEADERS)
@@ -129,7 +135,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
     _append(sheet, totals, len(rows) + 2)
     _style_header(sheet)
     widths = (22, 14, 24, 36, 14, 20, 22, 23, 26, 20, 20, 30, 22, 12, 18, 14, 16, 70, 20, 20, 20, 22, 30, 23, 23, 23, 25, 18, 16, 44, 42, 22, 32, 30,
-              18, 36, 24, 16, 24, 40, 20)
+              18, 36, 24, 16, 24, 40, 20, 32, 32, 32)
     for col, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(col)].width = width
     for cells in sheet.iter_rows(min_row=2):
@@ -145,7 +151,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
         for column in (30, 31, 33, 34):
             cells[column - 1].number_format = '#,##0.00##'
         for cell in cells:
-            cell.alignment = Alignment(vertical="center", wrap_text=cell.column in (4, 18, 35, 36, 37, 38, 40))
+            cell.alignment = Alignment(vertical="center", wrap_text=cell.column in (4, 18, 35, 36, 37, 38, 40, 42, 43, 44))
     for cell in sheet[sheet.max_row]:
         cell.font = Font(bold=True)
         cell.fill = PatternFill("solid", fgColor="EEF3F8")
@@ -179,6 +185,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
         _append(notes, pair, number)
     notes.column_dimensions["A"].width = 22
     notes.column_dimensions["B"].width = 100
+    _append(notes, ("商品规格", "来源规格保留原SKU名称；导入指定规格取原文件可选的规格/型号列；本地商品规格读取实际关联商品的当前资料，历史缺失留空，不推断颜色、装量或组合。规格列追加在表尾，原有字段位置保持不变。历史文本中Excel不支持的字符以[U+XXXX]标出，原始数据未修改。"), notes.max_row + 1)
     if batch_info:
         for pair in (("导入批次", batch_info["id"]), ("导入文件", batch_info["file_name"]),
                      ("文件有效数据行数", batch_info["total_rows"]), ("本次重复跳过行数", batch_info["skipped_duplicates"]),

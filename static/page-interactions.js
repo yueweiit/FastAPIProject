@@ -12,7 +12,7 @@
         importNoBoundStore: '请联系管理员绑定有效店铺后导入', importStoresLoading: '正在加载导入店铺…',
         importFailed: '导入失败',
         importBusy: '正在导入…',
-        importDateHelp: '自动按文件日期归月，无需选择导入月份。商品销售使用订单创建日期，缺少时用结算日期；运费调整、退款冲账等独立结算使用结算日期，缺少时用订单创建日期，均缺少才用导入时间。下方月份只控制查询，同一文件可能跨月。',
+        importDateHelp: '导入时先预览扣库，无需每次补填规格。明确本地SKU可直接识别；平台或商家编码使用本店已确认映射，未确认的名称只作候选。自动按文件日期归月，无需选择导入月份。商品销售使用订单创建日期，缺少时用结算日期；运费调整、退款冲账等独立结算使用结算日期，缺少时用订单创建日期，均缺少才用导入时间。下方月份只控制查询，同一文件可能跨月。',
         importUploading: '正在上传文件', importParsing: '正在读取文件', importValidating: '正在校验数据',
         importExchangeRates: '正在获取汇率', importInventory: '正在核对库存',
         importWriting: '正在计算成本并写入数据', importCommitting: '正在确认保存结果',

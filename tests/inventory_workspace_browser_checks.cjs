@@ -430,6 +430,7 @@ async function main() {
         '/sales-ledger.js':'static/sales-ledger.js', '/sales-fields.json':'static/sales-fields.zh-CN.json',
         '/sales-import-progress.js':'static/sales-import-progress.js',
         '/sales-import-results.js':'static/sales-import-results.js',
+        '/sales-deduction-preview.js':'static/sales-deduction-preview.js',
         '/product-search.js':'static/product-search.js',
         '/inventory-workspace.js': 'static/inventory-workspace.js', '/inventory-assessment.js': 'static/inventory-assessment.js', '/inventory-allocations.js': 'static/inventory-allocations.js'};
     const server = http.createServer((req, res) => {
@@ -479,6 +480,7 @@ async function main() {
             const url = new URL(route.request().url());
             if (url.hostname !== '127.0.0.1') {await route.abort(); return;}
             const fulfill = data => route.fulfill({status: 200, contentType: 'application/json', body: JSON.stringify(data)});
+            if(url.pathname==='/sales/import-preview')return route.fulfill({contentType:'application/json',body:JSON.stringify({preview_token:'browser-preview',rows:[],total_rows:100})});
             if(url.pathname==='/sales/import-stream')return route.continue();
             if (url.pathname === '/sales-fields.json' && fieldHelpStatus !== 200) return route.fulfill({status:fieldHelpStatus,body:'unavailable'});
             if (url.pathname === '/auth/config') return fulfill({local_enabled: true, sso_available: false});
@@ -1698,6 +1700,7 @@ async function main() {
             await page.waitForFunction(()=>document.querySelector('button[aria-describedby="sales-import-date-help"]').getAttribute('aria-expanded')==='false');
             const before=importRequests.length;
             await page.locator('#import-csv').setInputFiles({name:'<进度测试>.csv',mimeType:'text/csv',buffer:Buffer.from('fixture')});
+            await page.locator('#sales-deduction-confirm').click();
             await page.waitForFunction(()=>document.getElementById('sales-import-progress-stage').textContent==='正在读取文件');
             check(importRequests.length,before+1);check(await page.locator('#import-csv').isDisabled(),true);
             check(await page.locator('#sales-import-progress-actions').isVisible(),false);
@@ -1747,6 +1750,7 @@ async function main() {
             check(await page.locator('#sales-import-progress-panel').isVisible(),false);
             check(importRequests.length,before+1);
             await page.locator('#import-csv').setInputFiles({name:'retry.csv',mimeType:'text/csv',buffer:Buffer.from('fixture')});
+            await page.locator('#sales-deduction-confirm').click();
             await page.waitForFunction(()=>document.getElementById('sales-import-progress-stage').textContent==='正在读取文件');
             const retry=importRequests.at(-1);retry.write({type:'result',status:400,data:{detail:'错误路径测试'}});retry.end();
             await page.waitForFunction(()=>document.getElementById('sales-import-progress-panel').dataset.state==='error');
@@ -1755,6 +1759,7 @@ async function main() {
             await page.locator('#sales-import-progress-close').click();
             check(await page.locator('#sales-import-progress-panel').isVisible(),false);
             await page.locator('#import-csv').setInputFiles({name:'success.csv',mimeType:'text/csv',buffer:Buffer.from('fixture')});
+            await page.locator('#sales-deduction-confirm').click();
             await page.waitForFunction(()=>document.getElementById('sales-import-progress-stage').textContent==='正在读取文件');
             const success=importRequests.at(-1);
             await page.mouse.move(0,0);await page.locator('#sales-month').focus();

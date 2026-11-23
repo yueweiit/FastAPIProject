@@ -62,12 +62,15 @@ class PendingSalesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 10)
         self.assertFalse(self.entries())
 
-    async def test_name_fix_can_retry_without_upload_or_manual_components(self):
+    async def test_confirmed_mapping_can_retry_without_upload_or_manual_components(self):
         await self.upload([{"name": "新商品", "quantity": 2}])
         self.session.add(Product(id=2, sku="NEW", name="新商品")); self.session.flush()
         self.session.add(InventoryBatch(product_id=2, batch_no="NEW-B", quantity=5, remaining_quantity=5,
             purchase_price=5, unit_cost=5, arrived_at=datetime(2026, 9, 1)))
         self.session.commit()
+        mapped = await self.request('POST','/sales/product-mappings',json={'store_id':7,'key_kind':'platform_sku',
+            'key_value':self.entries()[0].platform_sku_id,'effective_from':'2026-09-01','components':[{'product_id':2,'multiplier':1}]})
+        self.assertEqual(mapped.status_code,201,mapped.text)
         response = await self.retry(reason="product_missing")
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["confirmed_rows"], 1)
@@ -200,6 +203,9 @@ class PendingSalesTests(unittest.IsolatedAsyncioTestCase):
     async def test_batch_failure_after_first_row_rolls_back_every_row(self):
         await self.upload([{"name": "稍后更名", "order": "FIRST"}, {"name": "稍后更名", "order": "SECOND"}])
         self.session.get(Product, 1).name = "稍后更名"; self.session.commit()
+        mapped = await self.request('POST','/sales/product-mappings',json={'store_id':7,'key_kind':'platform_sku',
+            'key_value':self.entries()[0].platform_sku_id,'effective_from':'2026-09-01','components':[{'product_id':1,'multiplier':1}]})
+        self.assertEqual(mapped.status_code,201,mapped.text)
         calls = 0
         def fail_on_second(*args):
             nonlocal calls

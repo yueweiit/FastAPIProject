@@ -10,7 +10,7 @@ from sqlalchemy import select
 from models import InventoryBatch, Sale, SalesImportBatch, SettlementEntry
 from services.import_progress import ImportProgress, _running_imports
 from tests import test_sales_import_store as fixtures
-from tests.test_sales_name_import import source_file
+from tests.test_sales_name_import import source_file, declared_source_file
 
 
 class ProgressTests(unittest.IsolatedAsyncioTestCase):
@@ -60,7 +60,7 @@ class StreamingImportTests(unittest.IsolatedAsyncioTestCase):
 
         with patch('routers.sales.async_session', session):
             response = await self.request('POST', '/sales/import-stream', data={'store_id':store},
-                files={'file':('orders.csv', content if content is not None else source_file(rows or [{'name':'商品'}]), 'text/csv')})
+                files={'file':('orders.csv', content if content is not None else declared_source_file(self.session, rows or [{'name':'商品'}]), 'text/csv')})
         self.assertEqual(closed, [True])
         self.assertEqual(response.headers['content-type'], 'application/x-ndjson')
         events = [json.loads(line) for line in response.text.splitlines()]

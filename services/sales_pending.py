@@ -11,6 +11,7 @@ from models import Product, Sale, SalesImportBatch, SettlementEntry, SettlementE
 from schemas import PendingComponent
 from services.financial_facts import COMPENSATION_TYPES, SETTLEMENT_ONLY_KEY, SETTLEMENT_ONLY_REASONS
 from services.sales_classification import NON_INVENTORY, non_inventory_skus
+from services import sales_mapping, sales_preview
 
 MAX_RETRY_ROWS = 200
 REASON_PATTERNS = (
@@ -18,7 +19,7 @@ REASON_PATTERNS = (
     ("product_ambiguous", ("%匹配到多个本地商品%", "%映射到多个本地商品%")),
     ("expression_invalid", ("产品名为空%", "商品名称组合格式无效%", "商品数量必须大于%")),
     ("product_missing", ("未找到本地商品映射%", "未配置平台 SKU ID 映射%")),
-    ("mapping_invalid", ("平台 SKU 映射在%", "平台 SKU ID 未配置商品组件%", "商品映射失败%")),
+    ("mapping_invalid", ("平台 SKU 映射在%", "平台 SKU ID 未配置商品组件%", "商品映射失败%", "历史映射配置无效%")),
     ("order_conflict", ("销售订单已存在%", "同一订单%")),
     ("source_invalid", ("待确认来源%", "已确认的商品%")),
 )
@@ -68,15 +69,16 @@ def saved_components(entry):
     return resolution.get("components", []) if isinstance(resolution, dict) else []
 
 
-async def retry_pending(db, user, data):
+async def retry_pending(db, user, data, *, preview=False):
     from routers.sales import (_allocate_available_stock, _order_no,
         _order_settlement_only_reason, _resolve_product_components, _write_candidate_sales)
     from services.fifo import lock_fifo_batches
+    context = {"kind": "pending", "user": user.id, "request": sales_preview.digest(data.model_dump(exclude={"preview_token"}, mode="json"))}
 
     conditions = visible_conditions(user) if data.entry_ids is not None else pending_conditions(user, data.reason, data.keyword)
     if data.entry_ids is not None:
         conditions.append(SettlementEntry.id.in_(data.entry_ids))
-    selected = (await db.execute(select(SettlementEntry.id, SettlementEntry.import_batch_id)
+    selected = (await db.execute(select(SettlementEntry.id, SettlementEntry.import_batch_id, SettlementEntry.store_id)
         .where(*conditions).order_by(SettlementEntry.id).limit(MAX_RETRY_ROWS + 1))).all()
     if len(selected) > MAX_RETRY_ROWS:
         raise HTTPException(422, detail={"code": "pending_retry_too_large", "max_rows": MAX_RETRY_ROWS,
@@ -85,23 +87,32 @@ async def retry_pending(db, user, data):
     if data.entry_ids is not None and set(ids) != set(data.entry_ids):
         raise HTTPException(404, detail={"code": "pending_not_found", "message": "部分待确认记录不存在或无权处理，请刷新。"})
     if not ids:
+        plan = {"rows": [], "skipped": [], "sources": sales_preview.digest([])}
+        if preview:
+            return {**plan, "preview_token": sales_preview.issue(context, plan)}
+        if data.preview_token:
+            sales_preview.verify(data.preview_token, context, plan)
         return dict(confirmed_rows=0, pending_rows=0, skipped_rows=0, sales_created=0, results=[])
+
+    if not preview:
+        locked_stores = await sales_mapping.lock_stores(db, {row.store_id for row in selected if row.store_id is not None})
+    lock = lambda statement: statement if preview else statement.with_for_update()
 
     # 导入头 -> 结算行/分配 -> 全量FIFO商品批次；与文件撤销串行，批次锁顺序不变。
     header_ids = sorted({row.import_batch_id for row in selected if row.import_batch_id is not None})
-    headers = {row.id: row for row in (await db.execute(select(SalesImportBatch)
-        .where(SalesImportBatch.id.in_(header_ids)).order_by(SalesImportBatch.id)
-        .with_for_update().execution_options(populate_existing=True))).scalars().all()} if header_ids else {}
+    headers = {row.id: row for row in (await db.execute(lock(select(SalesImportBatch)
+        .where(SalesImportBatch.id.in_(header_ids)).order_by(SalesImportBatch.id))
+        .execution_options(populate_existing=True))).scalars().all()} if header_ids else {}
     if any(header.status != "completed" for header in headers.values()):
         raise HTTPException(409, detail={"code": "pending_import_rolled_back", "message": "来源导入已撤销，未重新处理。"})
-    entries = (await db.execute(select(SettlementEntry).where(SettlementEntry.id.in_(ids))
-        .order_by(SettlementEntry.id).with_for_update().execution_options(populate_existing=True))).scalars().all()
+    entries = (await db.execute(lock(select(SettlementEntry).where(SettlementEntry.id.in_(ids))
+        .order_by(SettlementEntry.id)).execution_options(populate_existing=True))).scalars().all()
     expected = {row.id: row.import_batch_id for row in selected}
     if len(entries) != len(ids) or any(entry.import_batch_id != expected[entry.id] for entry in entries):
         raise HTTPException(409, detail={"code": "pending_source_changed", "message": "待确认来源已改变，请刷新后重试。"})
-    allocations = (await db.execute(select(SettlementEntryAllocation).where(
+    allocations = (await db.execute(lock(select(SettlementEntryAllocation).where(
         SettlementEntryAllocation.settlement_entry_id.in_(ids)).order_by(SettlementEntryAllocation.settlement_entry_id,
-        SettlementEntryAllocation.id).with_for_update().execution_options(populate_existing=True))).scalars().all()
+        SettlementEntryAllocation.id)).execution_options(populate_existing=True))).scalars().all()
     allocations_by_entry = defaultdict(list)
     for allocation in allocations:
         allocations_by_entry[allocation.settlement_entry_id].append(allocation)
@@ -111,15 +122,17 @@ async def retry_pending(db, user, data):
     if financial_controls_enabled():
         from models import FinancialExpense, SettlementClassification
         for model in (FinancialExpense, SettlementClassification):
-            financial_linked.update((await db.execute(select(model.settlement_entry_id).where(
-                model.settlement_entry_id.in_(ids)).order_by(model.id).with_for_update())).scalars().all())
+            financial_linked.update((await db.execute(lock(select(model.settlement_entry_id).where(
+                model.settlement_entry_id.in_(ids)).order_by(model.id)))).scalars().all())
     products = (await db.execute(select(Product).order_by(Product.id))).scalars().all()
     by_id = {p.id: p for p in products}
     if data.components is not None and any(c.product_id not in by_id for c in data.components):
         raise HTTPException(422, detail={"code": "pending_component_invalid", "message": "确认的本地商品已不存在，请重新选择。"})
     store_ids = {entry.store_id for entry in entries if entry.store_id is not None}
+    mappings = await sales_mapping.load_mappings(db, store_ids, locked=not preview)
     non_stock_skus = await non_inventory_skus(db, store_ids)
-    active_stores = set((await db.execute(select(Store.id).where(Store.id.in_(store_ids), Store.is_active.is_(True)))).scalars().all()) if store_ids else set()
+    active_stores = ({store.id for store in locked_stores if store.is_active} if not preview else
+        set((await db.execute(select(Store.id).where(Store.id.in_(store_ids), Store.is_active.is_(True)))).scalars().all()))
     store_products = (await db.execute(select(StoreProduct).where(StoreProduct.is_active.is_(True)))).scalars().all() if any(
         header.file_type == "legacy_csv" for header in headers.values()) else []
     candidates, results = [], []
@@ -151,11 +164,13 @@ async def retry_pending(db, user, data):
                     is_inventory = (entry.transaction_type or "订单") == "订单" and entry.quantity > 0 and entry.net_product_sales >= 0 and not settlement_only
                 else:
                     is_inventory = True
-                if is_inventory and (sold_at is None or not entry.order_id or not entry.platform_sku_id or not 0 < entry.quantity <= 2147483647):
+                if is_inventory and (sold_at is None or not entry.order_id or not sales_mapping.source_identity(row) and header.file_type != "legacy_csv" or not 0 < entry.quantity <= 2147483647):
                     error = "待确认来源日期、订单标识或数量不完整，未重新出库。"
+                if is_inventory and sales_mapping.precision_error(row):
+                    error = sales_mapping.precision_error(row)
             except (ValueError, TypeError):
                 error = "待确认来源金额或数量不合法，请核对原始来源。"
-        components, manual = [], None
+        components, manual, resolution = [], None, None
         if not error and settlement_only != NON_INVENTORY:
             manual = [c.model_dump() for c in data.components] if data.components is not None else saved_components(entry)
             if manual:
@@ -168,34 +183,74 @@ async def retry_pending(db, user, data):
                         counts[component.product_id] += component.multiplier
                     components = [{"product": by_id[key], "component_name": by_id[key].name, "multiplier": count}
                                   for key, count in sorted(counts.items())]
+                    resolution = sales_mapping.snapshot(components, "manual")
+                    if data.save_mapping:
+                        resolution["source_unit"] = data.save_mapping.source_unit.strip() or "份"
                 except (ValueError, TypeError):
                     error = "已确认的商品组件失效，请重新选择本地商品。"
             else:
-                components, error = _resolve_product_components(row, products, store_products,
-                    sold_at.date() if sold_at else None, strict_names=header.file_type == "order_detail")
+                if header.file_type == "order_detail":
+                    components, error, resolution = sales_mapping.resolve(row, products, mappings, entry.store_id,
+                        sold_at.date() if sold_at else None)
+                else:
+                    components, error = _resolve_product_components(row, products,
+                        [m for m in store_products if m.store_id == entry.store_id], sold_at.date() if sold_at else None)
+                    if components:
+                        resolution = sales_mapping.snapshot(components, "legacy_sku")
                 components = components or []
                 if not is_inventory:
                     error = None
             if is_inventory and any(entry.quantity * c["multiplier"] > 2147483647 for c in components):
                 error = "待确认来源组件数量超出范围，请核对倍数。"
                 components = []
+        sku = sales_mapping.order_identifier(row, products)
         order_no = (f"{row.get('日期')}-{row.get('SKU')}"[:64] if header and header.file_type == "legacy_csv"
-                    else _order_no(entry.order_id, entry.platform_sku_id))
+                    else _order_no(entry.order_id, sku))
         candidates.append(dict(entry=entry, row=row, components=components, quantity=entry.quantity,
             sold_at=sold_at, order_no=order_no, net_product_sales=entry.net_product_sales,
             other_expense=entry.net_product_sales-entry.settlement_total, is_inventory_sale=is_inventory and not error,
             mapping_error=error, settlement_only_reason=settlement_only,
+            resolution=resolution,
             manual=manual if data.components is not None and not error else None))
     orders = Counter(c["order_no"] for c in candidates if c["is_inventory_sale"])
     required = {part["product"].id for c in candidates if c["is_inventory_sale"] for part in c["components"]}
-    batches = await lock_fifo_batches(db, required)
-    existing = set((await db.execute(select(Sale.order_no).where(Sale.order_no.in_(orders))
-        .with_for_update())).scalars().all()) if orders else set()
+    if preview:
+        from models import InventoryBatch
+        batches = (await db.execute(select(InventoryBatch).where(InventoryBatch.product_id.in_(required),
+            InventoryBatch.remaining_quantity > 0, InventoryBatch.voided_at.is_(None)))).scalars().all() if required else []
+    else:
+        batches = await lock_fifo_batches(db, required)
+    for candidate in await sales_mapping.conflicting_source_orders(db, candidates, locked=not preview, products=products):
+        candidate["mapping_error"] = "同一订单已出库或来源编码冲突，请核对原记录，不能通过补换编码重复出库"
+        candidate["is_inventory_sale"] = False
+    existing = set((await db.execute(lock(select(Sale.order_no).where(Sale.order_no.in_(orders))))).scalars().all()) if orders else set()
     for candidate in candidates:
         if candidate["is_inventory_sale"] and (candidate["order_no"] in existing or orders[candidate["order_no"]] > 1):
             candidate["mapping_error"] = "销售订单已存在或同一订单有多条待确认来源，请核对重复记录。"
             candidate["is_inventory_sale"] = False
     _allocate_available_stock(candidates, {}, batches=batches)
+    plan = {"rows": sales_preview.candidate_rows(candidates), "skipped": results,
+            "sources": sales_preview.digest([(e.id, e.raw_data, e.quantity, e.net_product_sales, e.settlement_total, e.mapping_status) for e in entries])}
+    if data.save_mapping and candidates:
+        candidate = candidates[0]
+        key = sales_mapping.source_identity(candidate["row"])
+        latest = max((m.id for m in sales_mapping.versions(mappings, candidate["entry"].store_id, key)), default=None) if key else None
+        if latest != data.save_mapping.expected_version_id:
+            raise HTTPException(409, detail={"code": "sales_mapping_version_conflict", "message": "映射已有其他版本，请刷新核对后再保存"})
+        if key is None or key["kind"] == "local_sku" or key["kind"] == "product_name" and not data.save_mapping.confirm_name_unique:
+            raise HTTPException(422, detail={"code": "sales_mapping_identity_invalid", "message": "请选择有效来源编码；仅名称保存须确认本店名称及装量唯一"})
+        plan["mapping_version"] = latest
+    if preview:
+        return {**plan, "preview_token": sales_preview.issue(context, plan)}
+    if data.preview_token:
+        sales_preview.verify(data.preview_token, context, plan)
+    if data.save_mapping and candidates and candidates[0]["manual"]:
+        candidate = candidates[0]
+        mapping = await sales_mapping.save_mapping(db, user, candidate["entry"].store_id,
+            sales_mapping.source_identity(candidate["row"]), data.save_mapping, candidate["components"], locked=True)
+        candidate["resolution"] = sales_mapping.snapshot(candidate["components"], "manual")
+        candidate["resolution"]["saved_mapping_version_id"] = mapping.id
+        candidate["resolution"]["source_unit"] = mapping.source_unit
     now = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
     created = 0
     for candidate in candidates:
@@ -204,6 +259,8 @@ async def retry_pending(db, user, data):
         sales = await _write_candidate_sales(db, candidate, user_id=user.id, store_id=entry.store_id)
         error = candidate["mapping_error"]
         raw = dict(entry.raw_data or {})
+        if candidate.get("resolution"):
+            raw["_product_resolution"] = candidate["resolution"]
         audit = {"at": now, "actor_id": user.id, "before_reason": before, "after_reason": error}
         if candidate["manual"]:
             audit["components"] = candidate["manual"]

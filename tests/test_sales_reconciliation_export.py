@@ -56,12 +56,12 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
             batch_id = batch.id
         entry = SettlementEntry(source_key='shared-export-source', source_row_number=3, import_batch_id=batch_id,
             source_file='other-source.csv', source_sheet='OTHER-SHEET', order_id='OTHER-SOURCE-ORDER',
-            platform_sku_id='OTHER-SOURCE-SKU', product_name='Otro título', store_id=store_id,
+            platform_sku_id='OTHER-SOURCE-SKU', product_name='Otro título', sku_name='OTHER-SOURCE-SPEC', store_id=store_id,
             sale_id=original.sale_id, quantity=1, net_product_sales=10, settlement_total=9,
             currency='USD', exchange_rate_to_cny=2, exchange_rate_date=original.exchange_rate_date,
             exchange_rate_source='OTHER-FX', order_created_at=original.order_created_at,
             settlement_date=original.settlement_date,
-            raw_data={'产品名': '另一来源名称', '订单ID/调整单ID': 'OTHER-DISPLAY-ORDER'})
+            raw_data={'产品名': '另一来源名称', '订单ID/调整单ID': 'OTHER-DISPLAY-ORDER', '规格/型号': 'OTHER-LOCAL-SPEC'})
         self.session.add(entry)
         self.session.commit()
         return entry
@@ -96,6 +96,8 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(detail['关联编号'], f'E{entry.id}')
                     self.assertEqual(detail['来源 SKU ID'], entry.platform_sku_id)
                     self.assertEqual(detail['来源产品名'], entry.raw_data['产品名'])
+                    self.assertEqual(detail['来源规格（SKU 名称）'], entry.sku_name)
+                    self.assertEqual(detail['导入指定规格/型号'], entry.raw_data.get('规格/型号'))
                     self.assertEqual(book['订单汇总']['B2'].value, order_no)
                 self.assertEqual(self.snapshot(), before)
 
@@ -118,7 +120,8 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(detail['关联编号'], f'E{original.id}')
                     exported_text = '\n'.join(str(value) for sheet in book for row in sheet.values for value in row)
                     for hidden in ('other-source.csv', 'OTHER-SHEET', 'OTHER-SOURCE-ORDER', 'OTHER-DISPLAY-ORDER',
-                                   'OTHER-SOURCE-SKU', 'Otro título', '另一来源名称', 'OTHER-FX'):
+                                   'OTHER-SOURCE-SKU', 'Otro título', '另一来源名称', 'OTHER-FX',
+                                   'OTHER-SOURCE-SPEC', 'OTHER-LOCAL-SPEC'):
                         self.assertNotIn(hidden, exported_text)
                 self.assertEqual(self.snapshot(), before)
 
@@ -128,7 +131,8 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         entry.store_id = 8
         entry.platform_sku_id = 'HIDDEN-SOURCE-SKU'
         entry.product_name = 'Hidden product'
-        entry.raw_data = {'产品名': 'Hidden expression', '订单ID/调整单ID': 'HIDDEN-ORDER'}
+        entry.sku_name = 'HIDDEN-SOURCE-SPEC'
+        entry.raw_data = {'产品名': 'Hidden expression', '订单ID/调整单ID': 'HIDDEN-ORDER', '规格/型号': 'HIDDEN-LOCAL-SPEC'}
         entry.net_product_sales, entry.settlement_total = 999, 888
         self.session.commit()
         self.actor = SimpleNamespace(id=2, username='viewer', role='viewer', store_id=7)
@@ -138,7 +142,8 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         detail, = self.records(book, '销售拆分明细')
         self.assertEqual(source['处理状态'], '无原始结算记录')
         self.assertEqual(detail['店铺收入（元）'], 200)  # 仅保留本店已保存的销售金额。
-        for field in ('来源 SKU ID', '来源产品名', '分摊净商品销售额（原币）', '分摊结算总金额（原币）'):
+        for field in ('来源 SKU ID', '来源产品名', '分摊净商品销售额（原币）', '分摊结算总金额（原币）',
+                      '来源规格（SKU 名称）', '导入指定规格/型号'):
             self.assertIsNone(detail[field])
         self.assertEqual(detail['订单号'], self.session.get(Sale, entry.sale_id).order_no)
         self.assertEqual(self.snapshot(), before)

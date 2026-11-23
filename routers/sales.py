@@ -55,6 +55,7 @@ from schemas import (
     PendingConfirmationPageResponse,
     PendingConfirmationResponse,
     PendingReasonCode, PendingRetryRequest, PendingRetryResponse,
+    SalesMappingCreate,
 )
 from services.sales_pending import (pending_conditions, reason_expression, reason_code, saved_components,
                                     retry_pending, REASON_CODES, REASON_LABELS)
@@ -67,6 +68,9 @@ from services.cost_layers import sale_cost_context, rounded_cost_components
 from services.sales_costs import attach_sale_impairment
 from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
 from services.sales_reconciliation import export_sources, reconciliation_rows, check_export_limit
+from services.sales_product_identity import source_local_specification
+from services.product_specification import specification_export_text
+from services import sales_mapping, sales_preview
 from auth import RequireOperator, RequireAnyRole
 
 from services.business_audit import BusinessAuditRoute
@@ -84,7 +88,6 @@ ORDER_DETAIL_HEADERS = {
     "货币",
     "交易类型",
     "订单ID/调整单ID",
-    "SKU ID",
     "数量",
 }
 ORDER_DETAIL_HEADER_ALIASES = {
@@ -405,14 +408,19 @@ def _resolve_product(
     return None, f"未找到本地商品映射: SKU ID={sku_id or '-'}, 产品名={product_name or '-'}"
 
 
-def _resolve_product_name(name: str, products: list[Product]) -> tuple[Product | None, str | None]:
+def _resolve_product_name(name: str, products: list[Product], specification: str = "") -> tuple[Product | None, str | None]:
     lookup = _lookup_key(unicodedata.normalize("NFKC", name))
     matches = [product for product in products if _lookup_key(unicodedata.normalize("NFKC", product.name)) == lookup]
+    if specification:
+        spec_key = _lookup_key(unicodedata.normalize("NFKC", specification))
+        matches = [product for product in matches if
+            _lookup_key(unicodedata.normalize("NFKC", getattr(product, "specification", None) or "")) == spec_key]
+    identity = f"{name}, 规格/型号={specification}" if specification else name
     if len(matches) == 1:
         return matches[0], None
     if len(matches) > 1:
-        return None, f"产品名称匹配到多个本地商品: {name}"
-    return None, f"未找到本地商品映射: 产品名={name}"
+        return None, f"产品名称匹配到多个本地商品: {identity}"
+    return None, f"未找到本地商品映射: 产品名={identity}"
 
 
 def _resolve_platform_sku_components(
@@ -457,12 +465,15 @@ def _resolve_product_components(
     except ValueError as exc:
         return None, str(exc)
 
+    specification = source_local_specification(row)
+    if specification and len(parts) > 1:
+        return None, "商品名称组合格式无效: 一列规格无法指定多个组件，请在待确认区按本地SKU和规格逐项确认组合。"
     components: list[dict] = []
     for component_name, multiplier in parts:
-        product, error = _resolve_product_name(component_name, products)
+        product, error = _resolve_product_name(component_name, products, specification)
         if not product:
             # A non-bundle row may still be resolved through platform SKU mapping.
-            if len(parts) == 1 and not strict_names:
+            if len(parts) == 1 and not strict_names and not specification:
                 product, error = _resolve_product(row, products, store_products, as_of)
             if not product:
                 return None, error
@@ -530,6 +541,8 @@ def _allocate_available_stock(
             product_id: sum(quantity for arrived_on, quantity in layers[product_id] if arrived_on <= sold_on)
             for product_id in demands
         }
+        for component, _required in requirements:
+            component["available_quantity"] = available_by_product[component["product"].id]
         shortage_messages = [
             f"商品 {products[product_id].sku} 本行需要 {required} 件，销售日可用 {available_by_product[product_id]} 件"
             for product_id, required in demands.items()
@@ -590,7 +603,7 @@ def _legacy_source_key(row: dict, source_kind: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _source_key(row: dict, source_kind: str) -> str:
+def _source_key(row: dict, source_kind: str, products=None, *, historical=False) -> str:
     if source_kind == "legacy_csv":
         return _legacy_source_key(row, source_kind)
 
@@ -599,6 +612,8 @@ def _source_key(row: dict, source_kind: str) -> str:
     value = "v2|" + "|".join(
         _text_value(row.get(name)) for name in ORDER_DETAIL_EVENT_KEY_FIELDS
     )
+    if not _text_value(row.get("SKU ID")) and (key := sales_mapping.source_identity(row, products, historical=historical)):
+        value += "|identity:" + key["kind"] + ":" + key["hash"]
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -757,9 +772,61 @@ async def import_sales_file(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireOperator),
     store_id: Annotated[int | None, Form(gt=0)] = None,
+    preview_token: Annotated[str | None, Form(max_length=2048)] = None,
 ):
     """导入旧版三列 CSV 或 TikTok Shop“订单详情”工作表。"""
-    return await _import_sales_file(file, db, user, store_id)
+    return await _import_sales_file(file, db, user, store_id, preview_token=preview_token)
+
+
+@router.post("/import-preview")
+async def preview_sales_import(file: UploadFile = File(...), db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireOperator), store_id: Annotated[int | None, Form(gt=0)] = None):
+    try:
+        return await _import_sales_file(file, db, user, store_id, preview=True)
+    finally:
+        await db.rollback()
+
+
+@router.get("/product-mappings")
+async def list_sales_product_mappings(store_id: Annotated[int, Query(gt=0)],
+    db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole)):
+    await _resolve_import_store(db, user, store_id)
+    mappings = await sales_mapping.load_mappings(db, [store_id])
+    latest = {}
+    for mapping in mappings:
+        key = (mapping.key_kind, mapping.key_hash)
+        latest[key] = max(latest.get(key, 0), mapping.id)
+    products = {p.id: p for p in (await db.execute(select(Product).where(Product.id.in_(
+        {c.product_id for m in mappings for c in m.components})))).scalars().all()} if mappings else {}
+    return [{"id": m.id, "store_id": m.store_id, "key_kind": m.key_kind, "key_value": m.key_value,
+        "latest_version_id": latest[(m.key_kind, m.key_hash)],
+        "effective_from": m.effective_from, "source_unit": m.source_unit, "is_active": m.is_active,
+        "created_by": m.created_by, "created_at": m.created_at,
+        "components": [{"product_id": c.product_id, "multiplier": c.multiplier,
+            "sku": products[c.product_id].sku, "name": products[c.product_id].name,
+            "specification": products[c.product_id].specification} for c in m.components]} for m in mappings]
+
+
+@router.post("/product-mappings", status_code=201)
+async def create_sales_product_mapping(data: SalesMappingCreate, db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireOperator)):
+    await _resolve_import_store(db, user, data.store_id)
+    try:
+        products = (await db.execute(select(Product).where(Product.id.in_([c.product_id for c in data.components])))).scalars().all()
+        parts = sales_mapping.components_from_ids([c.model_dump() for c in data.components], products)
+        if not parts:
+            raise HTTPException(422, detail={"code": "sales_mapping_component_invalid", "message": "商品不存在或扣库倍数无效"})
+        mapping = await sales_mapping.save_mapping(db, user, data.store_id, sales_mapping.identity(data.key_kind, data.key_value),
+            data, parts, is_active=data.is_active)
+        result = {"id": mapping.id, "effective_from": mapping.effective_from}
+        await db.commit()
+        return result
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(409, detail={"code": "sales_mapping_conflict", "message": "映射引用的商品或店铺已改变，请刷新后重试"}) from None
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.post("/import-stream")
@@ -767,6 +834,7 @@ async def import_sales_stream(
     file: UploadFile = File(...),
     user: User = Depends(RequireOperator),
     store_id: Annotated[int | None, Form(gt=0)] = None,
+    preview_token: Annotated[str | None, Form(max_length=2048)] = None,
 ):
     # FastAPI can close request-scoped dependencies before streaming finishes.
     # Capture only the authorization fields and bytes, then own a fresh session
@@ -779,7 +847,7 @@ async def import_sales_stream(
         try:
             async with async_session() as db:
                 upload = UploadFile(io.BytesIO(content), filename=filename)
-                result = await _import_sales_file(upload, db, principal, store_id, progress)
+                result = await _import_sales_file(upload, db, principal, store_id, progress, preview_token=preview_token)
                 if hasattr(result, "body"):
                     status, data = result.status_code, json.loads(result.body)
                 else:
@@ -850,13 +918,17 @@ async def _write_candidate_sales(db, item, *, user_id, store_id):
     return sales_by_product
 
 
-async def _import_sales_file(file, db, user, store_id, progress=None):
+async def _import_sales_file(file, db, user, store_id, progress=None, *, preview=False, preview_token=None):
     async def report(stage, processed=None, total=None):
         if progress is not None:
             await progress.update(stage, processed, total)
 
     await report("parsing")
     import_store = await _resolve_import_store(db, user, store_id)
+    if not preview:
+        locked_stores = await sales_mapping.lock_stores(db, [import_store.id])
+        if not locked_stores or not locked_stores[0].is_active:
+            raise HTTPException(400, detail="导入店铺不存在或已停用")
 
     content = await file.read()
     if not content:
@@ -868,22 +940,23 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
     await report("validating", 0, len(rows))
     non_stock_skus = await non_inventory_skus(db, {import_store.id}) if source_kind == "order_detail" else set()
     products = list((await db.execute(select(Product).order_by(Product.id))).scalars().all())
+    mappings = await sales_mapping.load_mappings(db, [import_store.id], locked=not preview) if source_kind == "order_detail" else []
     store_products: list[StoreProduct] = []
     if source_kind != "order_detail":
         store_products = list(
             (
                 await db.execute(
-                    select(StoreProduct).where(StoreProduct.is_active.is_(True))
+                    select(StoreProduct).where(StoreProduct.is_active.is_(True), StoreProduct.store_id == import_store.id)
                 )
             ).scalars().all()
         )
-    source_keys = [_source_key(row, source_kind) for row in rows]
+    source_keys = [_source_key(row, source_kind, products) for row in rows]
     legacy_source_keys = [_legacy_source_key(row, source_kind) for row in rows]
     existing_entries = {
         key
         for key in (
             await db.execute(
-                select(SettlementEntry.source_key).where(SettlementEntry.source_key.in_(source_keys))
+                select(SettlementEntry.source_key).where(SettlementEntry.source_key.in_(source_keys), SettlementEntry.store_id == import_store.id)
             )
         ).scalars()
     }
@@ -894,14 +967,23 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
         legacy_entries = (
             await db.execute(
                 select(SettlementEntry).where(
-                    SettlementEntry.source_key.in_(legacy_source_keys)
+                    SettlementEntry.source_key.in_(legacy_source_keys), SettlementEntry.store_id == import_store.id
                 )
             )
         ).scalars().all()
         existing_entries.update(
-            _source_key(entry.raw_data or {}, source_kind)
+            _source_key(entry.raw_data or {}, source_kind, products, historical=True)
             for entry in legacy_entries
         )
+        # 旧本地SKU事件使用表达式原文哈希。只读取本次涉及的店铺/订单，
+        # 按实际组件重算比较键；不回填旧source_key、order_no或库存。
+        local_orders = {_text_value(row.get("订单ID/调整单ID")) for row in rows
+                        if (key := sales_mapping.source_identity(row)) and key["kind"] == "local_sku"}
+        if local_orders:
+            local_entries = (await db.execute(select(SettlementEntry).where(
+                SettlementEntry.store_id == import_store.id, SettlementEntry.order_id.in_(local_orders)))).scalars().all()
+            existing_entries.update(_source_key(entry.raw_data or {}, source_kind, products, historical=historical)
+                                    for entry in local_entries for historical in (False, True))
     errors: list[SalesImportError] = []
     warnings: list[str] = []
     candidates = []
@@ -968,8 +1050,8 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
             if not _text_value(row.get("订单ID/调整单ID")):
                 errors.append(SalesImportError(row=row_number, message="订单 ID 不能为空", identifier=identifier))
                 continue
-            if not _text_value(row.get("SKU ID")):
-                errors.append(SalesImportError(row=row_number, message="SKU ID 不能为空", identifier=identifier))
+            if not sales_mapping.source_identity(row):
+                errors.append(SalesImportError(row=row_number, message="至少需要来源编码、本地SKU或产品名", identifier=identifier))
                 continue
         if source_kind == "legacy_csv":
             # Keep the original order number format so old imports remain deduplicated.
@@ -979,7 +1061,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
                 warnings.append(f"第 {row_number} 行商品销售额为负，仅保存结算行，不扣库存")
                 is_inventory_sale = False
             order_id = _text_value(row.get("订单ID/调整单ID"))
-            sku_id = _text_value(row.get("SKU ID"))
+            sku_id = sales_mapping.order_identifier(row, products)
             order_no = _order_no(order_id, sku_id)
             other_expense = _other_expense_from_row(
                 net_product_sales, settlement_total, transaction_type
@@ -989,13 +1071,14 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
             errors.append(SalesImportError(row=row_number, message="销售数量必须大于 0", identifier=identifier))
             continue
 
+        resolution = None
         if source_kind == "order_detail":
             is_compensation = transaction_type in COMPENSATION_TRANSACTION_TYPES
             if is_compensation or settlement_only_reason == NON_INVENTORY:
                 components, mapping_error = [], None
                 is_inventory_sale = False
             else:
-                components, mapping_error = _resolve_product_components(row, products, [], lookup_date, strict_names=True)
+                components, mapping_error, resolution = sales_mapping.resolve(row, products, mappings, import_store.id, lookup_date)
                 # 退款/调整只保留可确认的商品归属；识别失败不阻止结算入账，也不扣库。
                 if not is_inventory_sale and mapping_error:
                     components, mapping_error = [], None
@@ -1004,7 +1087,11 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
             components, mapping_error = _resolve_product_components(
                 row, products, store_products, lookup_date
             )
+            if components:
+                resolution = sales_mapping.snapshot(components, "legacy_sku")
         pending_mapping_error = None
+        if is_inventory_sale and components and any(quantity * p["multiplier"] > 2147483647 for p in components):
+            components, mapping_error = [], "历史映射配置无效: 销售数量乘扣库倍数超出库存数量上限"
         if not components and not is_compensation and (source_kind != "order_detail" or is_inventory_sale):
             pending_mapping_error = mapping_error or "商品映射失败"
             is_inventory_sale = False
@@ -1021,6 +1108,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
             "is_inventory_sale": is_inventory_sale,
             "settlement_only_reason": settlement_only_reason,
             "mapping_error": pending_mapping_error,
+            "resolution": resolution,
         })
 
     await report("validating", len(rows), len(rows))
@@ -1045,7 +1133,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
             fx_requirements.add((currency, item["sold_at"].date()))
     await report("exchange_rates")
     try:
-        exchange_rates = await get_cny_rates(fx_requirements)
+        exchange_rates = await get_cny_rates(fx_requirements) if not preview else {}
     except ExchangeRateError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     for item in candidates:
@@ -1079,13 +1167,30 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
     if required_product_ids:
         # Keep the import's per-row stock allocation in the same locked view
         # used by fifo_sell, including when another sale is finishing now.
-        locked_batches = await lock_fifo_batches(db, required_product_ids)
+        locked_batches = ((await db.execute(select(InventoryBatch).where(
+            InventoryBatch.product_id.in_(required_product_ids), InventoryBatch.remaining_quantity > 0,
+            InventoryBatch.voided_at.is_(None)))).scalars().all() if preview else await lock_fifo_batches(db, required_product_ids))
+    # 其他来源及销售行必须在FIFO批次之后锁定，与批次编辑/文件撤销同序。
+    for item in await sales_mapping.conflicting_source_orders(db, candidates, store_id=import_store.id,
+                                                            locked=not preview, products=products):
+        errors.append(SalesImportError(row=int(item["row"]["_row_number"]),
+            message="同一订单已出库或来源编码冲突，请核对原记录，不能通过补换编码重复出库", identifier=item["order_no"]))
+    if errors:
+        return _import_error_response(source_kind, sheet_name, len(rows), len(rows), errors, warnings)
+    if required_product_ids:
         stock_map: dict[int, int] = {}
         for batch in locked_batches:
             stock_map[batch.product_id] = stock_map.get(batch.product_id, 0) + batch.remaining_quantity
         _allocate_available_stock(candidates, stock_map, batches=locked_batches)
 
     pending_confirmation = sum(1 for item in candidates if item["mapping_error"])
+    plan = {"rows": sales_preview.candidate_rows(candidates), "skipped_duplicates": skipped_duplicates}
+    context = {"kind": "import", "user": user.id, "store": import_store.id, "file": hashlib.sha256(content).hexdigest()}
+    if preview:
+        return {**plan, "total_rows": len(rows), "pending_confirmation": pending_confirmation,
+                "preview_token": sales_preview.issue(context, plan)}
+    if preview_token:
+        sales_preview.verify(preview_token, context, plan)
     import_batch = SalesImportBatch(
         user_id=user.id,
         store_id=import_store.id if import_store else None,
@@ -1124,6 +1229,8 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
                 item["mapping_error"],
                 settlement_only_reason=item["settlement_only_reason"],
             )
+            if item.get("resolution"):
+                settlement_entry.raw_data = {**settlement_entry.raw_data, "_product_resolution": item["resolution"]}
             db.add(settlement_entry)
             await db.flush()
             for component in item["components"]:
@@ -1394,7 +1501,7 @@ def _build_sale_response(
             profit_cny = sales_revenue_cny - adjusted_cost - platform_fee_cny
     return SaleResponse(
         **{key: value for key, value in (source_context or {}).items()
-           if key in {"transaction_type", "source_sku_id", "source_product_name", "source_quantity", "source_type"} and value is not None},
+           if key in {"transaction_type", "source_sku_id", "source_product_name", "source_specification", "source_quantity", "source_type"} and value is not None},
         display_sku=(source_context or {}).get("source_sku_id"),
         display_name=(source_context or {}).get("display_product_name") or (source_context or {}).get("source_product_name"),
         id=sale.id,
@@ -1493,6 +1600,7 @@ async def _sale_import_context(
                 SettlementEntry.net_product_sales,
                 SettlementEntry.transaction_type,
                 SettlementEntry.product_name,
+                SettlementEntry.sku_name,
                 SettlementEntry.raw_data["产品名"].as_string().label("display_product_name"),
                 SettlementEntry.raw_data["订单ID/调整单ID"].as_string().label("source_order_no"),
                 SettlementEntry.raw_data[SETTLEMENT_ONLY_KEY].as_string().label("settlement_only_reason"),
@@ -1606,6 +1714,7 @@ async def _sale_import_context(
             "exchange_rate_source": row.exchange_rate_source,
             "source_sku_id": row.platform_sku_id or "-",
             "source_product_name": row.product_name or "-",
+            "source_specification": row.sku_name,
             "display_product_name": _text_value(row.display_product_name),
             "source_order_no": _text_value(row.source_order_no),
             "source_fulfillment_order_id": row.source_fulfillment_order_id,
@@ -1627,6 +1736,7 @@ async def _sale_import_context(
             "currency": (entry.currency or "CNY").upper(), "exchange_rate_to_cny": entry.exchange_rate_to_cny,
             "exchange_rate_date": entry.exchange_rate_date, "exchange_rate_source": entry.exchange_rate_source,
             "source_sku_id": entry.platform_sku_id or "-", "source_product_name": entry.product_name or "-",
+            "source_specification": entry.sku_name,
             "display_product_name": _text_value((entry.raw_data or {}).get("产品名")),
             "source_order_no": _text_value((entry.raw_data or {}).get("订单ID/调整单ID")),
             "source_fulfillment_order_id": entry.order_id,
@@ -1743,6 +1853,7 @@ async def create_sale(
 
     response = _build_sale_response(sale, cost_details, cost_context=(await sale_cost_context(db, [sale])).get(sale.id))
     await attach_sale_impairment(db, [response])
+    await _attach_sale_product_identity(db, [response])
     return response
 
 
@@ -1824,6 +1935,12 @@ async def list_pending_confirmations(
         .offset((page - 1) * page_size)
         .limit(page_size)
     )
+    entries = result.scalars().all()
+    mappings = await sales_mapping.load_mappings(db, {entry.store_id for entry in entries if entry.store_id is not None}) if entries else []
+    mapping_keys = {entry.id: sales_mapping.source_identity(entry.raw_data or {}) for entry in entries}
+    component_ids = {part["product_id"] for entry in entries for part in saved_components(entry)}
+    component_products = {p.id: p for p in (await db.execute(select(Product).where(
+        Product.id.in_(component_ids)))).scalars().all()} if component_ids else {}
     items = [
         PendingConfirmationResponse(
             id=entry.id,
@@ -1835,13 +1952,21 @@ async def list_pending_confirmations(
             mapping_status=entry.mapping_status,
             mapping_error=_pending_confirmation_reason(entry),
             reason_code=reason_code(entry.mapping_error),
-            confirmed_components=saved_components(entry),
+            confirmed_components=[{**part,
+                "sku": product.sku if (product := component_products.get(part["product_id"])) else None,
+                "name": product.name if product else None,
+                "specification": product.specification if product else None,
+            } for part in saved_components(entry)],
             store_name=entry.store.name if entry.store else None,
             settlement_date=entry.settlement_date,
             order_created_at=entry.order_created_at,
             quantity=entry.quantity,
             product_name=entry.product_name,
             sku_name=entry.sku_name,
+            requested_local_specification=source_local_specification(entry.raw_data or {}) or None,
+            mapping_identity={k: v for k, v in mapping_keys[entry.id].items() if k != "hash"} if mapping_keys[entry.id] else None,
+            latest_mapping_version_id=max((m.id for m in sales_mapping.versions(mappings, entry.store_id, mapping_keys[entry.id])), default=None)
+                if mapping_keys[entry.id] else None,
             settlement_total=entry.settlement_total,
             transaction_type=entry.transaction_type,
             currency=entry.currency,
@@ -1852,7 +1977,7 @@ async def list_pending_confirmations(
             ),
             imported_at=entry.imported_at,
         )
-        for entry in result.scalars().all()
+        for entry in entries
     ]
     return PendingConfirmationPageResponse(
         items=items,
@@ -1877,6 +2002,15 @@ async def retry_pending_confirmations(data: PendingRetryRequest, db: AsyncSessio
         raise
 
 
+@router.post("/pending-confirmations/preview")
+async def preview_pending_confirmations(data: PendingRetryRequest, db: AsyncSession = Depends(get_db),
+    user: User = Depends(RequireOperator)):
+    try:
+        return await retry_pending(db, user, data, preview=True)
+    finally:
+        await db.rollback()
+
+
 def _group_pending_confirmations(entries):
     grouped = {}
     for entry in entries:
@@ -1890,6 +2024,7 @@ def _group_pending_confirmations(entries):
             "record_count": 0,
             "product_names": set(),
             "sku_names": set(),
+            "local_specifications": set(),
             "store_names": set(),
             "source_files": set(),
             "transaction_types": set(),
@@ -1902,6 +2037,8 @@ def _group_pending_confirmations(entries):
             item["product_names"].add(entry.product_name.strip())
         if entry.sku_name:
             item["sku_names"].add(entry.sku_name.strip())
+        if specification := source_local_specification(getattr(entry, "raw_data", None) or {}):
+            item["local_specifications"].add(specification)
         store_name = entry.store.name.strip() if entry.store and entry.store.name else ""
         item["store_names"].add(store_name or "未关联店铺")
         if entry.source_file:
@@ -1922,6 +2059,7 @@ def _group_pending_confirmations(entries):
             **{key: value for key, value in item.items() if not isinstance(value, set)},
             "product_names": "、".join(sorted(item["product_names"])),
             "sku_names": "、".join(sorted(item["sku_names"])),
+            "local_specifications": "、".join(sorted(item["local_specifications"])),
             "store_names": "、".join(sorted(item["store_names"])),
             "source_files": "、".join(sorted(item["source_files"])),
             "transaction_types": "、".join(sorted(item["transaction_types"])),
@@ -1947,22 +2085,23 @@ async def export_pending_confirmations(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "待确认汇总"
-    headers = ["SKU ID", "待确认原因", "交易类型", "合计数量", "其他费用（原币）", "货币", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件", "原因分类"]
+    headers = ["SKU ID", "待确认原因", "交易类型", "合计数量", "其他费用（原币）", "货币", "记录数", "商品名称", "SKU 名称", "涉及店铺", "来源文件", "原因分类", "导入指定规格/型号"]
     sheet.append(headers)
     for row in rows:
-        sheet.append([
+        sheet.append([specification_export_text(value) if isinstance(value, str) else value for value in (
             row["platform_sku_id"], row["mapping_error"], row["transaction_types"], row["quantity"],
             row["other_expense"], row["currencies"], row["record_count"], row["product_names"],
             row["sku_names"], row["store_names"], row["source_files"],
             REASON_LABELS[reason_code(row["mapping_error"])],
-        ])
+            row["local_specifications"],
+        )])
 
     header_fill = PatternFill("solid", fgColor="1F4E78")
     for cell in sheet[1]:
         cell.font = Font(color="FFFFFF", bold=True)
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    widths = (20, 42, 16, 12, 18, 10, 10, 32, 32, 24, 40, 28)
+    widths = (20, 42, 16, 12, 18, 10, 10, 32, 32, 24, 40, 28, 30)
     for index, width in enumerate(widths, 1):
         sheet.column_dimensions[chr(64 + index)].width = width
     for row in sheet.iter_rows(min_row=2):
@@ -2137,6 +2276,18 @@ async def monthly_sales_summary(
     return _monthly_sales_summary(sales, import_context_by_sale, events, await sale_cost_context(db, sales))
 
 
+async def _attach_sale_product_identity(db, rows):
+    """Read the linked local variant in one query; never infer an unlinked product."""
+    ids = {row.product_id for row in rows if row.product_id is not None}
+    products = {p.id: p for p in (await db.execute(select(
+        Product.id, Product.sku, Product.name, Product.specification).where(Product.id.in_(ids)))).all()} if ids else {}
+    for row in rows:
+        if product := products.get(row.product_id):
+            row.local_sku = product.sku
+            row.local_product_name = product.name
+            row.local_specification = product.specification
+
+
 async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids=None):
     import_context_by_sale, store_by_sale = await _sale_import_context(db, sales, source_entry_ids=source_entry_ids)
 
@@ -2174,6 +2325,7 @@ async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids
             cost_context=cost_contexts.get(sale.id),
             source_context=import_context,
         ))
+    await _attach_sale_product_identity(db, response)
     return response
 
 
@@ -2201,6 +2353,7 @@ def _financial_event_response(event, store_name, local_product_name=None):
         display_sku=event.platform_sku_id or "-",
         display_name=event.display_product_name or local_product_name or event.product_name or "-",
         source_sku_id=event.platform_sku_id or "-", source_product_name=event.product_name or "-",
+        source_specification=event.source_specification,
         source_quantity=event.quantity, transaction_type=event.transaction_type, source_type=event.source_type,
     )
 
@@ -2249,6 +2402,7 @@ async def list_sales(
             Product.id.in_(event_product_ids)))).all()) if event_product_ids else {}
         event_responses = [_financial_event_response(event, stores.get(event.store_id),
                             event_product_names.get(event.product_id)) for event in events]
+        await _attach_sale_product_identity(db, event_responses)
         if page is not None:
             # 先合并全部记录再分页，费用/退款不能造成丢行、重复页或缺失成本明细。
             all_sales = await _filtered_sales(db, product_id, keyword, month, user, include_cost_details=True)
@@ -2440,7 +2594,8 @@ async def _build_sales_export(db, user, items, *, month, keyword, product_id, im
     for item in items:
         product = products.get(item.product_id)
         rows.append({**item.model_dump(exclude={"cost_details"}), "sku": product.sku if product else None,
-                     "product_name": product.name if product else None})
+                     "product_name": product.name if product else None,
+                     "local_specification": product.specification if product else None})
     originals = reconciliation_rows(sources, links, rows, stores, limit=MAX_EXPORT_ROWS, shared_sales=shared_sales)
     order_summaries, _groups, _costs, _impairments = await _order_cost_data(db, seeds, user, source_entry_ids=source_entry_ids)
     unique_orders = {(value.store_id, value.order_no, None if value.complete else key): value.model_dump()
@@ -2502,4 +2657,5 @@ async def get_sale(
         source_context=import_context,
     )
     await attach_sale_impairment(db, [response])
+    await _attach_sale_product_identity(db, [response])
     return response

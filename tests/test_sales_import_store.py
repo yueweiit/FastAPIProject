@@ -34,13 +34,13 @@ class Facade:
     async def delete(self, row): self.session.delete(row)
 
 
-def order_file(product_expression="商品"):
+def order_file(product_expression="商品", local_expression="SKU"):
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(['结算日期','结算单 ID','付款 ID','状态','货币','交易类型','订单ID/调整单ID',
-                     'SKU ID','数量','订单创建日期','净商品销售额','结算总金额','产品名'])
+                     'SKU ID','数量','订单创建日期','净商品销售额','结算总金额','产品名','本地SKU'])
     for suffix, sku in [('OK','PLAT'),('PENDING','UNKNOWN')]:
-        writer.writerow(['2026-09-02','BILL','PAY','已结算','CNY','订单',suffix,sku,1,'2026-09-01',20,18,product_expression if suffix=='OK' else '未识别商品'])
+        writer.writerow(['2026-09-02','BILL','PAY','已结算','CNY','订单',suffix,sku,1,'2026-09-01',20,18,product_expression if suffix=='OK' else '未识别商品',local_expression if suffix=='OK' else ''])
     return out.getvalue().encode('utf-8-sig')
 
 

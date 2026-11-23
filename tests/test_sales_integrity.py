@@ -13,7 +13,7 @@ from models import Sale
 from routers.sales import _allocate_available_stock, create_sale
 from schemas import SaleCreate
 from services.fifo import InsufficientStockError, fifo_sell
-from tests.test_fifo_concurrency import _Inventory, _Session
+from tests.test_fifo_concurrency import _Inventory, _Rows, _Session
 from tests.test_sales_rules import _FakeDb
 
 
@@ -84,6 +84,11 @@ class SalesIntegrityTests(unittest.IsolatedAsyncioTestCase):
         checks = 0
 
         class GuardedSession(_Session):
+            async def execute(self, statement):
+                if [table.name for table in statement.get_final_froms()] == ["products"]:
+                    return _Rows([SimpleNamespace(id=1, sku="SKU", name="商品", specification=None)])
+                return await super().execute(statement)
+
             async def scalar(self, _statement):
                 nonlocal checks
                 seen = next((sale.id for sale in inventory.sales if sale.order_no == "DUPLICATE"), None)

@@ -21,7 +21,7 @@ async function main(){
   vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
   vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
   check(translated.every(n=>n.textContent?.length>0),true);
-  check(resource.fields.length,32);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
+  check(resource.fields.length,35);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
   check(html.includes('/sales-ledger.js'),true);
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="SKU",salesTotal=0,allProducts=[];',c);
   const source=html.match(/^async function loadSales\(\) \{[\s\S]*?^\}/m);assert(source);vm.runInContext(source[0],c);
@@ -32,6 +32,12 @@ async function main(){
   let rows=[sale];c.api=async(_m,url)=>url.startsWith('/sales/monthly-summary')?[]:{items:rows,total:rows.length,page:1,page_size:20};
   const body=k=>values(element('sales-tbody').innerHTML,'data-sales-value',k);
   const total=k=>values(element('sales-total-summary-body').innerHTML,'data-sales-total',k)[0];
+  rows=[{...sale,local_sku:'PINK',local_product_name:'同名商品',local_specification:'<粉色>',source_specification:'Rosa'}];
+  await c.loadSales();
+  check(body('local_product'),['PINK · 同名商品']);check(body('local_specification'),['&lt;粉色&gt;']);check(body('source_specification'),['Rosa']);
+  check(total('local_specification'),'');check(total('source_specification'),'');
+  rows=[{...sale,local_specification:null}];await c.loadSales();check(body('local_specification'),['待补充']);
+  rows=[{...sale,product_id:null,local_specification:null}];await c.loadSales();check(body('local_specification'),['-']);
   rows=[{...sale,currency:'MXN',source_row_net_product_sales:'84.9000',source_row_settlement_total:'58.7300',
    allocated_net_product_sales:'42.45',allocated_settlement_total:'29.365',
    exchange_rate_to_cny:'0.36989000',exchange_rate_date:'2026-09-30',exchange_rate_source:'Frankfurter/ECB'}];

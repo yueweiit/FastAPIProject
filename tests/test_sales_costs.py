@@ -102,7 +102,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(exported[18:22]),exported[8])
         total=list(book['销售拆分明细'].values)[-1]
         self.assertEqual(total[18:23],exported[18:23])
-        self.assertEqual(book['销售拆分明细'].auto_filter.ref,'A1:AO4')
+        self.assertEqual(book['销售拆分明细'].auto_filter.ref,'A1:AR4')
         for event in (r for r in await self.listed() if r['id']<0):
             self.assert_parts(event,(0,0,0,0))
             self.assertEqual(D(event['impairment_cny']),0)
@@ -433,7 +433,7 @@ class ImportedSalesCostTests(unittest.IsolatedAsyncioTestCase):
             purchase_price=5,unit_cost=5,arrived_at=datetime(2026,9,1)))
         self.session.commit()
         response=await self.request('POST','/sales/import',data={'store_id':'7'},
-            files={'file':('orders.csv',imports.order_file('商品*2+组合第二件'),'text/csv')})
+            files={'file':('orders.csv',imports.order_file('商品*2+组合第二件','SKU*2+COMPONENT'),'text/csv')})
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(response.json()['sales_created'],2)
         self.db.info.clear()

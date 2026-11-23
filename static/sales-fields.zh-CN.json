@@ -39,7 +39,7 @@
       "kind": "text",
       "formula": "直接取值",
       "source": "导入结算行保存的SKU ID；手工补录直接填写",
-      "note": "保留来源编号及前导零；名称识别和FIFO使用本地商品，SKU ID不参与匹配。",
+      "note": "保留来源编号及前导零；新导入使用本店已确认的编码映射识别本地组件，未确认的编码不自动按名称扣库。",
       "width": 140
     },
     {
@@ -53,13 +53,43 @@
       "width": 220
     },
     {
+      "key": "source_specification",
+      "label": "来源规格（SKU 名称）",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "直接读取原始SKU名称",
+      "source": "结算行保存的sku_name",
+      "note": "保留平台规格原文，例如颜色、单只或两件套；与本地商品规格分开，不自动翻译或据此猜测组合。历史未提供时留空。",
+      "width": 180
+    },
+    {
+      "key": "local_product",
+      "label": "本地商品（SKU / 名称）",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "实际关联商品的SKU与名称",
+      "source": "销售product_id对应的当前商品资料",
+      "note": "组合销售逐组件显示，按稳定本地商品ID关联；不以同名商品推测历史出库。独立结算无可靠商品关联时留空。",
+      "width": 230
+    },
+    {
+      "key": "local_specification",
+      "label": "本地商品规格/型号",
+      "group": "基本信息",
+      "kind": "text",
+      "formula": "实际关联商品的当前规格",
+      "source": "products.specification",
+      "note": "显示当前商品资料，不是销售当时的规格快照；已有商品缺少规格显示待补充，Excel留空。补齐资料不会重新扣库存或改写历史金额。",
+      "width": 190
+    },
+    {
       "key": "transaction_type",
       "label": "交易类型",
       "group": "基本信息",
       "kind": "text",
       "formula": "直接取值",
       "source": "导入文件交易类型或手工补录类型",
-      "note": "正常商品订单参与名称识别和FIFO；纯运费调整、退款冲账只保留结算，不新增扣库；物流/平台/物料赔付按结算金额计入收入，不扣库存。",
+      "note": "正常商品订单确认本地编码或店铺映射后参与FIFO；纯运费调整、退款冲账只保留结算，不新增扣库；物流/平台/物料赔付按结算金额计入收入，不扣库存。",
       "width": 125
     },
     {
