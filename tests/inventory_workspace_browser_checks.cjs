@@ -425,6 +425,7 @@ async function main() {
         '/operation-logs.js': 'static/operation-logs.js',
         '/sales-ledger.js':'static/sales-ledger.js', '/sales-fields.json':'static/sales-fields.zh-CN.json',
         '/sales-import-progress.js':'static/sales-import-progress.js',
+        '/sales-import-results.js':'static/sales-import-results.js',
         '/product-search.js':'static/product-search.js',
         '/inventory-workspace.js': 'static/inventory-workspace.js', '/inventory-assessment.js': 'static/inventory-assessment.js', '/inventory-allocations.js': 'static/inventory-allocations.js'};
     const server = http.createServer((req, res) => {

@@ -142,6 +142,12 @@ async def sales_import_progress_script():
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/sales-import-results.js", include_in_schema=False)
+async def sales_import_results_script():
+    return FileResponse(BASE_DIR / "static" / "sales-import-results.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/product-search.js", include_in_schema=False)
 async def product_search_script():
     return FileResponse(BASE_DIR / "static" / "product-search.js", media_type="text/javascript",

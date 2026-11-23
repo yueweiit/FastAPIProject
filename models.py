@@ -358,6 +358,8 @@ class SalesImportBatch(Base):
     sales_created: Mapped[int] = mapped_column(Integer, default=0)
     skipped_duplicates: Mapped[int] = mapped_column(Integer, default=0)
     pending_confirmation: Mapped[int] = mapped_column(Integer, default=0)
+    # 导入完成时的不可变结果；按需读取，历史 NULL 不推测为无提示。
+    result_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True, deferred=True)
     status: Mapped[str] = mapped_column(String(24), default="completed", index=True)
     imported_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     rolled_back_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

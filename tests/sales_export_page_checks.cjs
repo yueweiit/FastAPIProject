@@ -113,6 +113,8 @@ async function main() {
         await c.loadSalesImports();
         equal(e('sales-imports-tbody').innerHTML.includes('exportSalesRecords(17)'), true);
         equal(e('sales-imports-tbody').innerHTML.includes('exportSalesRecords(18)'), false);
+        equal(e('sales-imports-tbody').innerHTML.includes('viewSalesImportResult(17)'), true);
+        equal(e('sales-imports-tbody').innerHTML.includes('viewSalesImportResult(18)'), true);
         equal(e('sales-imports-tbody').innerHTML.includes('&lt;source&gt;'), true);
         equal(e('sales-imports-tbody').innerHTML.includes('导出本次对账'), true);
         const late = deferred(); const downloadCount = links.length;

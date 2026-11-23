@@ -77,7 +77,8 @@ async function main(){
         {
             const {c,element:e}=setup(file);await c.loadManualSaleStores();e('sales-import-store').value='8';
             c.fetch=async()=>({ok:false,status:403,json:async()=>({detail:{code:'import_store_forbidden',message:'不能越店'}})});
-            await c.importSalesFile(e('import-csv'));equal(c.message,'不能越店');equal(e('import-csv').disabled,false);
+            await c.importSalesFile(e('import-csv'));equal(e('sales-import-progress-brief').textContent,'不能越店');equal(e('import-csv').disabled,false);
+            equal(c.message,undefined); // 完成/失败仅显示浮动结果，不再重复调用全局提示。
             c.fetch=async()=>({ok:false,status:401});await c.importSalesFile(e('import-csv'));
             equal(e('sales-import-store').innerHTML,'');equal(e('import-csv').disabled,true);
         }

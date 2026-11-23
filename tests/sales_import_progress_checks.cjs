@@ -68,13 +68,37 @@ async function main(){
         const result=await ui.consume(error,token);equal(result.status,403);equal(result.data.detail,'forbidden');
     }
     const success={success:true,settlement_rows:100,sales_created:90,skipped_duplicates:0,pending_confirmation:0,warnings:[]};
+    for(const literal of ['$&', '$`', "$'", '$$', '{store} {file} {message} {identifier} {row}',
+        '<img src=x onerror=alert(1)> & "双引号" \'单引号\' 🐾 \\路径\n下一行']){
+        const {ui,node,clock}=setup();
+        const file=`订单${literal}.csv`,store=`店铺${literal}`,identifier=`ORDER-${literal}`;
+        const message=`未找到本地商品映射: 产品名=玩具${literal}`,warning=`来源提示：${literal}`;
+        const token=ui.begin({name:file},store);
+        equal(node('file').textContent,`${file} · ${store}`);
+        const result={...success,pending_confirmation:1,warnings:[warning],pending_details:[{row:3,message,identifier}]};
+        const original=JSON.stringify(result);
+        ui.complete(result,ui.summary(result),token);
+        equal(node('messages').textContent,`提示详情\n${warning}\n\n导入时待确认原因\n第 3 行：${message}（${identifier}）`);
+        equal(node('brief').textContent,'结算行100条，销售扣库存90条，重复跳过0条；待确认1条；提示1条');
+        equal(JSON.stringify(result),original);
+        clock.advance(8000);equal(node('panel').hidden,true);
+        const retry=ui.begin({name:file},store);
+        const failure={errors:[{row:4,message,identifier}],warnings:[warning]};
+        const originalFailure=JSON.stringify(failure);
+        ui.fail(message,retry,failure);
+        equal(node('brief').textContent,message);
+        equal(node('messages').textContent,`提示详情\n${warning}\n\n错误详情\n第 4 行：${message}（${identifier}）`);
+        equal(JSON.stringify(failure),originalFailure);
+        clock.advance(30000);equal(node('panel').hidden,false);
+    }
     {
         const {ui,node,clock}=setup(),token=ui.begin({name:'file'},'store');
         equal(node('actions').hidden,true);node('close').dispatch('click');equal(node('panel').hidden,false);
         ui.complete(success,'完整结果',token);
         equal(node('brief').textContent,'结算行100条，销售扣库存90条，重复跳过0条');
         equal(node('toggle').textContent,'查看详情');equal(node('close').textContent,'关闭提示');
-        clock.advance(7999);equal(node('panel').hidden,false);clock.advance(1);equal(node('panel').hidden,true);
+        clock.advance(4999);equal(node('panel').hidden,false);clock.advance(1);equal(node('panel').hidden,true);
+        equal(node('file').textContent,'');equal(node('messages').textContent,'');
     }
     {
         const {ui,node,clock}=setup(),token=ui.begin({name:'file'},'store');ui.complete(success,'完整结果',token);
@@ -84,19 +108,43 @@ async function main(){
         node('panel')['focus-within']=true;node('panel').dispatch('focusin');clock.advance(9000);equal(node('panel').hidden,false);
         node('panel').dispatch('focusout',{relatedTarget:{within:node('panel')}});equal(clock.pending(),0);
         node('panel').dispatch('focusout',{relatedTarget:null});node('panel')['focus-within']=false;
-        clock.advance(8000);equal(node('panel').hidden,true);
+        clock.advance(5000);equal(node('panel').hidden,true);
     }
     {
         const {ui,node,clock}=setup(),token=ui.begin({name:'file'},'store');ui.complete(success,'完整结果',token);
         node('toggle').dispatch('click');equal(node('details').hidden,false);equal(node('toggle').getAttribute('aria-expanded'),'true');
         equal(node('toggle').textContent,'收起详情');clock.advance(30000);equal(node('panel').hidden,false);
         node('toggle').dispatch('click');equal(node('toggle').getAttribute('aria-expanded'),'false');
-        clock.advance(8000);equal(node('panel').hidden,true);
+        clock.advance(5000);equal(node('panel').hidden,true);
     }
     for(const result of [{...success,pending_confirmation:17},{...success,warnings:['核对日期']}]){
         const {ui,node,clock}=setup(),token=ui.begin({name:'file'},'store');ui.complete(result,'待核对结果',token);
-        equal(node('panel').dataset.state,'review');equal(clock.pending(),0);clock.advance(30000);equal(node('panel').hidden,false);
+        equal(node('panel').dataset.state,'review');equal(clock.pending(),1);clock.advance(7999);equal(node('panel').hidden,false);
+        clock.advance(1);equal(node('panel').hidden,true);
+        const next=ui.begin({name:'file'},'store');ui.complete(result,'待核对结果',next);
         node('toggle').dispatch('click');equal(node('details').hidden,false);equal(node('result').textContent,'待核对结果');
+        clock.advance(30000);equal(node('panel').hidden,false);
+        node('toggle').dispatch('click');clock.advance(7999);equal(node('panel').hidden,false);
+        clock.advance(1);equal(node('panel').hidden,true);
+    }
+    {
+        const {ui,node,clock}=setup(),token=ui.begin({name:'file'},'store');
+        const warnings=Array.from({length:18},(_,i)=>`<提示 ${i}>`);
+        const pending_details=Array.from({length:13},(_,i)=>({row:i+2,message:`<待确认 ${i}>`,identifier:`ORDER-${i}`}));
+        ui.complete({...success,warnings,pending_confirmation:13,pending_details},'待核对',token);
+        for(const value of [...warnings,...pending_details.map(row=>row.message)])equal(node('messages').textContent.includes(value),true);
+        clock.advance(4000);node('panel').hover=true;node('panel').dispatch('mouseenter');clock.advance(9000);
+        equal(node('panel').hidden,false);node('panel').hover=false;node('panel').dispatch('mouseleave');
+        clock.advance(7999);equal(node('panel').hidden,false);clock.advance(1);equal(node('panel').hidden,true);
+        equal(node('messages').textContent,'');
+    }
+    {
+        const {ui,node,clock}=setup(),token=ui.begin({name:'file'},'store');
+        const errors=Array.from({length:12},(_,i)=>({row:i+2,message:`<错误 ${i}>`}));
+        ui.fail('12条错误',token,{errors,warnings:['完整提示']});
+        for(const row of errors)equal(node('messages').textContent.includes(row.message),true);
+        equal(node('messages').textContent.includes('完整提示'),true);
+        clock.advance(30000);equal(node('panel').hidden,false);
         node('close').dispatch('click');equal(node('panel').hidden,true);
     }
     {

@@ -88,7 +88,7 @@
         .sales-toolbar-actions { display:flex; align-items:center; gap:8px; }
         .sales-toolbar-actions, .sales-import-controls { flex-wrap:wrap; }
         .sales-import-controls { display:flex; align-items:center; gap:12px; }
-        .sales-import-progress { margin:0 0 20px; padding:18px 22px; border:1px solid #cddfed; border-radius:10px; background:#f3f8fc; color:#133b59; }
+        .sales-import-progress { position:fixed; top:80px; right:24px; z-index:1400; width:min(460px,calc(100vw - 32px)); max-height:calc(100dvh - 104px); overflow:auto; box-sizing:border-box; margin:0; box-shadow:0 12px 36px #15223826; padding:18px 22px; border:1px solid #cddfed; border-radius:10px; background:#f3f8fc; color:#133b59; }
         .sales-import-progress[hidden] { display:none; }
         .sales-import-progress-heading { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px 20px; margin-bottom:6px; }
         .sales-import-progress-file { color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
@@ -105,6 +105,14 @@
         .sales-import-progress[data-state="complete"] { border-color:#b9e4d8; background:#effaf5; color:#087c63; }
         .sales-import-progress[data-state="review"] { border-color:#efd6a5; background:#fffbf1; color:#896016; }
         .sales-import-progress[data-state="error"] { border-color:#f2becb; background:#fff2f5; color:#be294d; }
+        .sales-import-progress-messages, .sales-import-result-messages { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.65; }
+        .sales-import-progress-messages:not(:empty) { margin-top:12px; padding-top:10px; border-top:1px solid currentColor; }
+        .product-import-dialog.sales-import-result-dialog { width:min(720px,calc(100vw - 32px)); }
+        .sales-import-result-dialog p { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
+        .sales-import-result-dialog h4 { margin:18px 0 8px; }
+        .sales-import-result-dialog .result-file { display:block; overflow-wrap:anywhere; }
+        .sales-import-result-dialog .result-meta, .sales-import-result-dialog .result-current { color:var(--muted); font-size:13px; }
+        @media (max-width:640px) { .sales-import-progress { top:12px; right:12px; width:calc(100vw - 24px); max-height:calc(100dvh - 24px); } }
         .sales-import-controls .form-group { margin:0; min-width:180px; }
         .sales-import-help { font-size:12px; color:var(--muted); }
 
@@ -795,21 +803,6 @@
                 </div>
             </div>
         </div>
-        <section class="sales-import-progress" id="sales-import-progress-panel" role="status" aria-live="polite" aria-atomic="true" hidden>
-            <div class="sales-import-progress-heading">
-                <strong id="sales-import-progress-stage"></strong><span id="sales-import-progress-count"></span>
-                <div class="sales-import-progress-actions" id="sales-import-progress-actions" hidden>
-                    <button type="button" class="btn btn-secondary" id="sales-import-progress-toggle" aria-controls="sales-import-progress-details" aria-expanded="false"></button>
-                    <button type="button" class="btn btn-secondary" id="sales-import-progress-close"></button>
-                </div>
-            </div>
-            <div class="sales-import-progress-brief" id="sales-import-progress-brief" hidden></div>
-            <div class="sales-import-progress-details" id="sales-import-progress-details">
-                <div class="sales-import-progress-file" id="sales-import-progress-file"></div>
-                <progress id="sales-import-progress-bar" max="100" aria-labelledby="sales-import-progress-stage"></progress>
-                <div class="sales-import-progress-result" id="sales-import-progress-result"></div>
-            </div>
-        </section>
         <div class="card sales-entry-card" id="sales-manual-entry-card">
             <div class="flex-between" style="margin-bottom:14px">
                 <div>
@@ -1022,6 +1015,36 @@
     </div>
 </div>
 
+        <section class="sales-import-progress" id="sales-import-progress-panel" role="status" aria-live="polite" aria-atomic="true" hidden>
+            <div class="sales-import-progress-heading">
+                <strong id="sales-import-progress-stage"></strong><span id="sales-import-progress-count"></span>
+                <div class="sales-import-progress-actions" id="sales-import-progress-actions" hidden>
+                    <button type="button" class="btn btn-secondary" id="sales-import-progress-toggle" aria-controls="sales-import-progress-details" aria-expanded="false"></button>
+                    <button type="button" class="btn btn-secondary" id="sales-import-progress-close"></button>
+                </div>
+            </div>
+            <div class="sales-import-progress-brief" id="sales-import-progress-brief" hidden></div>
+            <div class="sales-import-progress-details" id="sales-import-progress-details">
+                <div class="sales-import-progress-file" id="sales-import-progress-file"></div>
+                <progress id="sales-import-progress-bar" max="100" aria-labelledby="sales-import-progress-stage"></progress>
+                <div class="sales-import-progress-result" id="sales-import-progress-result"></div>
+                <div class="sales-import-progress-messages" id="sales-import-progress-messages"></div>
+            </div>
+        </section>
+<dialog id="sales-import-result-dialog" class="product-import-dialog sales-import-result-dialog" aria-labelledby="sales-import-result-title">
+    <div class="flex-between"><h3 id="sales-import-result-title"></h3><button type="button" class="btn btn-secondary" id="sales-import-result-close" autofocus></button></div>
+    <p id="sales-import-result-status" role="status" aria-live="polite"></p>
+    <div id="sales-import-result-body" hidden>
+        <strong class="result-file" id="sales-import-result-file"></strong>
+        <p class="result-meta" id="sales-import-result-meta"></p>
+        <p class="msg" id="sales-import-result-notice" hidden></p>
+        <p class="result-current" id="sales-import-result-current"></p>
+        <h4 id="sales-import-result-heading"></h4>
+        <p id="sales-import-result-summary"></p>
+        <div class="sales-import-result-messages" id="sales-import-result-messages"></div>
+    </div>
+</dialog>
+
 <script>
 const API = '';
 let CURRENT_ROLE = '';
@@ -1058,6 +1081,7 @@ function formatApiError(detail, fallback) {
         }).join('；');
     }
     if (detail && typeof detail === 'object') {
+        if (detail.code === 'sales_import_result_not_found') return window.PageInteractions?.text('importResultNotFound') || detail.message;
         const batchErrorKey = {batch_edit_version_required: 'batchEditVersionRequired', batch_edit_conflict: 'batchEditConflict',
             batch_quantity_inconsistent: 'batchQuantityInconsistent', batch_quantity_below_sold: 'batchQuantityBelowSold',
             batch_cost_controls_required: 'batchCostControlsRequired', batch_delete_retired: 'batchDeleteRetired',
@@ -2736,6 +2760,7 @@ function updateSalesImportControls() {
 }
 function resetSalesImportState() {
     window.SalesImportProgress?.reset();
+    window.SalesImportResults?.reset();
     salesStoreRequestId++;
     salesImportSessionId++;
     salesImportBusy = false;
@@ -2819,6 +2844,7 @@ async function importSalesFile(input) {
     formData.append('store_id', String(storeId));
     salesImportBusy = true;
     updateSalesImportControls();
+    let resultDetails;
     try {
         const res = await fetch('/sales/import-stream', {
             method: 'POST', headers: authHeaders(), body: formData,
@@ -2827,23 +2853,22 @@ async function importSalesFile(input) {
         if (res.status === 401) { handleSessionExpired(); return; }
         const result = await window.SalesImportProgress.consume(res, progressToken);
         const {data, status} = result;
+        resultDetails = data;
         if (sessionId !== salesImportSessionId) return;
         if (status === 401) { handleSessionExpired(); return; }
         if (status < 200 || status >= 300 || data.success === false) {
-            const details = (data.errors || []).slice(0, 5).map(e => `第${e.row}行：${e.message}`).join('；');
-            const suffix = (data.errors || []).length > 5 ? '；其余错误请修正文件后重试' : '';
-            throw new Error(details ? `${data.message || salesImportText('importFailed')}：${details}${suffix}` : formatApiError(data.detail, salesImportText('importFailed')));
+            throw new Error(data.errors?.length
+                ? salesImportText('importFailedRows').replace('{count}', data.errors.length)
+                : formatApiError(data.detail, data.message || salesImportText('importFailed')));
         }
         const message = window.SalesImportProgress.summary(data);
-        showMsg(message);
         window.SalesImportProgress.complete(data, message, progressToken);
         salesPage = 1;
         refreshSalesWorkspace();
     } catch (e) {
         if (sessionId === salesImportSessionId) {
             const message = e instanceof TypeError ? salesImportText('importConnectionLost') : e.message;
-            window.SalesImportProgress.fail(message, progressToken);
-            showMsg(message, false);
+            window.SalesImportProgress.fail(message, progressToken, resultDetails);
         }
     } finally {
         if (sessionId === salesImportSessionId) { salesImportBusy = false; input.value = ''; updateSalesImportControls(); }
@@ -2925,6 +2950,10 @@ function refreshSalesWorkspace() {
     loadBatches();
 }
 
+function viewSalesImportResult(id) {
+    if (!window.SalesImportResults) { showMsg(salesImportText('importResultUnavailable'), false); return; }
+    return window.SalesImportResults.open(id);
+}
 async function loadSalesImports() {
     const requestOptions = window.SalesLedger?.requestOptions() || {};
     const tbody = document.getElementById('sales-imports-tbody');
@@ -2948,7 +2977,7 @@ async function loadSalesImports() {
                 <td>${Number(item.sales_created).toLocaleString('zh-CN')}</td>
                 <td>${Number(item.pending_confirmation).toLocaleString('zh-CN')}</td>
                 <td><span class="status-pill ${statusClass}">${statusText}</span></td>
-                <td>${item.status === 'completed' ? `<button class="btn btn-secondary" data-sales-import-export type="button" style="padding:6px 10px;font-size:12px" onclick="exportSalesRecords(${Number(item.id)})" ${salesExportBusy ? 'disabled' : ''}>${escapeHtml(window.PageInteractions.text('salesImportExport'))}</button>` : ''} ${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
+                <td><button class="btn btn-secondary" type="button" data-sales-import-result style="padding:6px 10px;font-size:12px" onclick="viewSalesImportResult(${Number(item.id)})">${escapeHtml(window.PageInteractions.text('importResultView'))}</button> ${item.status === 'completed' ? `<button class="btn btn-secondary" data-sales-import-export type="button" style="padding:6px 10px;font-size:12px" onclick="exportSalesRecords(${Number(item.id)})" ${salesExportBusy ? 'disabled' : ''}>${escapeHtml(window.PageInteractions.text('salesImportExport'))}</button>` : ''} ${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
             </tr>`;
         }).join('');
         return true;
@@ -3589,6 +3618,7 @@ initializeAuth();
 <script src="/page-interactions.js" defer></script>
 <script src="/operation-logs.js" defer></script>
 <script src="/sales-import-progress.js" defer></script>
+<script src="/sales-import-results.js" defer></script>
 <script src="/product-search.js" defer></script>
 <script src="/sales-ledger.js" defer></script>
 <script src="/sales-pending.js" defer></script>

@@ -22,6 +22,19 @@
         importShowDetails: '查看详情', importHideDetails: '收起详情', importDismiss: '关闭提示',
         importSuccess: '导入完成：结算行{settlements}条，销售扣库存{sales}条，重复跳过{duplicates}条{pending}{warnings}。按文件日期自动归月，请切换查询月份查看。',
         importPending: '；待确认{count}条', importWarnings: '；提示{count}条',
+        importFailedRows: '导入失败，{count}条数据需修正，请查看详情。',
+        importWarningsTitle: '提示详情', importPendingTitle: '导入时待确认原因', importErrorsTitle: '错误详情',
+        importIssue: '第 {row} 行：{message}', importIssueIdentifier: '（{identifier}）',
+        importResultView: '查看导入结果', importResultTitle: '导入结果', importResultClose: '关闭',
+        importResultLoading: '正在读取导入结果…', importResultFailed: '导入结果读取失败，请关闭后重试。',
+        importResultUnavailable: '导入结果模块未加载，请更新并重启后端后刷新页面。',
+        importResultNotFound: '导入记录不存在或无权访问，请刷新导入历史。',
+        importResultMeta: '导入时间：{time}　导入人：{user}',
+        importResultSnapshot: '导入当时的结果', importResultExisting: '现有统计',
+        importResultCurrent: '当前待确认：{pending}条。下方保留导入当时的结果，后续处理不会改写原提示。',
+        importResultLegacy: '该记录未保存导入时的完整结果，以下仅显示现有统计，无法还原当时的提示详情。',
+        importResultRolledBack: '这次导入已撤销，以下保留导入当时的结果供核对。',
+        importResultNoIssues: '本次导入没有提示或待确认问题。',
         importProgressUnavailable: '导入进度模块未加载，请更新并重启后端后刷新页面。',
         importConnectionLost: '进度连接中断，导入可能仍在继续。请刷新导入历史核对结果，避免重复提交。',
         galleryTitle: '产品图册', galleryKeyword: '商品名称 / SKU',
@@ -142,6 +155,9 @@
             impairment_store_history: '归属生效历史'},
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key];
+    // 只替换模板中的占位符；业务文本中的 $ 和花括号按原文保留，不再次解析。
+    const formatText = (key, values = {}) => text(key).replace(/\{([^{}]+)\}/g,
+        (placeholder, name) => Object.prototype.hasOwnProperty.call(values, name) ? String(values[name]) : placeholder);
     const translateProvisionLabels = () => document.querySelectorAll?.('[data-provision-text]')?.forEach(node => {
         node.textContent = text(node.dataset.provisionText);
     });
@@ -412,6 +428,7 @@
     window.PageInteractions = {
         batchStores,
         text,
+        formatText,
         batchDateTimeInput, batchDateTimeValue,
         reason: options => request({...options, reason: true}),
         confirmSalesRollback: () => request({title: text('rollbackTitle'), message: text('rollbackMessage')}),

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated
 from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from openpyxl import Workbook, load_workbook
@@ -20,7 +20,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, selectinload
+from sqlalchemy.orm import aliased, selectinload, undefer
 
 from database import get_db, async_session
 from services.import_progress import ImportProgress
@@ -49,6 +49,7 @@ from schemas import (
     SalesOrderCostSummary,
     SalesImportError,
     SalesImportBatchResponse,
+    SalesImportResultResponse,
     SalesImportRollbackResponse,
     SalesImportResponse,
     PendingConfirmationPageResponse,
@@ -1138,6 +1139,18 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
             if index % 25 == 0 or index == len(candidates):
                 await report("writing", index, len(candidates))
         import_batch.sales_created = sales_created
+        result = SalesImportResponse(
+            success=True, file_type=source_kind, sheet_name=sheet_name,
+            total_rows=len(rows), settlement_rows=len(candidates), sales_created=sales_created,
+            skipped_duplicates=skipped_duplicates, failed_rows=0,
+            pending_confirmation=pending_confirmation, import_batch_id=import_batch.id,
+            warnings=warnings,
+            pending_details=[SalesImportError(row=int(item["row"]["_row_number"]),
+                message=item["mapping_error"], identifier=item["order_no"])
+                for item in candidates if item["mapping_error"]],
+        )
+        # 与既有导入同一事务保存；不新增提交、不改写候选、库存或 FIFO 明细。
+        import_batch.result_snapshot = result.model_dump(mode="json")
         await report("committing")
         await db.commit()
     except HTTPException:
@@ -1147,19 +1160,18 @@ async def _import_sales_file(file, db, user, store_id, progress=None):
         await db.rollback()
         raise HTTPException(status_code=409, detail="导入数据与已有记录冲突，请刷新后重试")
 
-    return SalesImportResponse(
-        success=True,
-        file_type=source_kind,
-        sheet_name=sheet_name,
-        total_rows=len(rows),
-        settlement_rows=len(candidates),
-        sales_created=sales_created,
-        skipped_duplicates=skipped_duplicates,
-        failed_rows=len(errors),
-        pending_confirmation=pending_confirmation,
-        import_batch_id=import_batch.id,
-        errors=[],
-        warnings=warnings,
+    return result
+
+
+def _sales_import_batch_response(batch, username, store_name, user):
+    return SalesImportBatchResponse(
+        id=batch.id, file_name=batch.file_name, file_type=batch.file_type, sheet_name=batch.sheet_name,
+        imported_by=username, store_name=store_name, total_rows=batch.total_rows,
+        settlement_rows=batch.settlement_rows, sales_created=batch.sales_created,
+        skipped_duplicates=batch.skipped_duplicates, pending_confirmation=batch.pending_confirmation,
+        status=batch.status, imported_at=batch.imported_at, rolled_back_at=batch.rolled_back_at,
+        can_rollback=(batch.status == "completed" and user.role in ("admin", "operator")
+            and (user.role == "admin" or batch.store_id == user.store_id)),
     )
 
 
@@ -1179,30 +1191,28 @@ async def list_sales_imports(
     if user.role != "admin":
         stmt = stmt.where(SalesImportBatch.store_id == _require_bound_store(user))
     rows = (await db.execute(stmt)).all()
-    return [
-        SalesImportBatchResponse(
-            id=batch.id,
-            file_name=batch.file_name,
-            file_type=batch.file_type,
-            sheet_name=batch.sheet_name,
-            imported_by=username,
-            store_name=store_name,
-            total_rows=batch.total_rows,
-            settlement_rows=batch.settlement_rows,
-            sales_created=batch.sales_created,
-            skipped_duplicates=batch.skipped_duplicates,
-            pending_confirmation=batch.pending_confirmation,
-            status=batch.status,
-            imported_at=batch.imported_at,
-            rolled_back_at=batch.rolled_back_at,
-            can_rollback=(
-                batch.status == "completed"
-                and user.role in ("admin", "operator")
-                and (user.role == "admin" or batch.store_id == user.store_id)
-            ),
-        )
-        for batch, username, store_name in rows
-    ]
+    return [_sales_import_batch_response(batch, username, store_name, user) for batch, username, store_name in rows]
+
+
+@router.get("/imports/{import_batch_id}/result", response_model=SalesImportResultResponse)
+async def get_sales_import_result(
+    import_batch_id: int, response: Response,
+    db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole),
+):
+    stmt = (select(SalesImportBatch, User.username, Store.name)
+        .options(undefer(SalesImportBatch.result_snapshot))
+        .outerjoin(User, User.id == SalesImportBatch.user_id)
+        .outerjoin(Store, Store.id == SalesImportBatch.store_id)
+        .where(SalesImportBatch.id == import_batch_id))
+    if user.role != "admin":
+        stmt = stmt.where(SalesImportBatch.store_id == _require_bound_store(user))
+    row = (await db.execute(stmt)).one_or_none()
+    if row is None:
+        raise HTTPException(404, detail={"code": "sales_import_result_not_found", "message": "导入记录不存在或无权访问。"})
+    batch, username, store_name = row
+    response.headers["Cache-Control"] = "private, no-store"
+    return SalesImportResultResponse(**_sales_import_batch_response(batch, username, store_name, user).model_dump(),
+        result=batch.result_snapshot)
 
 
 @router.post("/imports/{import_batch_id}/rollback", response_model=SalesImportRollbackResponse)

@@ -3,10 +3,8 @@
     'use strict';
     let generation = 0;
     let dismissTimer = null;
-    const dismissDelay = 8000;
-    const text = (key, values = {}) => Object.entries(values).reduce(
-        (value, [name, replacement]) => value.replaceAll(`{${name}}`, String(replacement)),
-        window.PageInteractions.text(key));
+    const dismissDelays = {complete: 5000, review: 8000};
+    const text = (key, values) => window.PageInteractions.formatText(key, values);
     const node = id => document.getElementById(`sales-import-progress-${id}`);
     const current = token => token === generation;
     function clearDismissTimer() {
@@ -16,13 +14,24 @@
     function scheduleDismiss(leavingFocus = false) {
         clearDismissTimer();
         const panel = node('panel');
-        if (panel.hidden || panel.dataset.state !== 'complete' || !node('details').hidden ||
+        const delay = dismissDelays[panel.dataset.state];
+        if (panel.hidden || !delay || !node('details').hidden ||
             panel.matches(':hover') || (!leavingFocus && panel.matches(':focus-within'))) return;
         const token = generation;
         dismissTimer = setTimeout(() => {
-            if (current(token) && panel.dataset.state === 'complete' && node('details').hidden &&
+            if (current(token) && dismissDelays[panel.dataset.state] && node('details').hidden &&
                 !panel.matches(':hover, :focus-within')) reset();
-        }, dismissDelay);
+        }, delay);
+    }
+    function detailText(data = {}) {
+        data = data || {};
+        const issue = item => text('importIssue', {row:item.row, message:item.message}) +
+            (item.identifier ? text('importIssueIdentifier', {identifier:item.identifier}) : '');
+        return [['importWarningsTitle', data.warnings || []],
+                ['importPendingTitle', (data.pending_details || []).map(issue)],
+                ['importErrorsTitle', (data.errors || []).map(issue)]]
+            .filter(([, values]) => values.length)
+            .map(([key, values]) => `${text(key)}\n${values.join('\n')}`).join('\n\n');
     }
     function toggleDetails() {
         if (node('panel').dataset.state === 'running') return;
@@ -69,6 +78,7 @@
         node('brief').textContent = '';
         node('file').textContent = text('importFileStore', {file:file.name, store});
         node('result').textContent = '';
+        node('messages').textContent = '';
         stage({stage:'uploading'}, token);
         return token;
     }
@@ -112,6 +122,7 @@
         node('bar').max = 100; node('bar').value = 100;
         node('count').textContent = '100%';
         node('result').textContent = message;
+        node('messages').textContent = detailText(data);
         finish();
         node('brief').textContent = text('importCompactSummary', {
             settlements:data.settlement_rows, sales:data.sales_created, duplicates:data.skipped_duplicates,
@@ -120,17 +131,21 @@
         });
         scheduleDismiss();
     }
-    function fail(message, token) {
+    function fail(message, token, data) {
         if (!current(token)) return;
         node('panel').dataset.state = 'error';
         node('stage').textContent = text('importFailed');
         node('bar').max = 1; node('bar').value = 0;
         node('count').textContent = '';
         node('result').textContent = '';
+        node('messages').textContent = detailText(data);
         finish();
         node('brief').textContent = message;
     }
-    function reset() { clearDismissTimer(); ++generation; node('panel').hidden = true; }
+    function reset() {
+        clearDismissTimer(); ++generation; node('panel').hidden = true;
+        for (const id of ['file', 'result', 'messages', 'brief', 'stage']) node(id).textContent = '';
+    }
     function summary(data) {
         return text('importSuccess', {settlements:data.settlement_rows, sales:data.sales_created,
             duplicates:data.skipped_duplicates,
@@ -147,5 +162,5 @@
     node('panel').addEventListener('focusout', event => {
         if (!node('panel').contains(event.relatedTarget)) scheduleDismiss(true);
     });
-    window.SalesImportProgress = {begin, consume, complete, fail, reset, summary};
+    window.SalesImportProgress = {begin, consume, complete, fail, reset, summary, detailText};
 })();

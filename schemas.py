@@ -516,6 +516,7 @@ class SalesImportResponse(BaseModel):
     import_batch_id: int | None = None
     errors: list[SalesImportError] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    pending_details: list[SalesImportError] = Field(default_factory=list)
 
 
 class SalesImportBatchResponse(BaseModel):
@@ -534,6 +535,11 @@ class SalesImportBatchResponse(BaseModel):
     imported_at: datetime
     rolled_back_at: datetime | None = None
     can_rollback: bool = False
+
+
+class SalesImportResultResponse(SalesImportBatchResponse):
+    # 与批次当前统计分开；待确认重试/撤销不改写导入当时的结果。
+    result: SalesImportResponse | None = None
 
 
 class SalesImportRollbackResponse(BaseModel):
