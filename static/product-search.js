@@ -48,6 +48,7 @@
                 controller=new AbortController();
                 try {
                     const params=new URLSearchParams({keyword:query,page:1,page_size:20,prioritize_exact_sku:true});
+                    Object.entries(config.queryParams?.() || {}).forEach(([key,value])=>params.set(key,String(value)));
                     const response=await fetch(`/products?${params}`,{credentials:'same-origin',headers:authHeaders(),signal:controller.signal});
                     if(!current())return;
                     if(response.status===401){handleSessionExpired();return;}

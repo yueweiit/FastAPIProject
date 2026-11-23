@@ -78,6 +78,60 @@ class ProductSearchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.operations)
         self.assertEqual(set(self.operations),{'SELECT'})
 
+    async def test_catalog_specification_search_is_opt_in_for_existing_callers(self):
+        for product in self.session.scalars(select(Product)):
+            product.specification = "黑色 / XL"
+        self.session.commit()
+        original = await self.request('GET', '/products', params={'keyword': 'XL', 'page': 1})
+        self.assertEqual(original.json()['total'], 0)
+        params = {'keyword': 'XL', 'search_specification': 'true', 'page': 1, 'page_size': 10}
+        first = (await self.request('GET', '/products', params=params)).json()
+        second = (await self.request('GET', '/products', params={**params, 'page': 2})).json()
+        self.assertEqual((first['total'], second['total']), (26, 26))
+        self.assertEqual(len({row['id'] for row in first['items'] + second['items']}), 20)
+        internal = await products.list_products(keyword='XL', page=1, page_size=20, db=self.db, user=self.actor)
+        self.assertEqual(internal.total, 0)
+
+    async def test_completeness_filters_count_and_paginate_without_changing_legacy_rows(self):
+        for product in self.session.scalars(select(Product)):
+            product.specification = "完整规格"
+            product.image = "/uploads/fixture.png"
+        self.session.get(Product, 100).specification = None
+        self.session.get(Product, 101).specification = "  "
+        self.session.get(Product, 102).specification = ""
+        self.session.get(Product, 101).image = None
+        self.session.get(Product, 102).image = ""
+        self.session.commit()
+        self.operations.clear()
+        for completeness, ids in (('missing_specification', [102, 101, 100]), ('missing_image', [102, 101])):
+            params = {'completeness': completeness, 'page': 1, 'page_size': 2}
+            first = (await self.request('GET', '/products', params=params)).json()
+            self.assertEqual(first['total'], len(ids))
+            self.assertEqual([row['id'] for row in first['items']], ids[:2])
+            array = (await self.request('GET', '/products', params={'completeness': completeness})).json()
+            self.assertEqual([row['id'] for row in array], ids)
+        result = (await self.request('GET', '/products', params={
+            'completeness': 'missing_specification', 'keyword': 'Candidate 0', 'page': 1,
+        })).json()
+        self.assertEqual([row['id'] for row in result['items']], [100])
+        self.assertEqual(self.session.get(Product, 100).specification, None)
+        self.assertEqual(self.session.get(Product, 101).specification, '  ')
+        self.assertEqual(set(self.operations), {'SELECT'})
+
+    async def test_new_filter_validation_and_export_scope_remain_explicit(self):
+        for params in ({'completeness': 'unknown'}, {'search_specification': 'invalid'}):
+            response = await self.request('GET', '/products', params=params)
+            self.assertEqual(response.status_code, 422)
+        # 导出继续按product_ids或全部资料，不因页面筛选隐式改变原格式/范围。
+        from io import BytesIO
+        from openpyxl import load_workbook
+        response = await self.request('GET', '/products/export', params={'product_ids': [1, 100]})
+        self.assertEqual(response.status_code, 200, response.text if response.status_code != 200 else '')
+        workbook = load_workbook(BytesIO(response.content))
+        sheet = workbook.active
+        self.assertIn('规格/型号', [cell.value for cell in sheet[1]])
+        self.assertEqual(sheet.max_row, 3)
+
 
 if __name__=='__main__':
     unittest.main()

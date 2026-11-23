@@ -178,7 +178,8 @@
         root().hidden=false;
         closeSearches(true);
         closeDetail();
-        const request = ++serial;
+        const request = ++serial, user = CURRENT_USER_ID;
+        const current = () => request === serial && user === CURRENT_USER_ID && !!user;
         state.data = null;
         syncControls();
         node('tbody').innerHTML = ''; node('thead').innerHTML = ''; node('stats').innerHTML = ''; node('stat-scope').textContent = '';
@@ -194,13 +195,13 @@
             params.set('month', `${state.month}-01`);
         }
         try {
-            const data = await api('GET', `/inventory/${state.mode === 'daily' ? 'daily' : 'overview'}?${params}`);
-            if (request !== serial) return;
+            const data = await api('GET', `/inventory/${state.mode === 'daily' ? 'daily' : 'overview'}?${params}`, undefined, {isCurrent: current});
+            if (!current()) return;
             state.data = data; state.page = data.page;
             node('status').textContent = '';
             render();
         } catch (error) {
-            if (request === serial) node('status').textContent = `${text('failed')}${error.message}`;
+            if (current()) node('status').textContent = `${text('failed')}${error.message}`;
         }
     }
 
@@ -374,6 +375,7 @@
         }
         exportRequest = request;
         const controls = [...root().querySelectorAll('button,input,select')].map(control => [control, control.disabled]);
+        request.controls = controls;
         controls.forEach(([control]) => control.disabled = true);
         node('export-status').textContent = text('exportLoading');
         try {
@@ -421,6 +423,23 @@
         serial++; closeDetail(); state = initial(); initialized = false;
         if (root()) root().replaceChildren();
     }
+    function openProduct(productId) {
+        if (!Number.isSafeInteger(productId) || productId <= 0 || !CURRENT_USER_ID) return;
+        initialize();
+        // 中止旧导出/查询展示，按商品ID跳转，避免相近SKU或旧筛选干扰定位。
+        const previousExport = exportRequest;
+        exportRequest = null;
+        previousExport?.controller.abort();
+        previousExport?.controls.forEach(([control, disabled]) => {control.disabled = disabled;});
+        closeSearches();
+        keywordPicker.product = null;
+        state.mode = 'overview'; state.productId = productId; state.selected = productId;
+        state.keyword = ''; state.page = 1; node('keyword').value = '';
+        const assessment = document.getElementById('inventory-assessment-root');
+        if (assessment) assessment.hidden = true;
+        root().hidden = false;
+        return refresh();
+    }
     document.querySelectorAll('[data-inventory-nav]').forEach(element => element.textContent = text('nav'));
-    window.InventoryWorkspace = {open: refresh, reset, text, show: mode => {state.mode=mode;root().hidden=false;return refresh();}};
+    window.InventoryWorkspace = {open: refresh, openProduct, reset, text, show: mode => {state.mode=mode;root().hidden=false;return refresh();}};
 })();

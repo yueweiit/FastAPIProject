@@ -26,6 +26,7 @@ async function verify(file) {
     vm.runInContext(`const API=''; let AUTH_CSRF='fixture-csrf'; let AUTH_CONFIG={local_enabled:true,sso_available:true};
         let CURRENT_ROLE='',CURRENT_USER='',CURRENT_USER_ID=0;
         let productPage=1,productPageSize=20,productKeyword='',currentProductList=[],productTotal=0;
+        let productRequestId=0,productSessionId=0,productCompleteness='all',productSearchControl=null;
         let expired=0; let portalLogout=0;
         function handleSessionExpired(){expired++; AUTH_CSRF='';}
         function doLogout(){portalLogout++;}`,context);
@@ -66,7 +67,7 @@ async function verify(file) {
 
     const nodes = new Map();
     const node = id => {
-        if (!nodes.has(id)) nodes.set(id, {value:'',textContent:'',style:{display:'none'},
+        if (!nodes.has(id)) nodes.set(id, {value:'',textContent:'',style:{display:'none'},replaceChildren(){},
             classList:{add(){},remove(){}}});
         return nodes.get(id);
     };
@@ -76,6 +77,9 @@ async function verify(file) {
     for (const name of ['resetSalesImportState','resetBatchEditSession','resetBatchExportSession',
         'resetProductImportPreview','resetStoreProfitLossState','clearLegacyAuth']) context[name]=()=>{};
     context.renderProductPage=()=>context.productsRendered=true;
+    context.initializeProductSearch=()=>{};
+    context.updateProductSelectionState=()=>{};
+    include('productTypeText');
     context.loadPlatformSkuMappings=async()=>{}; // 根目录副本另有此首屏步骤，保留页面差异。
     context.setTimeout=()=>0;
     for (const name of ['authText','showLogin','handleSessionExpired','isAdmin','updateUserBar',

@@ -10,6 +10,8 @@
 
 库存Excel由[services/inventory_export.py](../../../services/inventory_export.py)格式化，只消费页面共用的overview_row/activity_rows，不连接数据库或另算库存。接口测试核对总览/整月/横向格式、全查询范围、指定商品、跨店权限、未知合计空白、文本/公式安全、上限和分组期间一致性；浏览器测试核对下载文件名/参数、忙时重复点击、失败恢复、无效文件和旧会话响应。
 
+商品工作台的“查看库存”调用InventoryWorkspace.openProduct(productId)，回到库存总览，清除旧关键词并按ID精确筛选，导出继续携带product_id；中止旧导出并恢复其控件状态。库存总览请求通过isCurrent隔离旧查询/旧会话的响应，避免过期401退出新会话。此跳转不写入库存，也不改变角色或店铺范围。
+
 库存工作台入口为[routers/inventory.py](../../../routers/inventory.py)、[services/inventory_activity.py](../../../services/inventory_activity.py)、[static/inventory-workspace.js](../../../static/inventory-workspace.js)。两份首页同步菜单、挂载、样式及退出清理，保留此前非本功能差异。`python -m unittest tests.test_inventory_workspace -v`以独立SQLite/ASGI验证数量勾稽、更正/作废时点、取消未来到货、补差、权限、参数、分页及只SELECT。
 
 `node tests/inventory_workspace_browser_checks.cjs`使用现有Playwright、本地静态服务器及模拟API，真实无头浏览器检查两份页面、三视图、弹窗、转义、错误、退出/重登与晚响应、重复重建及窄屏。可用INVENTORY_PLAYWRIGHT_MODULE指定现有模块、INVENTORY_BROWSER_CHANNEL选择已安装浏览器、INVENTORY_QA_DIR保存截图；不安装依赖、不启动main、不连接业务库或外网，不代表目标MySQL/生产验收。

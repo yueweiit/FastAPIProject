@@ -275,12 +275,14 @@ async function checkSalesColumnVisibility(page,suffix) {
 }
 
 async function checkHelpTips(page, suffix) {
+    await page.getByRole('button', {name: '新增商品', exact: true}).click();
+    await page.locator('#product-editor').waitFor({state: 'visible'});
     const button = page.locator('#p-type-label .help-tip-trigger');
     const source = page.locator('#product-form [data-product-type-text="ruleHelp"]');
     await button.waitFor();
     check(await source.isVisible(), false);
     check(await button.getAttribute('type'), 'button');
-    check(await button.getAttribute('aria-label'), '商品类型 · 查看说明');
+    check(await button.getAttribute('aria-label'), '跌价计提类型 · 查看说明');
     check(await button.getAttribute('aria-describedby'), await source.getAttribute('id'));
     if (process.env.INVENTORY_QA_DIR && suffix === '/') {
         fs.mkdirSync(process.env.INVENTORY_QA_DIR, {recursive: true});
@@ -416,6 +418,8 @@ async function checkHelpTips(page, suffix) {
         check(await fallback.locator('#fallback-help').isVisible(), true);
         check(await fallback.locator('.help-tip-trigger').count(), 0);
     } finally {await fallback.close();}
+    await page.locator('#product-editor [data-product-type-text="close"]').click();
+    await page.locator('#product-editor').waitFor({state: 'hidden'});
 }
 
 async function main() {

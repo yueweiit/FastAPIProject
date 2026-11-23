@@ -4,6 +4,7 @@ from datetime import date, datetime
 from io import BytesIO
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 from services.cost_layers import adjusted_cost_expression
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
@@ -226,14 +227,19 @@ async def list_products(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
     prioritize_exact_sku: bool = False,
+    search_specification: bool = False,
+    completeness: Literal["all", "missing_specification", "missing_image"] = "all",
 ):
-    """列出商品；支持按商品名称或 SKU 搜索。"""
+    """列出商品；商品工作台可显式扩展规格搜索和资料完整性筛选。"""
     stmt = _product_summary_stmt()
     count_stmt = select(func.count()).select_from(Product)
     if keyword and keyword.strip():
         normalized_keyword = keyword.strip()
         pattern = f"%{normalized_keyword}%"
-        product_filter = or_(Product.name.ilike(pattern), Product.sku.ilike(pattern))
+        keyword_columns = [Product.name, Product.sku]
+        if search_specification:
+            keyword_columns.append(Product.specification)
+        product_filter = or_(*(column.ilike(pattern) for column in keyword_columns))
         stmt = stmt.where(product_filter)
         count_stmt = count_stmt.where(product_filter)
         if prioritize_exact_sku:
@@ -242,6 +248,11 @@ async def list_products(
                 case((func.lower(Product.sku) == normalized_keyword.lower(), 0), else_=1),
                 Product.id.desc(),
             )
+    if completeness != "all":
+        column = Product.specification if completeness == "missing_specification" else Product.image
+        missing = or_(column.is_(None), func.trim(column) == "")
+        stmt = stmt.where(missing)
+        count_stmt = count_stmt.where(missing)
     if page is None:
         result = await db.execute(stmt)
         return [_product_summary_from_row(row) for row in result.all()]

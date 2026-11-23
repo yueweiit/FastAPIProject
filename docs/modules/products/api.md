@@ -10,7 +10,7 @@
 | `POST /products/import` | [import_products](../../../routers/products.py) | admin/operator/viewer | multipart：file、preview_token | ProductImportResponse；整批新增 |
 | `POST /products/import/result` | [export_product_import_result](../../../routers/products.py) | admin/operator/viewer | JSON：rows | 校验/导入结果 .xlsx |
 | `GET /products/options` | [list_product_options](../../../routers/products.py) | admin/operator/viewer | 无 | list[ProductOptionResponse] |
-| `GET /products` | [list_products](../../../routers/products.py) | admin/operator/viewer | keyword、page、page_size、prioritize_exact_sku | list[ProductResponse] \| ProductPageResponse |
+| `GET /products` | [list_products](../../../routers/products.py) | admin/operator/viewer | keyword、page、page_size、prioritize_exact_sku、search_specification、completeness | list[ProductResponse] \| ProductPageResponse |
 | `GET /products/export` | [export_products](../../../routers/products.py) | admin/operator/viewer | product_ids | Excel 文件 |
 | `PUT /products/{product_id}` | [update_product](../../../routers/products.py) | admin/operator/viewer | product_id、sku、name、specification、product_type、safe_stock_quantity、image | ProductResponse |
 | `DELETE /products/{product_id}` | [delete_product](../../../routers/products.py) | admin/operator/viewer | product_id | ok |
@@ -25,7 +25,7 @@
 
 GET 列表支持 keyword（长度≤255）、page（≥1）、page_size（默认20，1–100）；名称或 SKU 模糊查询。不传 page 是数组，传 page 是 ProductPageResponse。列表及 options 新增可空 specification；options 返回 id、sku、name、specification、image，适合下拉选择。
 
-联想组件显式传prioritize_exact_sku=true：有非空keyword时，先将忽略大小写的完整SKU字面匹配置顶，再按商品ID倒序排列，最后分页；即使存在超过20个近似SKU，精确项仍在第一页。百分号/下划线仅在已有模糊过滤中保留通配语义，精确排序使用相等比较。参数默认false，普通列表和内部库存查询的顺序、总数、分页/数组格式及权限保持兼容；不传关键字或没有精确项时沿用原顺序。图册搜索复用此参数，分页沿用同一keyword，没有新增筛选接口或改变商品共享权限。
+联想组件显式传prioritize_exact_sku=true：有非空keyword时，先将忽略大小写的完整SKU字面匹配置顶，再按商品ID倒序排列，最后分页；即使存在超过20个近似SKU，精确项仍在第一页。百分号/下划线仅在已有模糊过滤中保留通配语义，精确排序使用相等比较。参数默认false，普通列表和内部库存查询的顺序、总数、分页/数组格式及权限保持兼容；不传关键字或没有精确项时沿用原顺序。统一商品工作台复用此参数，列表与图册分页沿用同一keyword。新增可选search_specification（默认false），为true时关键字同时匹配规格；completeness为all（默认）/missing_specification/missing_image，后两者筛选对应字段为NULL、空串或纯空格的商品。列表和count在分页前应用相同条件；不传参数的库存/销售/外部调用保留原查询语义，无新增端点或权限变动。
 
 导出通过重复参数 product_ids 选择，例如 /products/export?product_ids=1&product_ids=2；未传 ID 导出全部，不支持后端 keyword 查询。无记录返回 404；SKU 重复返回 400；商品规则不合法返回 422；删除仍被平台组件引用的商品返回 400。
 

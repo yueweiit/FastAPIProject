@@ -2,7 +2,7 @@
 
 ## 创建与图片
 
-createProduct 使用 multipart 提交 sku、name、specification、product_type、safe_stock_quantity 和可选 image。规格录入使用可接收换行的 textarea，避免浏览器单行 input 在回显或粘贴时拼接词语；保存前将换行统一转为空格，后端及 Excel 导入复用同一规则，原文含 XML 非法字符则拒绝。后端先校验必填规格，再检查 SKU、校验商品规则，再有界读取图片；允许 JPEG/PNG/GIF/WebP 扩展名，且必须能实际解码为这些格式。原文件最多5 MiB、像素总数最多2000万，重新编码后最多10 MiB。JPEG统一保存为UUID文件名的.jpg，其余转为.png；移除元数据和尾随内容，GIF/WebP仅保留首帧。随后创建 Product、flush 取得 ID、写当日 ProductImpairmentRule 并 commit。
+openNewProduct/openEditProduct 打开共用侧栏，saveProduct 使用 multipart 提交 sku、name、specification、product_type、safe_stock_quantity 和可选 image。规格录入使用可接收换行的 textarea，避免浏览器单行 input 在回显或粘贴时拼接词语；保存前将换行统一转为空格，后端及 Excel 导入复用同一规则，原文含 XML 非法字符则拒绝。后端先校验必填规格，再检查 SKU、校验商品规则，再有界读取图片；允许 JPEG/PNG/GIF/WebP 扩展名，且必须能实际解码为这些格式。原文件最多5 MiB、像素总数最多2000万，重新编码后最多10 MiB。JPEG统一保存为UUID文件名的.jpg，其余转为.png；移除元数据和尾随内容，GIF/WebP仅保留首帧。随后创建 Product、flush 取得 ID、写当日 ProductImpairmentRule 并 commit。
 
 图片写入失败或数据库提交异常时，只清理本次新建文件。更新图片保留旧文件，避免事务失败破坏已有图片引用；历史文件清理需要另行核对引用和授权。静态图片仍公开访问，但只允许图片扩展名，历史HTML/SVG也返回404；强制图片MIME，并添加nosniff和sandbox CSP，隔离历史伪装图片的活动内容。依据：[product_images.py](../../../services/product_images.py) 的 normalize_product_image、read_product_image、ProductImageFiles；[products.py](../../../routers/products.py) 的 _save_product_image、create_product、update_product；[main.py](../../../main.py) 的 /uploads 挂载。
 
@@ -57,8 +57,12 @@ flowchart TD
 
 ## 查询、导出与删除
 
-列表支持 SKU/名称模糊搜索，库存数量和价值由批次聚合；选项接口只取轻量商品信息。页面分页和跨页复选保存状态仅在浏览器内。导出带 product_ids 时导出选择记录；未传则导出全部商品，后端导出没有 keyword 参数，页面按当前查询得到 ID 实现筛选导出。
+列表和图册共用 loadProducts：商品工作台显式启用规格搜索及 all/missing_specification/missing_image 资料筛选，服务端在分页前同时过滤列表和总数；旧调用默认仍按SKU/名称查询。分页、搜索、视图及跨页勾选仅保存在当前会话浏览器内，切换视图保留状态，退出清空。默认页面不展示库存数量、金额、最近入库或核算规则列，但商品查询响应继续保留原字段，库存数量和成本仍由批次聚合。
 
-图册顶部复用库存页的商品名称/SKU联想样式及[ProductSearch.bind](../../../static/product-search.js)。输入后可点查询、按回车或点候选；候选填入SKU后仍执行名称/SKU模糊搜索，完整SKU优先，不将候选当成独占商品ID过滤。`searchGallery`回到第一页，`loadGallery`沿用`GET /products`的keyword/page/page_size及prioritize_exact_sku=true；翻页/调整每页数量保留查询，刷新有未提交输入时先应用新条件，清空返回全部商品。无匹配、加载失败单独提示，图片下载保留。请求序号及公共api的isCurrent隔离过期响应，退出重置图册，旧会话401不能退出新会话。实现位于两份首页的图册段，无新API、数据库结构或依赖。
+导出菜单明确区分“导出所选商品”（跨页选择的ID，未选禁用）和“导出全部商品”（无ID，不受搜索/筛选影响）；单条导出与删除位于每行“更多”。原导出表头、图片、规格、商品类型、安全库存、库存及日期列继续保留，Excel导入五列、别名、预览确认和历史SKU跳过规则不变。后端导出没有 keyword 参数，不提供隐式“当前筛选导出”。
+
+统一搜索复用[ProductSearch.bind](../../../static/product-search.js)：商品工作台通过可选queryParams附加规格及资料筛选，库存/销售等旧调用不受影响。回车或候选点击回到第一页，完整SKU优先；翻页和刷新保留条件，刷新会应用未提交的搜索输入，清空恢复全部资料。setProductView在列表/图册间切换，共用renderProductPage和选择状态。loadProducts以请求序号、用户和会话代次隔离过期响应；resetProductSession清除查询、选择、图册及编辑资料，旧401不能退出新会话。
+
+侧栏保留历史空规格提示及必填校验，图片留空保留原图；保存期间禁止重复提交和关闭，失败保留录入，保存成功后的刷新失败单独提示。旧会话的保存结果不能关闭新侧栏或覆盖新草稿。openProductInventory调用InventoryWorkspace.openProduct，以product_id进入库存总览并清除旧库存关键词，库存导出也沿用这个精确范围；原角色和共享库存规则保持。整合不新增数据表、迁移或依赖，不回填历史资料。
 
 更新图片保留旧文件；删除商品先检查盘点、平台映射等引用，数据库提交成功后才清理图片。已有盘点记录的商品拒绝删除；其他外键冲突返回409，图片保留。提交成功但图片清理失败返回明确warning，不把数据库已完成删除误报为未保存。依据：[products.py](../../../routers/products.py)的delete_product。

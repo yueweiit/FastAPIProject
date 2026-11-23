@@ -232,7 +232,6 @@
         .pagination button:disabled { color:#a8b1bd; background:#f6f7f9; cursor:not-allowed; }
         .pagination select { padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:#465365; background:#fff; }
         .gallery-download { position:absolute; right:10px; bottom:10px; padding:6px 10px !important; font-size:12px !important; text-decoration:none; background:rgba(255,255,255,.94); }
-        #gallery-grid > div { border:1px solid var(--line); box-shadow:0 4px 14px rgba(21,34,56,.06) !important; }
         .edit-modal { position:fixed !important; z-index:1000; top:50%; left:50%; transform:translate(-50%,-50%); width:min(1060px, calc(100vw - 72px)); max-height:calc(100vh - 72px); overflow:auto; margin:0 !important; border:1px solid #f3a0ad !important; box-shadow:0 22px 60px rgba(15,27,51,.28), 0 0 0 100vmax rgba(15,27,51,.36); }
         .edit-modal .form-row { margin-bottom:10px; }
         .edit-modal .flex-between { position:sticky; top:0; z-index:1; padding-bottom:12px; margin-bottom:4px; background:var(--surface); }
@@ -482,6 +481,67 @@
             .ol-pagination { flex-wrap:wrap; }.ol-pagination>span { flex-basis:100%; }
             .ol-dialog { padding:16px; }.ol-detail-table { min-width:500px; }
         }
+
+        /* 商品资料共用查询、列表/图册与侧栏编辑；库存字段由库存工作台呈现。 */
+        .product-query-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+        .product-workspace .product-search { flex:1; margin:0; flex-wrap:wrap; }
+        .product-keyword-picker { flex:1 1 260px; max-width:460px; min-width:0; }
+        .product-workspace .product-search input { width:100%; min-width:0; }
+        .product-search select { padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--ink); font:inherit; max-width:100%; }
+        .product-view-switch { display:flex; gap:4px; }
+        .product-view-switch [aria-selected="true"] { color:var(--accent); border-color:var(--accent); background:#fff3f6; }
+        .product-table td:nth-child(4), .product-table td:nth-child(5) { min-width:180px; overflow-wrap:anywhere; white-space:normal; }
+        .product-table td:nth-child(3) { min-width:120px; overflow-wrap:anywhere; }
+        .product-row-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:220px; }
+        .product-row-actions .btn { padding:6px 10px; font-size:12px; }
+        .product-thumbnail { width:48px; height:48px; object-fit:contain; display:block; border-radius:6px; }
+        .product-no-image { display:grid; place-items:center; color:var(--muted); background:#f6f8fb; }
+        .product-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
+        .product-gallery-card { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--surface); }
+        .product-gallery-image { display:flex; align-items:center; justify-content:center; height:180px; background:#f6f8fb; position:relative; color:var(--muted); }
+        .product-gallery-image > a:first-child { display:block; width:100%; height:100%; }
+        .product-gallery-image img { width:100%; height:100%; object-fit:contain; }
+        .product-gallery-body { padding:14px; }
+        .product-gallery-identity { display:flex; justify-content:space-between; gap:8px; align-items:center; overflow-wrap:anywhere; }
+        .product-gallery-identity input { width:16px; height:16px; accent-color:var(--accent); flex-shrink:0; }
+        .product-gallery-name { margin:8px 0; overflow-wrap:anywhere; }
+        .product-gallery-specification { color:var(--muted); margin-bottom:12px; overflow-wrap:anywhere; }
+        .product-workspace-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:16px; }
+        .product-selection { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:13px; }
+        .product-selection .btn { padding:5px 8px; font-size:12px; }
+        .product-workspace-footer .pagination { margin-top:0; }
+        .product-export-menu { position:relative; }
+        .product-export-menu summary { list-style:none; }
+        .product-workspace summary.btn { display:inline-block; padding:10px 18px; border:1px solid var(--line); border-radius:7px; cursor:pointer; font-size:13px; font-weight:700; list-style:none; }
+        .product-workspace summary.btn::after { content:' ▾'; }
+        .product-row-actions summary.btn { padding:6px 10px; font-size:12px; }
+        .product-workspace button:disabled, .product-editor button:disabled { opacity:.5; cursor:not-allowed; }
+        .product-export-actions { position:absolute; right:0; top:calc(100% + 6px); z-index:5; display:grid; gap:6px; width:180px; padding:8px; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #17243c1a; }
+        .product-editor { position:fixed; inset:0; margin:0 0 0 auto; width:min(560px,100vw); max-width:100vw; height:100%; max-height:100dvh; padding:24px; border:0; border-left:1px solid var(--line); background:var(--surface); color:var(--ink); box-shadow:-12px 0 40px #17243c26; overflow:auto; }
+        .product-editor::backdrop { background:rgba(15,27,51,.36); }
+        .product-editor-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:24px; }
+        .product-editor-heading h3 { margin:0; }
+        .product-editor-fields { display:grid; gap:18px; }
+        .product-editor .form-group { width:100%; min-width:0; }
+        .product-editor .form-group input, .product-editor .form-group select, .product-editor .form-group textarea { width:100%; max-width:100%; }
+        .product-editor .form-group small { color:var(--muted); }
+        .product-image-preview { display:flex; gap:10px; align-items:center; }
+        .product-image-preview:empty { display:none; }
+        .product-image-preview img { max-width:150px; max-height:100px; object-fit:contain; border-radius:6px; }
+        .product-accounting { border-top:1px solid var(--line); padding-top:16px; }
+        .product-accounting summary { cursor:pointer; font-weight:600; }
+        #product-accounting-summary { margin-left:12px; font-size:12px; font-weight:400; color:var(--muted); }
+        .product-accounting-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
+        .product-editor-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+        #product-editor-status { margin-top:14px; color:#b42339; overflow-wrap:anywhere; }
+        @media (max-width:600px) {
+            .product-gallery-grid { grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr)); }
+            .product-workspace .product-search { flex-basis:100%; }
+            .product-keyword-picker { flex-basis:100%; max-width:none; }
+            .product-editor { padding:20px; }
+            .product-accounting-fields { grid-template-columns:1fr; }
+            .product-workspace-footer .pagination { width:100%; }
+        }
     </style>
 </head>
 <body>
@@ -511,14 +571,13 @@
 </div>
 
 <div class="nav">
-    <button class="active" onclick="switchTab('products')">商品管理</button>
-    <button onclick="switchTab('inventory')" data-inventory-nav></button>
-    <button onclick="switchTab('batches')">入库管理</button>
-    <button onclick="switchTab('gallery')">产品图册</button>
-    <button onclick="switchTab('sales')">销售记录</button>
-    <button onclick="switchTab('reports')">报表</button>
-    <button onclick="switchTab('operation-logs')" id="nav-operation-logs" data-operation-nav style="display:none"></button>
-    <button onclick="switchTab('users')" id="nav-users" style="display:none">用户管理</button>
+    <button class="active" data-main-tab="products" onclick="switchTab('products')">商品管理</button>
+    <button data-main-tab="inventory" onclick="switchTab('inventory')" data-inventory-nav></button>
+    <button data-main-tab="batches" onclick="switchTab('batches')">入库管理</button>
+    <button data-main-tab="sales" onclick="switchTab('sales')">销售记录</button>
+    <button data-main-tab="reports" onclick="switchTab('reports')">报表</button>
+    <button data-main-tab="operation-logs" onclick="switchTab('operation-logs')" id="nav-operation-logs" data-operation-nav style="display:none"></button>
+    <button data-main-tab="users" onclick="switchTab('users')" id="nav-users" style="display:none">用户管理</button>
 </div>
 
 <div class="container">
@@ -530,23 +589,30 @@
 
     <!-- ========== 商品管理 ========== -->
     <div id="sec-products" class="section active">
-        <div class="card">
-            <h3>添加商品</h3>
-            <form id="product-form" enctype="multipart/form-data" onsubmit="return false">
-                <div class="form-row">
-                    <div class="form-group"><label>SKU</label><input id="p-sku" placeholder="BT-001"></div>
-                    <div class="form-group"><label>产品名称</label><input id="p-name" placeholder="蓝牙耳机"></div>
-                    <div class="form-group"><label id="p-specification-label" for="p-specification" data-product-type-text="specificationRequiredLabel"></label><textarea id="p-specification" class="product-specification-input" rows="1" maxlength="255" required aria-required="true"></textarea></div>
-                    <div class="form-group"><label id="p-type-label">商品类型</label><select id="p-product-type" onchange="toggleSafeStockField('p')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
-                    <div class="form-group"><label>安全库存</label><input id="p-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
-                    <div class="form-group"><label>产品图片</label><input id="p-image" type="file" accept="image/*"></div>
-                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="createProduct()">添加</button></div>
+        <dialog id="product-editor" class="product-editor" aria-labelledby="product-editor-title">
+            <div class="product-editor-heading"><h3 id="product-editor-title"></h3><button type="button" class="btn btn-secondary" data-product-editor-control data-product-type-text="close" onclick="closeEditProduct()"></button></div>
+            <form id="product-form" enctype="multipart/form-data" onsubmit="saveProduct(); return false;">
+                <div class="product-editor-fields">
+                    <div class="form-group"><label for="p-sku">SKU</label><input id="p-sku" maxlength="64" required data-product-editor-control></div>
+                    <div class="form-group"><label for="p-name" data-product-type-text="name"></label><input id="p-name" maxlength="255" required data-product-editor-control></div>
+                    <div class="form-group"><label id="p-specification-label" for="p-specification" data-product-type-text="specificationRequiredLabel"></label><textarea id="p-specification" class="product-specification-input" rows="2" maxlength="255" required aria-required="true" aria-describedby="p-specification-help" data-product-editor-control></textarea><small id="p-specification-help" data-product-type-text="specificationLegacyHelp" hidden></small></div>
+                    <div class="form-group"><label for="p-image" id="p-image-label" data-product-type-text="image"></label><input id="p-image" type="file" accept="image/*" data-product-editor-control></div>
+                    <div id="p-preview" class="product-image-preview"></div>
+                    <details id="product-accounting" class="product-accounting">
+                        <summary><span data-product-type-text="accounting"></span><span id="product-accounting-summary"></span></summary>
+                        <div class="product-accounting-fields">
+                            <div class="form-group"><label id="p-type-label" for="p-product-type" data-product-type-text="impairmentType"></label><select id="p-product-type" onchange="toggleSafeStockField('p')" data-product-editor-control><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
+                            <div class="form-group"><label for="p-safe-stock-quantity" data-product-type-text="safeStock"></label><input id="p-safe-stock-quantity" type="number" min="0" max="2147483647" step="1" value="0" data-product-editor-control></div>
+                        </div>
+                        <p class="product-import-hint" data-product-type-text="safeStockHelp"></p>
+                        <p class="product-import-hint" data-help-tip data-help-anchor="#p-type-label" data-product-type-text="ruleHelp"></p>
+                    </details>
                 </div>
-                <p class="product-import-hint" data-help-tip data-help-anchor="#p-type-label" data-product-type-text="ruleHelp"></p>
                 <p class="product-import-hint" data-help-tip data-help-anchor="#p-specification-label" data-product-type-text="specificationHelp"></p>
-                <div id="p-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
+                <p id="product-editor-status" role="status" aria-live="polite"></p>
+                <div class="product-editor-actions"><button type="button" class="btn btn-secondary" data-product-editor-control data-product-type-text="cancel" onclick="closeEditProduct()"></button><button type="button" class="btn btn-primary" id="product-save" data-product-editor-control data-product-type-text="save" onclick="saveProduct()"></button></div>
             </form>
-        </div>
+        </dialog>
         <dialog id="product-import-dialog" class="product-import-dialog" aria-labelledby="product-import-title">
             <div class="product-import-heading">
                 <h3 id="product-import-title">批量导入商品</h3>
@@ -571,24 +637,6 @@
                 <button type="button" id="product-import-confirm-button" class="btn btn-primary" onclick="confirmProductImport()" disabled>确认导入</button>
             </div>
         </dialog>
-        <!-- 编辑弹窗 -->
-        <div id="edit-product-modal" class="card edit-modal" style="display:none;border:2px solid #1a73e8">
-            <div class="flex-between"><h3>✏️ 编辑商品</h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditProduct()">× 取消</button></div>
-            <form enctype="multipart/form-data" onsubmit="return false">
-                <div class="form-row">
-                    <div class="form-group"><label>SKU</label><input id="ep-sku" placeholder="BT-001"></div>
-                    <div class="form-group"><label>产品名称</label><input id="ep-name" placeholder="蓝牙耳机"></div>
-                    <div class="form-group"><label id="ep-specification-label" for="ep-specification" data-product-type-text="specificationRequiredLabel"></label><textarea id="ep-specification" class="product-specification-input" rows="1" maxlength="255" required aria-required="true" aria-describedby="ep-specification-help"></textarea><small id="ep-specification-help" data-product-type-text="specificationLegacyHelp" hidden></small></div>
-                    <div class="form-group"><label id="ep-type-label">商品类型</label><select id="ep-product-type" onchange="toggleSafeStockField('ep')"><option value="stable" data-product-type-text="stable"></option><option value="new" data-product-type-text="new"></option><option value="no_impairment" data-product-type-text="no_impairment"></option></select></div>
-                    <div class="form-group"><label>安全库存</label><input id="ep-safe-stock-quantity" type="number" min="0" step="1" value="0"></div>
-                    <div class="form-group"><label>产品图片(留空不换)</label><input id="ep-image" type="file" accept="image/*"></div>
-                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="saveEditProduct()">保存</button></div>
-                </div>
-                <p class="product-import-hint" data-help-tip data-help-anchor="#ep-type-label" data-product-type-text="ruleHelp"></p>
-                <p class="product-import-hint" data-help-tip data-help-anchor="#ep-specification-label" data-product-type-text="specificationHelp"></p>
-                <div id="ep-preview" style="margin-top:8px;display:flex;align-items:center;gap:8px"></div>
-            </form>
-        </div>
         <div id="platform-sku-mappings-card" class="card" style="display:none">
             <div class="flex-between">
                 <h3>平台 SKU ID 映射</h3>
@@ -624,27 +672,42 @@
                 </div>
             </div>
         </div>
-        <div class="card">
+        <div class="card product-workspace">
             <div class="product-list-toolbar">
-                <h3>商品列表</h3>
-                <form class="product-search" onsubmit="searchProducts(); return false;">
-                    <input id="product-keyword" type="search" placeholder="搜索商品名称或 SKU" aria-label="搜索商品名称或 SKU">
-                    <button type="submit" class="btn btn-primary" title="搜索商品">搜索</button>
-                    <button type="button" class="btn btn-secondary" onclick="clearProductSearch()" title="清空搜索条件">清空</button>
-                </form>
+                <h3 data-product-type-text="workspaceTitle"></h3>
                 <div class="batch-list-actions">
-                    <button class="btn btn-primary" type="button" onclick="openProductImport()">批量导入</button>
-                    <button class="btn btn-primary" onclick="exportAllProducts()" title="导出当前商品列表">批量导出</button>
-                    <button class="btn btn-secondary" onclick="loadProducts()">刷新</button>
+                    <button class="btn btn-secondary" type="button" onclick="openProductImport()" data-product-type-text="import"></button>
+                    <details class="product-export-menu"><summary class="btn btn-secondary" data-product-type-text="export"></summary><div class="product-export-actions">
+                        <button type="button" class="btn btn-secondary" id="product-export-selected" onclick="exportSelectedProducts()" data-product-type-text="exportSelected" disabled></button>
+                        <button type="button" class="btn btn-secondary" onclick="exportAllProducts()" data-product-type-text="exportAll"></button>
+                    </div></details>
+                    <button class="btn btn-primary" type="button" onclick="openNewProduct()" data-product-type-text="create"></button>
                 </div>
             </div>
-            <div class="table-scroll">
-            <table class="product-table">
-                <thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)" aria-label="全选商品"></th><th>图片</th><th>SKU</th><th>名称</th><th data-product-type-text="specification"></th><th>类型</th><th>安全库存</th><th>库存</th><th>库存价值</th><th>最近入库</th><th>操作</th></tr></thead>
-                <tbody id="products-tbody"></tbody>
-            </table>
+            <div class="product-query-toolbar">
+                <form id="product-query" class="product-search" onsubmit="searchProducts(); return false;">
+                    <div class="inventory-product-picker product-keyword-picker">
+                        <div class="inventory-product-control">
+                            <input id="product-keyword" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="product-options" autocomplete="off" maxlength="255">
+                            <div id="product-popup" class="inventory-product-popup" hidden><div id="product-options" class="inventory-product-options" role="listbox"></div><p id="product-search-status" class="inventory-product-search-status" role="status" aria-live="polite"></p></div>
+                        </div>
+                    </div>
+                    <select id="product-completeness" onchange="searchProducts()"><option value="all" data-product-type-text="allProducts"></option><option value="missing_specification" data-product-type-text="missingSpecification"></option><option value="missing_image" data-product-type-text="missingImage"></option></select>
+                    <button type="submit" class="btn btn-secondary" data-product-type-text="search"></button>
+                    <button type="button" class="btn btn-secondary" onclick="clearProductSearch()" data-product-type-text="clear"></button>
+                    <button type="button" class="btn btn-secondary" onclick="refreshProducts()" data-product-type-text="refresh"></button>
+                </form>
+                <div class="product-view-switch" role="tablist" id="product-view-switch">
+                    <button type="button" id="product-view-list" role="tab" aria-controls="product-list-panel" aria-selected="true" class="btn btn-secondary" onclick="setProductView('list')" data-product-type-text="listView"></button>
+                    <button type="button" id="product-view-gallery" role="tab" aria-controls="product-gallery-panel" aria-selected="false" class="btn btn-secondary" onclick="setProductView('gallery')" data-product-type-text="galleryView"></button>
+                </div>
             </div>
-            <div class="pagination" id="products-pagination"></div>
+            <p id="product-list-status" class="inventory-status" role="status" aria-live="polite"></p>
+            <div id="product-list-panel" role="tabpanel" aria-labelledby="product-view-list" class="table-scroll">
+                <table class="product-table"><thead><tr><th><input type="checkbox" id="product-select-all" onchange="toggleAllProductSelection(this.checked)"></th><th data-product-type-text="image"></th><th>SKU</th><th data-product-type-text="name"></th><th data-product-type-text="specification"></th><th data-product-type-text="actions"></th></tr></thead><tbody id="products-tbody"></tbody></table>
+            </div>
+            <div id="product-gallery-panel" role="tabpanel" aria-labelledby="product-view-gallery" hidden><div id="gallery-grid" class="product-gallery-grid"></div></div>
+            <div class="product-workspace-footer"><div class="product-selection"><span id="product-selection-summary"></span><button type="button" class="btn btn-secondary" id="product-clear-selection" onclick="clearProductSelection()" data-product-type-text="clearSelection" disabled></button></div><div class="pagination" id="products-pagination"></div></div>
         </div>
     </div>
 
@@ -761,32 +824,6 @@
             </table>
             </div>
             <div class="pagination" id="batches-pagination"></div>
-        </div>
-    </div>
-
-    <!-- ========== 产品图册 ========== -->
-    <div id="sec-gallery" class="section">
-        <div class="card">
-            <h3 data-gallery-text="galleryTitle"></h3>
-            <form id="gallery-query" class="inventory-filters" onsubmit="searchGallery(); return false;">
-                <div class="form-group inventory-product-picker inventory-keyword-picker">
-                    <label for="gallery-keyword" data-gallery-text="galleryKeyword"></label>
-                    <div class="inventory-product-control">
-                        <input id="gallery-keyword" type="search" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="gallery-options" aria-describedby="gallery-hint" autocomplete="off" maxlength="255">
-                        <div id="gallery-popup" class="inventory-product-popup" hidden>
-                            <div id="gallery-options" class="inventory-product-options" role="listbox"></div>
-                            <p id="gallery-search-status" class="inventory-product-search-status" role="status" aria-live="polite"></p>
-                        </div>
-                    </div>
-                    <small id="gallery-hint" data-gallery-text="gallerySearchHint" hidden></small>
-                </div>
-                <button type="submit" class="btn btn-primary" data-gallery-text="gallerySearch"></button>
-                <button type="button" class="btn btn-secondary" onclick="refreshGallery()" data-gallery-text="galleryRefresh"></button>
-                <button type="button" class="btn btn-secondary" onclick="clearGallerySearch()" data-gallery-text="galleryClear"></button>
-            </form>
-            <p id="gallery-status" class="inventory-status" role="status" aria-live="polite"></p>
-            <div id="gallery-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;margin-top:12px"></div>
-            <div class="pagination" id="gallery-pagination"></div>
         </div>
     </div>
 
@@ -1233,7 +1270,7 @@ async function doLogout() {
 }
 
 function handleSessionExpired() {
-    if (typeof resetGallerySession === 'function') resetGallerySession();
+    if (typeof resetProductSession === 'function') resetProductSession();
     if (typeof resetBatchSearchSession === 'function') resetBatchSearchSession();
     resetSalesImportState();
     resetBatchEditSession();
@@ -1425,21 +1462,22 @@ function showLogin() {
 // 登录状态在页面初始化完成后由服务端会话恢复。
 
 // ========== Tab切换 ==========
-function switchTab(name) {
+function switchTab(name, options = {}) {
+    if (name === 'gallery') {name = 'products'; setProductView('gallery');}
+    productSearchControl?.close();
     if (name === 'operation-logs' && !isAdmin()) { window.OperationLogs?.reset(); return; }
     batchSearchControl?.close();
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav button').forEach(b => b.classList.remove('active'));
     document.getElementById('sec-' + name).classList.add('active');
-    event.target.classList.add('active');
-    if (name === 'products') loadProducts();
+    document.querySelector(`.nav button[data-main-tab="${name}"]`)?.classList.add('active');
+    if (name === 'products') return loadProducts().catch(() => {});
     if (name === 'batches') loadBatches();
-    if (name === 'inventory') window.InventoryWorkspace?.open();
+    if (name === 'inventory') return options.productId ? window.InventoryWorkspace?.openProduct(options.productId) : window.InventoryWorkspace?.open();
     if (name === 'operation-logs') {
         if (window.OperationLogs) window.OperationLogs.open();
         else document.getElementById('operation-logs-root').textContent = window.PageInteractions?.text('operationLogsUnavailable') || 'operationLogsUnavailable';
     }
-    if (name === 'gallery') loadGallery();
     if (name === 'sales') {
         if (!salesMonth) setSalesMonthToCurrent();
         loadSkuOptions();
@@ -1456,26 +1494,23 @@ function showMsg(text, ok = true) {
 }
 
 // ========== 商品 ==========
-document.getElementById('p-image')?.addEventListener('change', function() {
-    const file = this.files[0];
-    const preview = document.getElementById('p-preview');
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = e => {
-            preview.innerHTML = `<img src="${e.target.result}" style="max-height:80px;border-radius:6px">
-                <button type="button" class="btn btn-secondary" onclick="clearImage()" style="font-size:12px;padding:4px 10px">✕ 取消</button>`;
-        };
-        reader.readAsDataURL(file);
-    } else { preview.innerHTML = ''; }
-});
-
-function clearImage() {
-    document.getElementById('p-image').value = '';
-    document.getElementById('p-preview').innerHTML = '';
-}
-
 function productTypeText(key) {
     const messages = {'zh-CN': {
+        workspaceTitle: '商品资料', name: '产品名称', image: '产品图片', imageKeep: '产品图片（留空保留原图）',
+        create: '新增商品', edit: '编辑商品', save: '保存', saving: '正在保存…', cancel: '取消', close: '关闭',
+        accounting: '核算设置', impairmentType: '跌价计提类型', safeStock: '安全库存',
+        safeStockHelp: '安全库存仅对稳健商品生效，同时影响库存预警和跌价计提。修改后沿用现有生效历史规则。',
+        import: '批量导入', export: '导出', exportSelected: '导出所选商品', exportAll: '导出全部商品',
+        exportOne: '导出此商品', actions: '操作', viewInventory: '查看库存', more: '更多', delete: '删除',
+        search: '搜索', clear: '清空', refresh: '刷新', searchPlaceholder: '搜索商品名称、SKU 或规格',
+        allProducts: '全部商品', missingSpecification: '规格待补充', missingImage: '缺少图片', completeness: '资料完整性',
+        listView: '列表', galleryView: '图册', viewMode: '商品展示方式', searchResults: '商品搜索结果',
+        selectProduct: '选择商品', selectPage: '选择当前页商品', selected: '已选商品：', clearSelection: '清空选择',
+        empty: '没有匹配的商品，请调整搜索或筛选条件。', loading: '正在读取商品…', loadFailed: '商品加载失败：',
+        noImage: '无图', viewImage: '查看产品图片', downloadImage: '下载图片', cancelImage: '取消更换图片',
+        identityRequired: '请填写 SKU 和产品名称', saved: '商品保存成功', savedRefreshFailed: '商品已保存，但列表刷新失败，请点击刷新重试。',
+        deleteConfirm: '确认删除该商品？有关联记录的商品将由系统阻止删除。', deleted: '商品已删除',
+        exportFailed: '商品导出失败', exportDone: '商品 Excel 已生成，请查看浏览器下载列表。',
         specification: '规格/型号', specificationRequiredLabel: '规格/型号（必填）',
         specificationPlaceholder: '例如：黑色 / 标准版、500 mL',
         specificationRequired: '请填写规格/型号', specificationTooLong: '规格/型号不能超过 255 字符',
@@ -1505,21 +1540,18 @@ function productTypeTagClass(product) {
 }
 
 function initializeProductTypes() {
-    document.querySelectorAll('[data-product-type-text]').forEach(node => {
-        node.textContent = productTypeText(node.dataset.productTypeText);
-    });
+    document.querySelectorAll('[data-product-type-text]').forEach(node => {node.textContent = productTypeText(node.dataset.productTypeText);});
+    document.getElementById('p-specification').placeholder = productTypeText('specificationPlaceholder');
     toggleSafeStockField('p');
-    toggleSafeStockField('ep');
-    for (const prefix of ['p', 'ep']) {
-        document.getElementById(`${prefix}-specification`).placeholder = productTypeText('specificationPlaceholder');
-    }
+    initializeProductWorkspace();
 }
 
 function toggleSafeStockField(prefix) {
-    const supportsSafeStock = document.getElementById(`${prefix}-product-type`).value === 'stable';
+    const type = document.getElementById(`${prefix}-product-type`).value;
     const input = document.getElementById(`${prefix}-safe-stock-quantity`);
-    input.disabled = !supportsSafeStock;
-    if (!supportsSafeStock) input.value = 0;
+    input.disabled = type !== 'stable';
+    if (input.disabled) input.value = 0;
+    document.getElementById('product-accounting-summary').textContent = productTypeText(type);
 }
 
 function readProductSpecification(prefix) {
@@ -1537,42 +1569,20 @@ function readProductSpecification(prefix) {
     return value;
 }
 
-async function createProduct() {
-    try {
-        const formData = new FormData();
-        formData.append('specification', readProductSpecification('p'));
-        formData.append('sku', document.getElementById('p-sku').value);
-        formData.append('name', document.getElementById('p-name').value);
-        formData.append('product_type', document.getElementById('p-product-type').value);
-        formData.append('safe_stock_quantity', document.getElementById('p-safe-stock-quantity').value || 0);
-        const imageFile = document.getElementById('p-image').files[0];
-        if (imageFile) formData.append('image', imageFile);
-        const res = await fetch('/products', { method: 'POST', body: formData, headers: authHeaders() });
-        const data = await res.json();
-        if (!res.ok) throw new Error(formatApiError(data.detail, productTypeText('saveFailed')));
-        showMsg(`商品创建成功: ${data.sku} (ID: ${data.id})`);
-        invalidateProductOptions();
-        loadProducts();
-        document.getElementById('p-sku').value = '';
-        document.getElementById('p-name').value = '';
-        document.getElementById('p-specification').value = '';
-        document.getElementById('p-product-type').value = 'stable';
-        document.getElementById('p-safe-stock-quantity').value = 0;
-        toggleSafeStockField('p');
-        clearImage();
-    } catch (e) { showMsg(e.message, false); }
-}
+async function createProduct() { return saveProduct(null); }
 
 async function deleteProduct(id) {
-    if (!confirm('确认删除该商品？')) return;
+    if (!confirm(productTypeText('deleteConfirm'))) return;
+    const session = productSessionId, user = CURRENT_USER_ID;
+    const current = () => session === productSessionId && user === CURRENT_USER_ID && !!user;
     try {
-        await api('DELETE', `/products/${id}`);
-        showMsg('删除成功');
+        await api('DELETE', `/products/${id}`, undefined, {isCurrent: current});
+        if (!current()) return;
         selectedProductIds.delete(Number(id));
         invalidateProductOptions();
-        loadProducts();
-        if (document.getElementById('sec-gallery').classList.contains('active')) loadGallery();
-    } catch (e) { showMsg(e.message, false); }
+        showMsg(escapeHtml(productTypeText('deleted')));
+        await loadProducts();
+    } catch (error) {if (current()) showMsg(escapeHtml(error.message), false);}
 }
 
 let productImportReport = null;
@@ -1770,55 +1780,113 @@ let productPage = 1;
 let productPageSize = 20;
 let productTotal = 0;
 let productKeyword = '';
+let productCompleteness = 'all';
+let productView = 'list';
+let productRequestId = 0;
+let productSessionId = 0;
+let productSearchControl = null;
+let productWorkspaceInitialized = false;
+let productSaving = false;
+let productEditorSerial = 0;
+let productPreviewUrl = '';
+let productOriginalImage = '';
+
+function productImageUrl(product) {
+    return /^\/uploads\/[A-Za-z0-9_.-]+$/.test(product.image || '') ? product.image : '';
+}
+
+function productRowActions(product) {
+    const id = Number(product.id), label = key => escapeHtml(productTypeText(key));
+    return `<div class="product-row-actions">
+        <button type="button" class="btn btn-secondary" onclick="openEditProduct(${id})">${label('edit')}</button>
+        <button type="button" class="btn btn-secondary" onclick="openProductInventory(${id})">${label('viewInventory')}</button>
+        <details><summary class="btn btn-secondary">${label('more')}</summary>
+            <button type="button" class="btn btn-secondary" onclick="exportProduct(${id})">${label('exportOne')}</button>
+            <button type="button" class="btn btn-secondary" onclick="deleteProduct(${id})">${label('delete')}</button>
+        </details></div>`;
+}
 
 function renderProductPage() {
-    const tbody = document.getElementById('products-tbody');
-    const pageCount = Math.max(1, Math.ceil(productTotal / productPageSize));
-    tbody.innerHTML = currentProductList.length ? currentProductList.map(p => `<tr>
-        <td><input type="checkbox" data-product-select="${p.id}" ${selectedProductIds.has(Number(p.id)) ? 'checked' : ''} onchange="toggleProductSelection(${p.id}, this.checked)" aria-label="选择商品 ${escapeHtml(p.sku)}"></td>
-        <td>${p.image ? `<img src="${p.image}" style="height:40px;border-radius:4px">` : '-'}</td>
-        <td><strong>${escapeHtml(p.sku)}</strong></td>
-        <td>${escapeHtml(p.name)}</td>
-        <td>${escapeHtml(p.specification || productTypeText('specificationMissing'))}</td>
-        <td><span class="tag ${productTypeTagClass(p)}">${escapeHtml(productTypeLabel(p))}</span></td>
-        <td>${productTypeValue(p) === 'stable' ? `${p.safe_stock_quantity}件` : '-'}</td>
-        <td><span class="tag ${p.stock_quantity > 0 ? 'tag-green' : 'tag-red'}">${p.stock_quantity}件</span></td>
-        <td>¥${Number(p.stock_value).toFixed(2)}</td>
-        <td>${p.last_batch_at || '-'}</td>
-        <td style="display:flex;gap:4px">
-            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="exportProduct(${p.id})" title="导出此商品">导出</button>
-            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="openEditProduct(${p.id})">✏️</button>
-            <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deleteProduct(${p.id})">🗑</button>
-        </td>
-    </tr>`).join('') : '<tr><td colspan="11" class="empty">暂无商品</td></tr>';
-    renderPagination('products-pagination', productPage, pageCount, productTotal, productPageSize);
+    const h = escapeHtml, text = productTypeText;
+    document.getElementById('products-tbody').innerHTML = currentProductList.length ? currentProductList.map(p => {
+        const image = productImageUrl(p), id = Number(p.id);
+        return `<tr><td><input type="checkbox" data-product-select="${id}" ${selectedProductIds.has(id) ? 'checked' : ''} onchange="toggleProductSelection(${id}, this.checked)" aria-label="${h(text('selectProduct') + ' ' + p.sku)}"></td>
+            <td>${image ? `<a href="${h(image)}" target="_blank" rel="noopener" aria-label="${h(text('viewImage') + ' ' + p.sku)}"><img class="product-thumbnail" src="${h(image)}" alt="" loading="lazy"></a>` : `<span class="product-thumbnail product-no-image">${h(text('noImage'))}</span>`}</td>
+            <td><strong>${h(p.sku)}</strong></td><td>${h(p.name)}</td><td>${h(p.specification || text('specificationMissing'))}</td><td>${productRowActions(p)}</td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="empty">${h(text('empty'))}</td></tr>`;
+    document.getElementById('gallery-grid').innerHTML = currentProductList.length ? currentProductList.map(p => {
+        const image = productImageUrl(p), id = Number(p.id);
+        return `<article class="product-gallery-card"><div class="product-gallery-image">${image
+            ? `<a href="${h(image)}" target="_blank" rel="noopener" aria-label="${h(text('viewImage') + ' ' + p.sku)}"><img src="${h(image)}" alt="${h(p.name)}" loading="lazy"></a><a class="btn btn-secondary gallery-download" href="${h(image)}" download>${h(text('downloadImage'))}</a>`
+            : `<span>${h(text('noImage'))}</span>`}</div>
+            <div class="product-gallery-body"><div class="product-gallery-identity"><strong>${h(p.sku)}</strong><input type="checkbox" data-product-select="${id}" ${selectedProductIds.has(id) ? 'checked' : ''} onchange="toggleProductSelection(${id}, this.checked)" aria-label="${h(text('selectProduct') + ' ' + p.sku)}"></div>
+            <div class="product-gallery-name">${h(p.name)}</div><div class="product-gallery-specification">${h(p.specification || text('specificationMissing'))}</div>${productRowActions(p)}</div></article>`;
+    }).join('') : `<div class="empty">${h(text('empty'))}</div>`;
+    renderPagination('products-pagination', productPage, Math.max(1, Math.ceil(productTotal / productPageSize)), productTotal, productPageSize);
+    setProductView(productView);
     updateProductSelectionState();
 }
 
 async function loadProducts() {
-    document.querySelector('#sec-products .card:first-child').style.display = '';
-    document.getElementById('edit-product-modal').style.display = 'none';
-    document.getElementById('platform-sku-mappings-card').style.display = 'none';
-    const params = new URLSearchParams({page: productPage, page_size: productPageSize});
-    if (productKeyword) params.set('keyword', productKeyword);
-    const result = await api('GET', `/products?${params.toString()}`);
-    currentProductList = result.items;
-    productTotal = result.total;
-    productPage = result.page;
-    productPageSize = result.page_size;
-    renderProductPage();
+    if (!CURRENT_USER_ID) return;
+    initializeProductSearch();
+    productSearchControl?.close();
+    const request = ++productRequestId, session = productSessionId, user = CURRENT_USER_ID;
+    const current = () => request === productRequestId && session === productSessionId && user === CURRENT_USER_ID && !!user;
+    const params = new URLSearchParams({page: productPage, page_size: productPageSize, search_specification: true, completeness: productCompleteness});
+    if (productKeyword) {params.set('keyword', productKeyword); params.set('prioritize_exact_sku', 'true');}
+    const status = document.getElementById('product-list-status');
+    status.textContent = productTypeText('loading');
+    currentProductList = [];
+    for (const id of ['products-tbody', 'gallery-grid', 'products-pagination']) document.getElementById(id).replaceChildren();
+    updateProductSelectionState();
+    try {
+        const result = await api('GET', `/products?${params}`, undefined, {isCurrent: current});
+        if (!current()) return;
+        currentProductList = result.items;
+        productTotal = result.total;
+        productPage = result.page;
+        productPageSize = result.page_size;
+        status.textContent = '';
+        renderProductPage();
+    } catch (error) {
+        if (current()) {status.textContent = productTypeText('loadFailed') + error.message; throw error;}
+        if (error.name !== 'AbortError' && !CURRENT_USER_ID) throw error;
+    }
 }
 
 function searchProducts() {
     productKeyword = document.getElementById('product-keyword').value.trim();
+    document.getElementById('product-keyword').value = productKeyword;
+    productCompleteness = document.getElementById('product-completeness').value;
     productPage = 1;
-    loadProducts();
+    return loadProducts().catch(() => {});
+}
+
+function refreshProducts() {
+    return document.getElementById('product-keyword').value.trim() === productKeyword
+        && document.getElementById('product-completeness').value === productCompleteness
+        ? loadProducts().catch(() => {}) : searchProducts();
 }
 
 function clearProductSearch() {
     document.getElementById('product-keyword').value = '';
-    searchProducts();
+    document.getElementById('product-completeness').value = 'all';
+    return searchProducts();
 }
+
+function setProductView(view) {
+    productView = view === 'gallery' ? 'gallery' : 'list';
+    for (const name of ['list', 'gallery']) {
+        document.getElementById(`product-${name}-panel`).hidden = name !== productView;
+        document.getElementById(`product-view-${name}`).setAttribute('aria-selected', String(name === productView));
+    }
+}
+
+function openProductInventory(id) {
+    return switchTab('inventory', {productId: Number(id)});
+}
+
 
 let platformSkuMappings = [];
 let editingPlatformSkuMappingId = null;
@@ -2006,7 +2074,11 @@ function toggleAllProductSelection(checked) {
         if (checked) selectedProductIds.add(Number(product.id));
         else selectedProductIds.delete(Number(product.id));
     });
-    document.querySelectorAll('[data-product-select]').forEach(input => { input.checked = checked; });
+    updateProductSelectionState();
+}
+
+function clearProductSelection() {
+    selectedProductIds.clear();
     updateProductSelectionState();
 }
 
@@ -2014,9 +2086,14 @@ function updateProductSelectionState() {
     const selectAll = document.getElementById('product-select-all');
     if (!selectAll) return;
     const visibleIds = currentProductList.map(product => Number(product.id));
-    const checkedCount = visibleIds.filter(id => selectedProductIds.has(id)).length;
-    selectAll.checked = visibleIds.length > 0 && checkedCount === visibleIds.length;
-    selectAll.indeterminate = checkedCount > 0 && checkedCount < visibleIds.length;
+    const count = visibleIds.filter(id => selectedProductIds.has(id)).length;
+    selectAll.checked = visibleIds.length > 0 && count === visibleIds.length;
+    selectAll.indeterminate = count > 0 && count < visibleIds.length;
+    selectAll.disabled = !visibleIds.length;
+    document.querySelectorAll('[data-product-select]').forEach(input => {input.checked = selectedProductIds.has(Number(input.dataset.productSelect));});
+    document.getElementById('product-selection-summary').textContent = productTypeText('selected') + selectedProductIds.size.toLocaleString(document.documentElement.lang || 'zh-CN');
+    document.getElementById('product-clear-selection').disabled = !selectedProductIds.size;
+    document.getElementById('product-export-selected').disabled = !selectedProductIds.size;
 }
 
 function renderPagination(containerId, page, pageCount, total, pageSize) {
@@ -2029,7 +2106,6 @@ function renderPagination(containerId, page, pageCount, total, pageSize) {
         'batches-pagination': ['goBatchPage', 'changeBatchPageSize'],
         'sales-pagination': ['goSalesPage', 'changeSalesPageSize'],
         'pending-confirmations-pagination': ['goPendingConfirmationsPage', 'changePendingConfirmationsPageSize'],
-        'gallery-pagination': ['goGalleryPage', 'changeGalleryPageSize'],
     }[containerId];
     buttons.push(`<label>每页 <select onchange="${config[1]}(this.value)"><option value="10" ${pageSize === 10 ? 'selected' : ''}>10</option><option value="20" ${pageSize === 20 ? 'selected' : ''}>20</option><option value="50" ${pageSize === 50 ? 'selected' : ''}>50</option><option value="100" ${pageSize === 100 ? 'selected' : ''}>100</option></select> 条</label>`);
     buttons.push(`<button ${page <= 1 ? 'disabled' : ''} onclick="${config[0]}(${page - 1})">上一页</button>`);
@@ -2038,205 +2114,202 @@ function renderPagination(containerId, page, pageCount, total, pageSize) {
     buttons.push(`<button ${page >= pageCount ? 'disabled' : ''} onclick="${config[0]}(${page + 1})">下一页</button>`);
     container.innerHTML = buttons.join('');
 }
-function goProductPage(page) { productPage = page; loadProducts(); }
-function changeProductPageSize(size) { productPageSize = Number(size); productPage = 1; loadProducts(); }
+function goProductPage(page) { productPage = page; return loadProducts().catch(() => {}); }
+function changeProductPageSize(size) { productPageSize = Number(size); productPage = 1; return loadProducts().catch(() => {}); }
 
-// ========== 编辑商品 ==========
+// ========== 商品新增 / 编辑共用侧栏 ==========
+function setProductSaving(busy) {
+    productSaving = busy;
+    document.querySelectorAll('[data-product-editor-control]').forEach(node => {node.disabled = busy;});
+    document.getElementById('product-save').textContent = productTypeText(busy ? 'saving' : 'save');
+    if (!busy) toggleSafeStockField('p');
+}
+
+function updateProductImagePreview() {
+    if (productPreviewUrl) URL.revokeObjectURL(productPreviewUrl);
+    productPreviewUrl = '';
+    const file = document.getElementById('p-image').files[0];
+    if (file) productPreviewUrl = URL.createObjectURL(file);
+    const image = productPreviewUrl || productOriginalImage;
+    document.getElementById('p-preview').innerHTML = image
+        ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(productTypeText('image'))}">${file ? `<button type="button" class="btn btn-secondary" data-product-editor-control onclick="clearImage()">${escapeHtml(productTypeText('cancelImage'))}</button>` : ''}` : '';
+}
+
+function clearImage() {
+    document.getElementById('p-image').value = '';
+    updateProductImagePreview();
+}
+
+function openProductEditor(product = null) {
+    if (productSaving) return;
+    productEditorSerial++;
+    editingProductId = product ? Number(product.id) : null;
+    const form = document.getElementById('product-form');
+    form.reset();
+    document.getElementById('p-sku').value = product?.sku || '';
+    document.getElementById('p-name').value = product?.name || '';
+    document.getElementById('p-specification').value = product?.specification || '';
+    document.getElementById('p-specification').setCustomValidity('');
+    document.getElementById('p-specification-help').hidden = !product || Boolean(product.specification);
+    document.getElementById('p-product-type').value = product ? productTypeValue(product) : 'stable';
+    document.getElementById('p-safe-stock-quantity').value = product?.safe_stock_quantity || 0;
+    document.getElementById('product-accounting').open = !product;
+    document.getElementById('product-editor-title').textContent = productTypeText(product ? 'edit' : 'create');
+    document.getElementById('p-image-label').textContent = productTypeText(product ? 'imageKeep' : 'image');
+    document.getElementById('product-editor-status').textContent = '';
+    productOriginalImage = product ? productImageUrl(product) : '';
+    updateProductImagePreview();
+    setProductSaving(false);
+    const dialog = document.getElementById('product-editor');
+    if (!dialog.open) dialog.showModal();
+    document.getElementById(product && !product.specification ? 'p-specification' : 'p-sku').focus();
+}
+
+function openNewProduct() { openProductEditor(); }
+
 async function openEditProduct(id) {
-    const p = currentProductList.find(x => x.id === id);
-    if (!p) return;
-    editingProductId = id;
-    document.getElementById('ep-sku').value = p.sku;
-    document.getElementById('ep-name').value = p.name;
-    document.getElementById('ep-specification').value = p.specification || '';
-    document.getElementById('ep-specification').setCustomValidity('');
-    document.getElementById('ep-specification-help').hidden = Boolean(p.specification);
-    document.getElementById('ep-product-type').value = productTypeValue(p);
-    document.getElementById('ep-safe-stock-quantity').value = p.safe_stock_quantity || 0;
-    toggleSafeStockField('ep');
-    document.getElementById('ep-preview').innerHTML = p.image ? `<img src="${p.image}" style="max-height:80px;border-radius:6px">` : '';
-    document.getElementById('ep-image').value = '';
-    document.getElementById('edit-product-modal').style.display = '';
+    const product = currentProductList.find(item => Number(item.id) === Number(id));
+    if (product) openProductEditor(product);
 }
 
-document.getElementById('ep-image')?.addEventListener('change', function() {
-    const file = this.files[0];
-    const preview = document.getElementById('ep-preview');
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = e => { preview.innerHTML = `<img src="${e.target.result}" style="max-height:80px;border-radius:6px">`; };
-        reader.readAsDataURL(file);
-    }
-});
-
-function closeEditProduct() {
+function closeEditProduct(force = false) {
+    if (productSaving && !force) return;
+    productEditorSerial++;
     editingProductId = null;
-    document.getElementById('edit-product-modal').style.display = 'none';
+    const dialog = document.getElementById('product-editor');
+    if (dialog.open) dialog.close();
+    document.getElementById('product-form').reset();
+    toggleSafeStockField('p');
+    document.getElementById('product-editor-status').textContent = '';
+    productOriginalImage = '';
+    clearImage();
 }
 
-async function saveEditProduct() {
+async function saveProduct(id = editingProductId) {
+    if (productSaving || !CURRENT_USER_ID) return;
+    const user = CURRENT_USER_ID, session = productSessionId, editor = productEditorSerial;
+    const current = () => user === CURRENT_USER_ID && session === productSessionId && editor === productEditorSerial;
+    const status = document.getElementById('product-editor-status');
+    status.textContent = '';
     try {
         const formData = new FormData();
-        formData.append('specification', readProductSpecification('ep'));
-        formData.append('sku', document.getElementById('ep-sku').value);
-        formData.append('name', document.getElementById('ep-name').value);
-        formData.append('product_type', document.getElementById('ep-product-type').value);
-        formData.append('safe_stock_quantity', document.getElementById('ep-safe-stock-quantity').value || 0);
-        const imageFile = document.getElementById('ep-image').files[0];
-        if (imageFile) formData.append('image', imageFile);
-
-        const res = await fetch(`/products/${editingProductId}`, {
-            method: 'PUT',
-            body: formData,
-            headers: authHeaders()
-        });
+        formData.append('specification', readProductSpecification('p'));
+        const form = document.getElementById('product-form');
+        // 展开隐藏的规则区域，使非法数量的浏览器校验可定位到对应输入框。
+        if (!document.getElementById('p-safe-stock-quantity').checkValidity()) document.getElementById('product-accounting').open = true;
+        if (!form.reportValidity()) return;
+        const sku = document.getElementById('p-sku').value, name = document.getElementById('p-name').value;
+        if (!sku.trim() || !name.trim()) throw new Error(productTypeText('identityRequired'));
+        formData.append('sku', sku); formData.append('name', name);
+        formData.append('product_type', document.getElementById('p-product-type').value);
+        formData.append('safe_stock_quantity', document.getElementById('p-safe-stock-quantity').value || 0);
+        const file = document.getElementById('p-image').files[0];
+        if (file) formData.append('image', file);
+        setProductSaving(true);
+        const res = await fetch(id == null ? '/products' : `/products/${id}`, {method: id == null ? 'POST' : 'PUT', body: formData, headers: authHeaders(), credentials: 'same-origin'});
+        if (!current()) return;
+        if (res.status === 401) {handleSessionExpired(); return;}
         const data = await res.json();
+        if (!current()) return;
         if (!res.ok) throw new Error(formatApiError(data.detail, productTypeText('saveFailed')));
-        showMsg(`商品 ${data.sku} 更新成功`);
         invalidateProductOptions();
+        setProductSaving(false);
         closeEditProduct();
-        loadProducts();
-    } catch (e) { showMsg(e.message, false); }
+        showMsg(escapeHtml(productTypeText('saved')));
+        try {await loadProducts();} catch {if (user === CURRENT_USER_ID && session === productSessionId) showMsg(escapeHtml(productTypeText('savedRefreshFailed')), false);}
+    } catch (error) {
+        if (current()) status.textContent = error.message;
+    } finally {
+        if (current()) setProductSaving(false);
+    }
 }
+
+async function saveEditProduct() { if (editingProductId != null) return saveProduct(editingProductId); }
+
 
 async function downloadProductExport(ids) {
     const selectedIds = ids.filter(Boolean);
     const query = selectedIds.map(id => `product_ids=${encodeURIComponent(id)}`).join('&');
+    const user = CURRENT_USER_ID, session = productSessionId;
+    const current = () => !!user && user === CURRENT_USER_ID && session === productSessionId;
+    if (!current()) return;
+    document.querySelectorAll('.product-export-menu').forEach(node => {node.open = false;});
     try {
-        const res = await fetch(`/products/export?${query}`, {
-            headers: authHeaders(),
-        });
-        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
+        const res = await fetch(`/products/export?${query}`, {headers: authHeaders(), credentials: 'same-origin'});
+        if (!current()) return;
+        if (res.status === 401) {handleSessionExpired(); return;}
         if (!res.ok) {
             const raw = await res.text();
             let detail = raw;
-            try { detail = JSON.parse(raw).detail || raw; } catch {}
-            throw new Error(formatApiError(detail, '导出失败'));
+            try {detail = JSON.parse(raw).detail || raw;} catch {}
+            throw new Error(formatApiError(detail, productTypeText('exportFailed')));
         }
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `商品导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-        showMsg(selectedIds.length ? `已导出 ${selectedIds.length} 个商品` : '已导出全部商品');
-    } catch (e) { showMsg(e.message, false); }
-}
-
-function exportProduct(id) { downloadProductExport([id]); }
-
-function exportAllProducts() {
-    const ids = selectedProductIds.size
-        ? [...selectedProductIds]
-        : [];
-    downloadProductExport(ids);
-}
-
-// ========== 产品图册 ==========
-let galleryPage = 1;
-let galleryPageSize = 20;
-let galleryTotal = 0;
-let galleryKeyword = '';
-let galleryRequestId = 0;
-let gallerySearchControl = null;
-const galleryText = key => window.PageInteractions.text(key);
-
-function initializeGallerySearch() {
-    document.querySelectorAll('[data-gallery-text]').forEach(node => {
-        node.textContent = galleryText(node.dataset.galleryText);
-    });
-    const input = document.getElementById('gallery-keyword');
-    input.placeholder = galleryText('galleryPlaceholder');
-    input.title = galleryText('gallerySearchHint');
-    document.getElementById('gallery-options').setAttribute('aria-label', galleryText('galleryKeyword'));
-    if (gallerySearchControl || !window.ProductSearch) return;
-    gallerySearchControl = window.ProductSearch.bind({
-        input, popup: document.getElementById('gallery-popup'), list: document.getElementById('gallery-options'),
-        status: document.getElementById('gallery-search-status'),
-        enabled: () => !!CURRENT_USER_ID && document.getElementById('sec-gallery').classList.contains('active'),
-        captureContext: () => {
-            const request = galleryRequestId, user = CURRENT_USER_ID;
-            return () => request === galleryRequestId && user === CURRENT_USER_ID && !!user;
-        },
-        onSelect: product => {input.value = product.sku; searchGallery();},
-    });
-}
-
-async function loadGallery() {
-    if (!CURRENT_USER_ID) return;
-    initializeGallerySearch();
-    gallerySearchControl?.close();
-    const requestId = ++galleryRequestId, userId = CURRENT_USER_ID;
-    const current = () => requestId === galleryRequestId && userId === CURRENT_USER_ID && !!userId;
-    const params = new URLSearchParams({page: galleryPage, page_size: galleryPageSize});
-    if (galleryKeyword) {
-        params.set('keyword', galleryKeyword);
-        params.set('prioritize_exact_sku', 'true');
-    }
-    const el = document.getElementById('gallery-grid');
-    const status = document.getElementById('gallery-status');
-    el.innerHTML = '';
-    document.getElementById('gallery-pagination').innerHTML = '';
-    status.textContent = galleryText('galleryLoading');
-    try {
-        const result = await api('GET', `/products?${params}`, undefined, {isCurrent: current});
         if (!current()) return;
-        const list = result.items;
-        galleryPage = result.page;
-        galleryPageSize = result.page_size;
-        galleryTotal = result.total;
-        status.textContent = '';
-        if (!list.length) {
-            el.innerHTML = `<div class="empty" style="grid-column:1/-1">${escapeHtml(galleryText(galleryKeyword ? 'galleryNoMatches' : 'galleryEmpty'))}</div>`;
-        } else {
-            el.innerHTML = list.map(p => `
-                <div style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
-                    <div style="height:160px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;position:relative">
-                        ${p.image ? `<img src="${escapeHtml(p.image)}" alt="${escapeHtml(p.name)}" loading="lazy" style="width:100%;height:100%;object-fit:cover">` : `<span style="color:#aaa;font-size:40px">📦</span>`}
-                        ${p.image ? `<a class="btn btn-secondary gallery-download" href="${escapeHtml(p.image)}" download title="${escapeHtml(galleryText('galleryDownload'))}">${escapeHtml(galleryText('galleryDownload'))}</a>` : ''}
-                    </div>
-                    <div style="padding:12px">
-                        <div style="font-weight:600;font-size:14px">${escapeHtml(p.name)}</div>
-                        <div style="font-size:12px;color:#888;margin-top:4px">${escapeHtml(p.sku)} · ${escapeHtml(galleryText('galleryStock').replace('{count}', Number(p.stock_quantity).toLocaleString(document.documentElement.lang || 'zh-CN')))}</div>
-                    </div>
-                </div>
-            `).join('');
-        }
-        renderPagination('gallery-pagination', galleryPage, Math.max(1, Math.ceil(galleryTotal / galleryPageSize)), galleryTotal, galleryPageSize);
-    } catch (error) {
-        if (current()) status.textContent = galleryText('galleryLoadFailed') + error.message;
+        const url = URL.createObjectURL(blob), link = document.createElement('a');
+        try {
+            link.href = url; link.download = `商品导出_${new Date().toISOString().slice(0, 10)}.xlsx`;
+            document.body.appendChild(link); link.click();
+        } finally {link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);}
+        showMsg(escapeHtml(productTypeText('exportDone')));
+    } catch (error) {if (current()) showMsg(escapeHtml(error.message), false);}
+}
+
+function exportProduct(id) { return downloadProductExport([id]); }
+function exportSelectedProducts() { if (selectedProductIds.size) return downloadProductExport([...selectedProductIds]); }
+function exportAllProducts() { return downloadProductExport([]); }
+
+// ========== 商品工作台的搜索与会话隔离 ==========
+function initializeProductSearch() {
+    if (productSearchControl || !window.ProductSearch) return;
+    const input = document.getElementById('product-keyword');
+    productSearchControl = window.ProductSearch.bind({
+        input, popup: document.getElementById('product-popup'), list: document.getElementById('product-options'), status: document.getElementById('product-search-status'),
+        messages: {empty: productTypeText('empty')},
+        queryParams: () => ({search_specification: true, completeness: document.getElementById('product-completeness').value}),
+        enabled: () => !!CURRENT_USER_ID && document.getElementById('sec-products').classList.contains('active'),
+        captureContext: () => {const request = productRequestId, session = productSessionId, user = CURRENT_USER_ID; return () => request === productRequestId && session === productSessionId && user === CURRENT_USER_ID && !!user;},
+        onSelect: product => {input.value = product.sku; searchProducts();},
+    });
+}
+
+function initializeProductWorkspace() {
+    const input = document.getElementById('product-keyword');
+    input.placeholder = productTypeText('searchPlaceholder');
+    input.setAttribute('aria-label', productTypeText('searchPlaceholder'));
+    document.getElementById('product-options').setAttribute('aria-label', productTypeText('searchResults'));
+    document.getElementById('product-completeness').setAttribute('aria-label', productTypeText('completeness'));
+    document.getElementById('product-view-switch').setAttribute('aria-label', productTypeText('viewMode'));
+    document.getElementById('product-select-all').setAttribute('aria-label', productTypeText('selectPage'));
+    if (!productWorkspaceInitialized) {
+        productWorkspaceInitialized = true;
+        document.getElementById('p-image').addEventListener('change', updateProductImagePreview);
+        document.getElementById('p-specification').addEventListener('input', event => event.target.setCustomValidity(''));
+        document.getElementById('product-editor').addEventListener('cancel', event => {event.preventDefault(); closeEditProduct();});
+        document.getElementById('product-view-switch').addEventListener('keydown', event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            setProductView(event.key === 'Home' ? 'list' : event.key === 'End' ? 'gallery' : productView === 'list' ? 'gallery' : 'list');
+            document.getElementById(`product-view-${productView}`).focus();
+        });
     }
+    setProductView(productView);
+    updateProductSelectionState();
 }
-function searchGallery() {
-    galleryKeyword = document.getElementById('gallery-keyword').value.trim();
-    document.getElementById('gallery-keyword').value = galleryKeyword;
-    galleryPage = 1;
-    return loadGallery();
+
+function resetProductSession() {
+    productSessionId++; productRequestId++;
+    productSearchControl?.close();
+    productKeyword = ''; productCompleteness = 'all'; productPage = 1; productPageSize = 20; productTotal = 0;
+    currentProductList = []; selectedProductIds.clear();
+    setProductSaving(false); closeEditProduct(true);
+    document.getElementById('product-keyword').value = '';
+    document.getElementById('product-completeness').value = 'all';
+    for (const id of ['products-tbody', 'gallery-grid', 'products-pagination', 'product-list-status']) document.getElementById(id).replaceChildren();
+    document.querySelectorAll('.product-export-menu').forEach(node => {node.open = false;});
+    setProductView('list'); updateProductSelectionState();
 }
-function refreshGallery() {
-    return document.getElementById('gallery-keyword').value.trim() === galleryKeyword ? loadGallery() : searchGallery();
-}
-function clearGallerySearch() {
-    document.getElementById('gallery-keyword').value = '';
-    galleryKeyword = '';
-    galleryPage = 1;
-    return loadGallery();
-}
-function resetGallerySession() {
-    galleryRequestId++;
-    gallerySearchControl?.close();
-    galleryKeyword = '';
-    galleryPage = 1;
-    galleryPageSize = 20;
-    galleryTotal = 0;
-    document.getElementById('gallery-keyword').value = '';
-    for (const id of ['gallery-grid', 'gallery-pagination', 'gallery-status']) document.getElementById(id).textContent = '';
-}
-function goGalleryPage(page) { galleryPage = page; return loadGallery(); }
-function changeGalleryPageSize(size) { galleryPageSize = Number(size); galleryPage = 1; return loadGallery(); }
+
 
 // ========== 入库 ==========
 ['b-qty','b-total-amount','b-ship','b-lastmile','b-other'].forEach(id => {

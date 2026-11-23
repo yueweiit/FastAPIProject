@@ -51,6 +51,7 @@
 | EIMS/Cookie/CSRF/启停/刷新/退出 | test_eims_sso；node tests/auth_page_checks.cjs；授权后 mysql_auth_sessions 专用本地验证 |
 | 商品批量新增/模板/预览/结果 | test_product_import、test_product_feature_permissions；必要时授权的 mysql_product_import 专用本地库验证 |
 | 四种商品类型/历史切换/混合汇总 | test_product_types（隔离SQLite/API、导入导出、快照算法及损益勾稽）；node tests/product_types_page_checks.cjs（两份实际页面的DOM模拟） |
+| 统一商品工作台/库存跳转 | node tests/product_workspace_browser_checks.cjs（内置Node工具及现有Chrome，两份真实页面、模拟API、列表/图册状态、侧栏保存、Excel范围、旧响应及窄屏）；test_product_search（规格可选搜索/资料筛选/分页/旧调用） |
 | 商品图片/历史上传隔离/失败清理 | test_product_images（临时目录、独立ASGI应用，不运行main生命周期） |
 | FIFO/组合分摊/汇率/导入格式/订单防重 | test_sales_rules、test_fifo_concurrency、test_sales_integrity；必要时授权的mysql_sales_integrity本地InnoDB验证 |
 | 销售单件成本/字段公式/整单解释与导出 | test_sales_cost_explanations、test_sales_costs、test_sales_export（隔离SQLite/ASGI、Decimal精度/补差冲销/同店订单完整性/权限/只读与Excel）；node tests/sales_cost_page_checks.cjs；inventory_workspace_browser_checks.cjs（两份页面问号、计算明细、手机布局、失败/重开/会话隔离） |
