@@ -20,12 +20,12 @@
 | 多列固定/账号偏好 | sales-ledger.js initializePin/displayColumns/changePin/updatePinControls/headers/render；两份页面sales-pin-picker | 无新增接口 | 全部数据字段多选，按原顺序前置；累计位置固定，窗口限宽有明确反馈，v2数组偏好兼容v1 |
 | 显示/隐藏字段 | sales-ledger.js changeVisibility/saveVisibility/refreshColumns/displayColumns；两份页面sales-visible-picker | 无新增接口 | 同步隐藏表头/明细/合计/列宽，至少保留一列；独立账号偏好，保留隐藏列的固定选择，全部显示恢复；导出不变 |
 | 商品/SKU/订单号统一搜索 | searchSales、同一keyword与回车事件；两份页面 | _sale_filter_values；financial_facts._unlinked_settlement_stmt及共用计数 | 来源原始订单、内部历史编号、独立结算；month/product_id及店铺权限同时保留 |
-| 全筛选销售Excel | exportSalesRecords、resetSalesExportSession | export_sales_records → list_sales；count_unlinked_settlement_events → 与事件读取共用SQL；services/sales_export.py格式化 | 保存成本/汇率、独立事件；只读、权限不变 |
+| 原始结算/拆分对账Excel | exportSalesRecords、resetSalesExportSession；导入历史传入批次ID | export_sales_records/export_sales_import → _build_sales_export；services/sales_reconciliation.py查询来源、关联和投影；services/sales_export.py格式化 | 首表原始行、次表本地组件，关联编号跳转；完整来源成本、待确认、批次范围、只读及店铺边界 |
 | 成本详情 | 列表成本提示；独立详情 API | get_sale | sale_cost_details、inventory_batches |
 | 四项成本/本行总额 | loadSales，字段资源驱动的台账及本页合计 | sale_cost_context → fifo_cost_components/rounded_cost_components；_build_sale_response | 保存FIFO成本、冻结cost_basis、财务补差；原成本不改写 |
 | 出库商品跌价参考 | loadSales、sales-ledger.js计算明细、销售Excel追加列 | services/sales_costs.py attach_sale_impairment → 商品类型历史、获准销售FIFO明细及引用批次 | 自然日库龄×订单日比例×本批有效成本；不扣安全库存、不设90%上限，与报表准备转销分开 |
 | 待确认筛选/导出/重试 | SalesPending（static/sales-pending.js），两份首页的原函数委托 | list_pending_confirmations、export_pending_confirmations、retry_pending_confirmations → services/sales_pending.py | 原settlement_entries及分配、原导入头；共用_write_candidate_sales/FIFO，不重建结算来源 |
-| 导入历史/撤销 | loadSalesImports、rollbackSalesImport | list_sales_imports、rollback_sales_import | 全部关联业务表 |
+| 导入历史/对账/撤销 | loadSalesImports、exportSalesRecords(importBatchId)、rollbackSalesImport | list_sales_imports、export_sales_import、rollback_sales_import | 对账只读已保存来源；撤销仍按原FIFO明细恢复 |
 | 汇率 | 单价提示、人民币金额 | get_cny_rates | 结算汇率字段 |
 
 前端来源：[templates/index.html](../../../templates/index.html)。后端：[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/exchange_rates.py](../../../services/exchange_rates.py)；契约：[schemas.py](../../../schemas.py)。
@@ -48,7 +48,7 @@
 
 拆分回归：[test_sales_costs.py](../../../tests/test_sales_costs.py)覆盖原FIFO精度、冻结依据、补差/反向、小额舍入、多批次组合真实导入、手工销售、四种规则/生效历史、跨店共享安全库存、缺失汇率及异常空值，并勾稽列表/详情/Excel。[sales_cost_page_checks.cjs](../../../tests/sales_cost_page_checks.cjs)执行两份真实loadSales函数，验证金额/合计/未知传播/空态/转义/字典；无头浏览器夹具另验24列分组DOM和单件/整单解释、横向滚动、提示及下载。报表旧三组分配和跌价入口继续运行既有财务回归。
 
-导出回归：[test_sales_export.py](../../../tests/test_sales_export.py)使用隔离SQLite/ASGI核对超过一页的完整记录、月份/名称/SKU/商品ID、全部月份、admin/operator/viewer权限及未绑定拒绝、独立财务事件勾稽、汇率/作废成本空值、追溯成本、Excel文本安全、空结果/超限与仅SELECT。[sales_export_page_checks.cjs](../../../tests/sales_export_page_checks.cjs)执行两份真实页面函数，覆盖筛选/无分页、重复点击、下载、错误恢复、旧401与正文/blob晚响应；[inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)复用既有无头浏览器，另验两份销售页面的真实下载、文件名/查询参数、控件恢复及空结果提示。不启动main或连接业务数据库，不等于生产历史数据验收。
+导出回归：[test_sales_export.py](../../../tests/test_sales_export.py)使用隔离SQLite/ASGI核对超过一页的完整记录、月份/名称/SKU/商品ID、全部月份、admin/operator/viewer权限及未绑定拒绝、独立财务事件勾稽、汇率/作废成本空值、追溯成本、Excel文本安全、空结果/超限与仅SELECT。[test_sales_reconciliation_export.py](../../../tests/test_sales_reconciliation_export.py)核对首表原始行、待确认、完整组件展开、批次筛选、对应编号/跳转、多来源成本及数量留空、跨店组件拒绝、跨批次/跨店铺金额与来源字段隔离（直接/分摊关联及空来源集合）、来源名称原值/缺列/空白与多来源顺序、全重复空批次、无来源/旧CSV/补录、混合币种、长编号及库存/销售/FIFO明细等业务表前后快照不变。[sales_export_page_checks.cjs](../../../tests/sales_export_page_checks.cjs)执行两份真实页面函数，覆盖普通/批次下载、历史按钮、批次不继承筛选、共用防重、撤销/越权失败和旧会话隔离。真实浏览器脚本见[inventory_workspace_browser_checks.cjs](../../../tests/inventory_workspace_browser_checks.cjs)，执行需现有Playwright运行时；测试定义存在不代表本轮已经运行。不启动main或连接业务数据库，不等于生产历史数据验收。
 
 单件与解释入口：[sales-ledger.js](../../../static/sales-ledger.js)负责分组、公式问号、代入/批次/整单弹窗及会话代次；[sales-fields.zh-CN.json](../../../static/sales-fields.zh-CN.json)与[sales_fields.py](../../../services/sales_fields.py)为页面/Excel的单一字段说明资源。后端`_sale_response_rows/_order_cost_data/sale_cost_breakdown`复用原分项和回放，跨筛选取同店完整订单。回归[test_sales_cost_explanations.py](../../../tests/test_sales_cost_explanations.py)覆盖未舍入除法、同号跨店/旧绑定、映射缺失或冲突下整单ID/名称一致、未知范围、完整订单和导出资源；页面VM及浏览器夹具另覆盖待确认区域失败保留台账、合计/分页及重试恢复，VM覆盖旧会话失败隔离。原销售/财务回归继续执行。
 

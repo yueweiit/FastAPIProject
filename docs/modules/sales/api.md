@@ -2,13 +2,14 @@
 
 2026-11-10分类兼容：SaleResponse新增`business_kind=inventory_sale/opening_deduction/settlement`。列表、月度、导出及成本解释只取正常销售和原有独立结算；明确的初始化扣减保留单条详情供追溯，不计销量、损益成本或履约费。非实物规则命中后导入/待确认重试以原结算行确认，返回sales_created=0，金额/事件键保留，重复操作不再扣库。无新写入API或权限放宽。分类及规则的管理员维护见[流程](workflow.md#非实物结算与初始化扣减2026-11-10)。
 
-前缀 /sales，共 14 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
+前缀 /sales，共 15 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `POST /sales/import` | [import_sales_file](../../../routers/sales.py) | admin/operator | file、store_id | SalesImportResponse |
 | `POST /sales/import-stream` | import_sales_stream → _import_sales_file | admin/operator | 同上；不接收导入月份 | NDJSON阶段进度与最终结果 |
 | `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit | list[SalesImportBatchResponse] |
+| `GET /sales/imports/{import_batch_id}/export` | export_sales_import → _build_sales_export | admin/operator/viewer | import_batch_id | 本次导入的原始结算对账及拆分明细Excel |
 | `POST /sales/imports/{import_batch_id}/rollback` | [rollback_sales_import](../../../routers/sales.py) | admin/operator | import_batch_id | SalesImportRollbackResponse |
 | `POST /sales/manual-settlements` | create_manual_settlement | admin/operator | 店铺、来源字段、人民币金额、request_key | 不扣库存的结算补录SaleResponse |
 | `POST /sales` | [create_sale](../../../routers/sales.py) | admin/operator | SaleCreate | SaleResponse |
@@ -17,7 +18,7 @@
 | `POST /sales/pending-confirmations/retry` | [retry_pending_confirmations](../../../routers/sales.py) | admin/operator | PendingRetryRequest | PendingRetryResponse |
 | `GET /sales/monthly-summary` | [monthly_sales_summary](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | list[MonthlySalesSummaryResponse] |
 | `GET /sales` | [list_sales](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month、page、page_size | list[SaleResponse] \| SalePageResponse |
-| `GET /sales/export` | [export_sales_records](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | 全部匹配台账的Excel文件 |
+| `GET /sales/export` | [export_sales_records](../../../routers/sales.py) → _build_sales_export | admin/operator/viewer | product_id、keyword、month | 匹配来源及完整关联组件的对账Excel |
 | `GET /sales/{sale_id}/cost-breakdown` | [sale_cost_breakdown](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleCostExplanationResponse：本行代入、FIFO批次及完整订单汇总 |
 | `GET /sales/{sale_id}` | [get_sale](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleResponse |
 
@@ -84,9 +85,13 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 
 `GET /sales/export`沿用列表的`month=YYYY-MM`、`keyword≤255`和可选`product_id>0`筛选；月份为空导出全部月份，keyword首尾空白忽略，商品ID与关键字按AND组合。没有page/page_size限制，不按当前页截断。admin读取全部店铺，operator/viewer固定当前绑定店铺，无绑定403；不接受以store_id切换范围。静态路径先于`/{sale_id}`注册，不改变已有详情接口。
 
-接口复用`list_sales`的不分页响应，包含相同的独立退款/调整/赔付事件及0数量、固化汇率、成本追溯和待核对空值；商品名称/SKU批量读取，无逐记录查询。先用相同权限/筛选SQL统计销售及独立事件，超过20,000条返回422 `sales_export_too_large`（含max_rows），不截断；空结果404 `sales_export_empty`。非法月份沿用400/422校验，商品ID或关键字长度错误422。
+接口以`list_sales`不分页响应为起点，批量补入同范围待确认来源、展开每个来源的完整获准组件；原列表/月度接口不变。保存汇率、成本追溯及独立事件计算仍复用原服务。原始行及展开后明细分别检查20,000条上限，超限422 `sales_export_too_large`（含max_rows），不截断；仅待确认也能导出，真正空结果404 `sales_export_empty`。非法月份沿用400/422，商品ID或关键字长度错误422。筛选扩展和日期规则见[流程](workflow.md#销售台账导出)。
 
-文件包含“销售记录”和“说明”：原23列保留顺序，现追加4列单件分项及交易类型、来源数量共29列；前18列保留原位置（第9列展示本行订单总成本），追加采购、头程、尾程、其他入库成本及出库商品跌价参考。数量/收入/成本/费用/毛利、四项成本及跌价提供全部导出记录合计，未知金额及对应合计为空；单价和汇率不合计。所有用户文本按Excel文本写入，保留前导零并防止公式注入。“说明”记录月份、关键字、可选商品ID、权限范围、分项舍入及跌价独立口径。附件名`sales_YYYYMM.xlsx`，无月份为`sales_all.xlsx`，MIME为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
+两种导出均以本次获准的SettlementEntry ID集合限制拆分金额及来源字段，覆盖直接关联和分摊关联；已有列表行同样重建，空集合不回退无范围查询。`_sale_import_context/_sale_response_rows/_order_cost_data`的内部可选`source_entry_ids`仅供导出使用，其他接口默认行为不变。多来源共用销售或缺失/无权组件时，首表出库明细数、实际件数及相关合计为null；第二表仍按销售ID保留一次实际数量。来源名称保持原始字段语义，详见[导出流程](workflow.md#销售台账导出)。
+
+`GET /sales/imports/{import_batch_id}/export`仅按获准导入批次取数，忽略页面筛选；非管理员必须有绑定店铺，批次须属于该店铺，关联来源与销售也分别检查店铺范围。未绑定403、不存在/无权访问404 `sales_export_batch_not_found`、已撤销409 `sales_export_batch_rolled_back`。全部重复跳过的有效批次返回带说明的空工作表；文件名`sales_import_ID.xlsx`。没有新增数据库字段或写入操作。
+
+2026-11-23起，文件默认打开第一张“原始结算对账”（27列），第二张“销售拆分明细”（41列），另保留“说明”“字段口径说明”“订单汇总”。原拆分表前34列金额位置保留，第3/4列明确改为本地商品SKU/名称，来源字段移至追加的追溯列；使用旧工作表名或列数的外部脚本须适配。关联编号以E+结算ID标识原始行，无来源历史销售用S+销售ID；明细编号以S+销售ID或F+独立结算ID标识，两表保留来源文件/工作表/行号并支持跳转。单价、汇率不合计，未知金额及对应合计留空，原币只在同币种且完整时合计；所有业务文本按字面量写入。附件名仍为`sales_YYYYMM.xlsx`/`sales_all.xlsx`，MIME仍为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
 
 只SELECT，不扣库、改成本、补快照或写导出记录。取数完成后释放只读事务，在线程生成文件。新接口须加载更新后的后端；前端未加载接口时会明确提示，不把错误网页下载为Excel。页面行为见[流程](workflow.md#销售台账导出)。
 

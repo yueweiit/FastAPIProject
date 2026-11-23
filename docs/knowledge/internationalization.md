@@ -143,3 +143,5 @@
 扩展业务审计的商品/账号/主数据/销售/损益分类、稳定action/entity/field标签、未知旧值、同次操作编号及启用/暂停/缺结构提示集中于operation-logs.js的zh-CN字典，按页面lang回退中文。原始业务名称/编码不翻译并转义；密码只显示变更标记。后端审计失败提供稳定code/message，无新语言、翻译依赖或导出契约。
 
 财务日志的真实mode、breakdown、version/calculation_version字段及source_selection/receipt/classify/capture_version操作码复用同一局部字典；分类明细按commission/tax/advertising/logistics/other翻译显示，金额保留原值并转义。旧source_mode/version_no等界面标签保留兼容，但不以近似名称读取数据库字段；没有新增语言或依赖。
+
+销售对账导出的页面入口、批次不存在/已撤销及下载反馈集中于PageInteractions的salesExport*/salesImportExport*。工作表名和投影状态集中于services/sales_reconciliation.py的TEXT.zh-CN；原始行字段用services/sales_export.py的SOURCE_FIELDS维护中立字段码与中文表头，明细表复用原HEADERS并追加追溯列。SKU、产品名、订单号、来源文件及行号保留业务原值，Excel按字面量写入；E/S/F关联编号不依赖翻译文案。当前仅中文，无新翻译依赖或语言参数。
