@@ -1,5 +1,7 @@
 # 销售、导入及待确认 API
 
+2026-11-24：`SaleResponse` 新增默认 `false` 的只读 `income_only`，表示指定赠品财务免成本。已出库赠品仍返回 `business_kind=inventory_sale`、`record_type=sale`、正 Sale ID 及实际出库数量，商品成本/销售跌价为 0，单件成本和人民币单价留空，原金额及 `original_total_cost` 保留供追溯。未出库的来源沿用负结算 ID、结算记录类型及核算数量 0，来源数量另行保留；完成映射和 FIFO 出库后展示实际数量，不重复计收入。导入和待确认接口照常校验商品映射、库存、订单去重；无新增写入接口或 DDL。列表/月度/对账导出、平台结算核对统一优先订单创建日归月。规则和兼容边界见[流程](workflow.md#指定赠品代发及订单创建月2026-11-24)。
+
 2026-11-10分类兼容：SaleResponse新增`business_kind=inventory_sale/opening_deduction/settlement`。列表、月度、导出及成本解释只取正常销售和原有独立结算；明确的初始化扣减保留单条详情供追溯，不计销量、损益成本或履约费。非实物规则命中后导入/待确认重试以原结算行确认，返回sales_created=0，金额/事件键保留，重复操作不再扣库。无新写入API或权限放宽。分类及规则的管理员维护见[流程](workflow.md#非实物结算与初始化扣减2026-11-10)。
 
 前缀 /sales，共 20 个端点；非管理员敏感读取按当前绑定店铺。operator 撤销当前店铺文件，admin 可撤销全部。
@@ -39,7 +41,7 @@
 
 规格兼容字段：列表及单条销售响应追加可空字符串`source_specification`（原SKU名称）、`local_sku/local_product_name/local_specification`（已关联本地商品当前资料），不改变原display_name/product_id语义。无来源或关联时为null，历史空规格保持null。仅增加读取字段，不回填销售或库存；所依赖的既有products.specification须已准备，见[运行说明](../../../PROJECT_RUNBOOK.md#商品规格字段2026-11-23)。
 
-待确认列表追加`requested_local_specification`，读取原raw_data中的可选本地规格列；`confirmed_components`保留原product_id/multiplier并追加可空sku/name/specification，供重新打开人工确认窗口识别同名商品。POST组件请求仍只提交product_id/multiplier，服务端按实际ID处理。文件导入及原行重试共用明确编码/已确认店铺映射解析，规格为可选一致性校验，具体表头与组合边界见[导入流程](workflow.md#文件导入)。
+待确认列表追加`requested_local_specification`，读取原raw_data中的可选本地规格列；`confirmed_components`保留原product_id/multiplier并追加可空sku/name/specification，供重新打开人工确认窗口识别同名商品。POST组件请求仍只提交product_id/multiplier，服务端按实际ID处理。预览、文件导入及原行自动重试共用SKU/本地SKU优先、无本地编码时唯一名称识别及已有店铺映射兼容规则；`resolution.method`分别为`local_sku`、`product_name`、`store_mapping`，原人工确认仍为`manual`。规格为可选校验，具体表头与组合边界见[导入流程](workflow.md#文件导入)。
 
 GET及导出新增可选`reason`稳定码：stock_shortage/product_missing/product_ambiguous/expression_invalid/mapping_invalid/order_conflict/source_invalid/other；未知参数422。keyword最长255，匹配订单、SKU ID、产品名、SKU名称、文件名及原因文本。原page/page_size和店铺范围保持不变。列表追加reason_counts（权限/关键字范围的各分类数量），每项追加reason_code、confirmed_components（此前人工确认的product_id/multiplier）。旧字段仍保留；分类为动态字段，无DDL或历史回填。
 
@@ -75,7 +77,7 @@ GET版本组件含product_id/multiplier及当前sku/name/specification，每版l
 
 上传字节在请求结束前读完；独立任务自持数据库会话，沿用原行锁顺序、幂等及整批事务。慢客户端的旧进度合并，不阻塞库存事务。浏览器断线/退出只失去实时进度，已受理任务可继续；无后台任务列表/断点续传接口，须在导入历史核对结果后决定是否重试，前端不会自动重传。进度不是持久化作业队列，服务重启后以实际数据库结果及导入历史为准。
 
-文件按原日期自动归月：库存销售以订单创建日期、缺少时结算日期；独立结算以结算日期、缺少时订单创建日期、均缺少时导入时间。页面month只用于查询/导出，不覆盖文件日期。同一文件可跨月，不能根据当前查询月份过滤上传行。
+文件按原日期自动归月：库存销售以订单创建日期、缺少时结算日期；独立结算同样优先订单创建日期、缺少时结算日期、均缺少时导入时间。页面month只用于查询/导出，不覆盖文件日期。同一文件可跨月，不能根据当前查询月份过滤上传行。
 
 ## 手工销售与查询口径
 
@@ -89,7 +91,7 @@ GET 列表及 monthly-summary 支持 product_id、keyword≤255、month=YYYY-MM�
 
 SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_details。分页/数组列表均包含独立财务事件：赔付record_type=compensation_income，其他退款/调整为settlement_adjustment，负id、quantity=0；不是sales主键，不能调用GET /sales/{sale_id}。物流/平台/物料赔付以结算总金额乘固化汇率计入收入，负数冲减收入、费用为0；缺失汇率仍返回null。先合并完整结果再分页；月度统计采用相同事件取数。商品筛选仅归属明确单一product_id的事件；组合份额未定的事件保留全店汇总，不猜测商品分摊。
 
-新导入的非赔付退款/调整按明确编码或已确认映射保留可靠的单一product_id，因而纳入product_id/本地SKU筛选、月度统计及相同条件导出；识别不到仍接受为未归属结算，不强制商品匹配。组件关联不等于库存出入库，返回实际出库数量仍为0，来源数量保留原值。手工结算补录继续不关联商品，见[导入流程](workflow.md#文件导入)。
+新导入的非赔付退款/调整共用商品识别规则，通过明确编码、已有确认映射或无编码时唯一名称保留可靠的单一product_id，因而纳入product_id/本地SKU筛选、月度统计及相同条件导出；识别不到仍接受为未归属结算，不强制商品匹配。组件关联不等于库存出入库，返回实际出库数量仍为0，来源数量保留原值。手工结算补录继续不关联商品，见[导入流程](workflow.md#文件导入)。
 
 ## 销售台账导出
 
@@ -144,7 +146,7 @@ SaleResponse追加可空只读字段`unit_purchase_cost_cny`、`unit_head_shippi
 
 ## 文件导入
 
-纯运费调整、全额退款冲账即使来源交易类型为“订单”且数量大于0，也可按金额证据仅保存结算，不创建销售/扣库存；不改原交易类型和来源数量。台账响应为既有settlement_adjustment，quantity=0、成本为0，费用仍为净商品销售额减结算总金额。按结算日期优先归月，列表/月度/计数/导出和店铺损益共用公共财务查询；详细识别条件见[文件导入](workflow.md#文件导入)，未增加公开字段。正常货品销售的订单/SKU在同一文件重复时，返回400及errors中的具体行号，尚未写入业务数据；已有数据库订单及并发冲突保护不变。未根据零收入或金额正负推断退货入库。
+纯运费调整、全额退款冲账即使来源交易类型为“订单”且数量大于0，也可按金额证据仅保存结算，不创建销售/扣库存；不改原交易类型和来源数量。台账响应为既有settlement_adjustment，quantity=0、成本为0，费用仍为净商品销售额减结算总金额。按订单创建日期优先归月，列表/月度/计数/导出和店铺损益共用公共财务查询；详细识别条件见[文件导入](workflow.md#文件导入)，未增加公开字段。正常货品销售的订单/SKU在同一文件重复时，返回400及errors中的具体行号，尚未写入业务数据；已有数据库订单及并发冲突保护不变。未根据零收入或金额正负推断退货入库。
 
 multipart/form-data 的 file 支持 .csv、.xlsx、.xlsm。Excel 必须含“订单详情”，必要列为：结算日期、结算单 ID、付款 ID、状态、货币、交易类型、订单ID/调整单ID、数量，允许规定表头空白归一化。
 

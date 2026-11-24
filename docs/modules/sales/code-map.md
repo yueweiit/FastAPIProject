@@ -1,8 +1,10 @@
 # 销售模块代码映射
 
-店铺销售映射/扣库预览：`services/sales_mapping.py`统一标识归一化、版本选择、组件校验、Store锁和版本当前读取；`sales_preview.py`生成只读计划及绑定来源/用户的短期签名。`routers/sales.py`提供import-preview、product-mappings读写及原导入核验；`sales_pending.py`复用同一规则，原来源重试可显式保存映射。`static/sales-deduction-preview.js`为两份页面共用预览，`sales-pending.js`处理组件、保存映射及版本维护；`main.py`提供脚本入口。新表/离线DDL见[数据字典](database.md#sales_product_mappings)。
+指定赠品：`sales_classification.is_income_only_order/income_only_entry_condition/income_only_sale_ids` 共用确认清单；导入/重试正常映射及 FIFO 扣库，`_financial_classification=income_only_gift` 仅免核算成本。`gift_stock_retry_condition` 兼容旧误标为仅结算且未出库的来源，已有出库关联仍跳过重试。`financial_facts` 纳入未关联历史收入，`cost_layers.sale_cost_context` 与 `sales_costs.attach_sale_impairment` 豁免商品成本/销售参考跌价并保留实际批次数量，`routers/reports.py` 排除对应商品成本、保留真实销量。代发使用 `report_exchange_rates.load_fulfillment_orders` 从结算来源取数；跨月使用 `financial_facts.settlement_accounting_date_expression`。覆盖 [test_income_only_order_policy.py](../../../tests/test_income_only_order_policy.py)，范围见[流程](workflow.md#指定赠品代发及订单创建月2026-11-24)。
 
-[test_sales_mapping_workflow.py](../../../tests/test_sales_mapping_workflow.py)覆盖真实ASGI/隔离SQLite：未知编码不猜测、店铺隔离、编码冲突、组合装、有效/停用版本、名称唯一确认、文本长编号及数字精度、预览只读/过期/篡改/变化、重复确认防重、事务审计回滚、引用删除保护及MySQL当前读取SQL编译。另验等价本地SKU表达式/旧原文哈希兼容、待确认不重扣、完整SKU优先及商品改码。旧金额/成本测试的已核实场景明确提供本地SKU，不再隐式依赖名称自动扣库；纯名称解析测试仅验证候选解析。浏览器脚本验证预览取消、倍数、保存映射、新版本、移动端和旧会话隔离；不等于业务环境部署验收。
+商品识别/店铺销售映射/扣库预览：`services/sales_mapping.py`统一SKU/本地SKU优先、无本地编码时唯一名称识别、已有映射版本兼容、标识归一化、组件校验、Store锁和版本当前读取；`sales_preview.py`生成只读计划及绑定来源/用户的短期签名。`routers/sales.py`提供import-preview、product-mappings读写及原导入核验；`sales_pending.py`复用同一规则，原来源重试可显式保存映射。`static/sales-deduction-preview.js`为两份页面共用预览，`sales-pending.js`处理组件、保存映射及版本维护；`main.py`提供脚本入口。新表/离线DDL见[数据字典](database.md#sales_product_mappings)。
+
+[test_sales_mapping_workflow.py](../../../tests/test_sales_mapping_workflow.py)覆盖真实ASGI/隔离SQLite：CSV及Excel BD产品名/BE SKU列、编码及倍数优先于名称和旧映射、无编码时唯一名称/组合、空产品名回退商品名称、重名及无效编码不猜测、商家编码、预览/导入/原行重试一致；另验店铺隔离、组合装、有效/停用版本、名称别名确认、文本长编号及数字精度、预览只读/过期/篡改/变化、重复确认防重、事务审计回滚、引用删除保护及MySQL当前读取SQL编译。等价本地SKU表达式、旧原文哈希、完整SKU及商品改码仍保留幂等兼容；金额/成本测试继续明确提供本地SKU，名称自动识别由本测试独立覆盖。浏览器脚本验证两种自动匹配标签、预览取消、倍数、保存映射、新版本、移动端和旧会话隔离；不等于业务环境部署验收。
 
 [mysql_sales_mapping_concurrency.py](../../../tests/mysql_sales_mapping_concurrency.py)显式创建独立临时MySQL容器，验证导入/待确认与批次归属编辑、单笔销售的InnoDB锁序及重传幂等；不连接业务库或启动main，运行与清理边界见[测试约定](../../knowledge/conventions.md)。
 
@@ -16,7 +18,7 @@
 | 补录产品名联想 | initializeManualProductSearch → ProductSearch.bind（static/product-search.js） | products.list_products | 复用库存候选/键盘/会话保护；选择仅填产品名，不改来源SKU或库存关联 |
 | 文件上传/真实进度 | importSalesFile → SalesImportProgress（static/sales-import-progress.js） | import_sales_stream / import_sales_file → _import_sales_file；services/import_progress.py | 同一导入核心、独立会话及单槽进度队列；完成摘要/详情/关闭与成功定时收起仅改变页面，无新表 |
 | 纯金额订单调整 | 导入结果、实际出库数量0的台账行 | _order_settlement_only_reason、_settlement_entry；financial_facts._unlinked_settlement_stmt | raw_data._settlement_only_reason；原数量/交易类型保留，不生成Sale/FIFO，所有财务入口共用 |
-| 标识及规格识别 | 明确本地SKU/店铺编码映射/确认名称别名 | services/sales_mapping.resolve；sales_product_identity.source_local_specification | 名称解析仅作候选；本地规格可选一致性校验，来源SKU名称独立 |
+| 标识及规格识别 | SKU/本地SKU优先，无本地编码时唯一名称，兼容已有店铺映射 | services/sales_mapping.resolve；sales_product_identity.source_local_specification | 无效本地编码不回退名称；本地规格可选，来源SKU名称独立 |
 | 来源/本地规格展示 | sales-ledger.js及sales-fields.zh-CN.json；sales-pending.js及ProductSearch.showSpecification | _sale_import_context、_attach_sale_product_identity、list_pending_confirmations；sales_reconciliation/sales_export | 来源sku_name、本地已关联商品当前规格、保存组件信息；批量读取，不补写历史 |
 | 中文产品名/历史展示 | 台账产品名、详情和Excel | _sale_import_context、_financial_event_response；FinancialEvent.display_product_name | 原始产品名优先，历史缺列用已关联Product.name；保存标题及历史成本不改 |
 | 原始订单号展示 | sales-ledger.js的orderNumber、计算标题与按钮；sales_export.py | _sale_import_context → _build_sale_response.display_order_no；_order_cost_data汇总展示字段 | 来源订单ID优先，无明确来源保留原编号；内部order_no/order_claim、同SKU组件分组与幂等不变 |

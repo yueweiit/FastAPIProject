@@ -1,5 +1,7 @@
 # 销售与结算数据表
 
+2026-11-24：未新增结构。指定赠品正常写入 Sale、SaleCostDetail 并扣减批次库存，原始 FIFO 成本凭据保留。`settlement_entries.raw_data._financial_classification=income_only_gift` 是应用生成的财务免成本标记，不属于仅结算原因；可信精确清单位于 [income_only_orders.json](../../../services/income_only_orders.json)，不接受导入文件伪造元字段。未写标记的历史匹配来源亦可只读识别，不回写历史已出库数量和成本。旧 `_settlement_only_reason=income_only_gift` 且尚未关联出库的来源可通过待确认接口正常出库，成功后移除旧原因并保存财务分类。`income_only` 是响应字段，不是数据库列。核算日期和兼容范围见[流程](workflow.md#指定赠品代发及订单创建月2026-11-24)。
+
 ## non_inventory_sku_rules
 
 来源：`models.NonInventorySkuRule`，基础结构，不依赖财务增强开关。`id` INT主键；`store_id` INT非空/索引/关联stores；`platform_sku_id` VARCHAR(128)非空；两者以`uq_non_inventory_store_sku`唯一。`is_active` BOOL非空/默认1，`reason` VARCHAR(500)非空；`created_by` INT非空关联users，`created_at` DATETIME非空默认当前时间。匹配使用店铺ID和平台SKU ID，不用原因或自然语言名称作业务分类。当前仅授权维护脚本写规则，无新增前端配置接口。有规则的店铺删除返回409 store_has_non_inventory_rules，可停用；被规则引用的创建人沿用用户删除的外键409保护。

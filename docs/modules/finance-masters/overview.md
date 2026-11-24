@@ -14,7 +14,7 @@
 | SalesProductMapping + Component | 本店平台/商家编码或确认唯一的名称 → 本地组件及倍数 | 销售模块独立维护、不可变生效版本；操作员限本店，viewer只读，见[销售规则](../sales/workflow.md#店铺映射与后续复用) |
 | PlatformSkuMapping + Component | 平台 SKU → 一个或多个本地商品及数量倍数 | 没有 store_id 或生效历史，旧全局结构，不用于现行销售自动扣库 |
 
-订单详情使用明确本地SKU或已确认的SalesProductMapping；旧PlatformSkuMapping启停不影响当前导入，不自动复制为已确认店铺规则。StoreProduct生效版本仍可能影响旧CSV解析和旧记录店铺推断，但不再决定毛利报表的商品分组；“产品线毛利”保留名称，按已关联本地商品ID读取，见[销售流程](../sales/workflow.md)、[报表流程](../reports/workflow.md)。
+订单详情优先使用文件SKU/本地SKU编码；无本地编码时兼容已确认的SalesProductMapping，或按产品名唯一匹配，不要求预先配置平台映射，具体优先级及商家编码边界见[销售流程](../sales/workflow.md)。旧PlatformSkuMapping启停不影响当前导入，不自动复制为已确认店铺规则。StoreProduct生效版本仍可能影响旧CSV解析和旧记录店铺推断，但不再决定毛利报表的商品分组；“产品线毛利”保留名称，按已关联本地商品ID读取，见[报表流程](../reports/workflow.md)。
 
 主数据有物理删除接口，并非一律逻辑删除；产品线和店铺删除有部分引用检查，历史其他外键仍可能限制。推荐维护任务按实际业务确定停用/新版本策略，不将“推荐”写成已实现机制。
 

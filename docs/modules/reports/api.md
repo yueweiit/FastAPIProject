@@ -1,6 +1,8 @@
 # 报表 API
 
-2026-11-19：当前损益新增只读自动行`compensation_revenue`“其他收入（赔付）”；`product_sales_revenue`排除同笔赔付，`operating_revenue`加回该自动行。已有`other_revenue`继续为人工/台账科目，不改保存接口或旧值。三个期间、金额类型、权限和旧固定版本保持；当前响应`calculation_policy=month_end_fx_mxn8_compensation_v2`。`exchange_rates[].source`可为`Baidu/DailyClose`，日期/汇率仍通过原字段返回，参见[流程](workflow.md)。
+2026-11-24：当前 `calculation_policy=order_created_fx_mxn8_income_only_v3`；`fulfillment_order_counts` 改按交易类型为“订单”的原始订单号在同店同创建月去重，包含指定赠品/未出库订单。字段类型、权限和三个期间保持，旧固定版本不重算。指定赠品正常扣库并计实际销量，财务免商品成本和销售参考跌价；独立结算按订单创建日优先归月。完整规则见[流程](workflow.md)。
+
+2026-11-19：当前损益新增只读自动行`compensation_revenue`“其他收入（赔付）”；`product_sales_revenue`排除同笔赔付，`operating_revenue`加回该自动行。已有`other_revenue`继续为人工/台账科目，不改保存接口或旧值。三个期间、金额类型、权限和旧固定版本保持；该阶段响应`calculation_policy=month_end_fx_mxn8_compensation_v2`，当前策略见上文。`exchange_rates[].source`可为`Baidu/DailyClose`，日期/汇率仍通过原字段返回，参见[流程](workflow.md)。
 
 2026-11-02：损益响应新增calculation_policy（month_end_fx_mxn8_v1）、exchange_rates及fulfillment_order_counts；每行新增is_reserved。旧字段和三个期间保留，新增字段均有默认值，旧月度版本可读取。查询/保存及Excel使用[现行月度规则](workflow.md)；无需DDL或历史回填。
 
