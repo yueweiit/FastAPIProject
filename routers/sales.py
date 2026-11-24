@@ -74,8 +74,8 @@ from services import sales_mapping, sales_preview
 from auth import RequireOperator, RequireAnyRole
 
 from services.business_audit import BusinessAuditRoute
-from services.sales_classification import (NON_INVENTORY, inventory_sales_condition,
-    is_opening_deduction, non_inventory_skus)
+from services.sales_classification import (NON_INVENTORY, INCOME_ONLY_GIFT, inventory_sales_condition,
+    is_opening_deduction, non_inventory_skus, is_income_only_order, FINANCIAL_CLASSIFICATION_KEY)
 
 router = APIRouter(prefix="/sales", tags=["销售管理"], route_class=BusinessAuditRoute)
 
@@ -667,7 +667,7 @@ def _settlement_entry(
     import_batch_id: int | None,
     exchange_rate: dict | None,
     mapping_error: str | None = None,
-    *, settlement_only_reason: str | None = None,
+    *, settlement_only_reason: str | None = None, income_only: bool = False,
 ) -> SettlementEntry:
     def money(name: str) -> Decimal:
         return _decimal_value(row.get(name))
@@ -675,6 +675,8 @@ def _settlement_entry(
     raw_data = {str(key): _json_value(value) for key, value in row.items() if not key.startswith("_")}
     if settlement_only_reason:
         raw_data[SETTLEMENT_ONLY_KEY] = settlement_only_reason
+    if income_only:
+        raw_data[FINANCIAL_CLASSIFICATION_KEY] = INCOME_ONLY_GIFT
     return SettlementEntry(
         source_key=source_key,
         source_file=filename[:255] if filename else None,
@@ -1012,6 +1014,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None, *, preview
             transaction_type == "订单" and quantity > 0
         )
         settlement_only_reason = None
+        income_only = False
         if source_kind == "legacy_csv":
             try:
                 sold_at = _datetime_value(row.get("日期"))
@@ -1033,8 +1036,9 @@ async def _import_sales_file(file, db, user, store_id, progress=None, *, preview
                 net_product_sales = _decimal_value(row.get("净商品销售额"))
                 settlement_total = _decimal_value(row.get("结算总金额"))
                 if transaction_type == "订单":
+                    income_only = is_income_only_order(import_store, row.get("订单ID/调整单ID"), row.get("SKU ID"), order_created_at)
                     settlement_only_reason = _order_settlement_only_reason(row, net_product_sales, settlement_total,
-                        non_inventory=(import_store.id, _text_value(row.get("SKU ID"))) in non_stock_skus)
+                        non_inventory=not income_only and (import_store.id, _text_value(row.get("SKU ID"))) in non_stock_skus)
                     if settlement_only_reason:
                         is_inventory_sale = False
             except ValueError as exc:
@@ -1107,6 +1111,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None, *, preview
             "other_expense": other_expense,
             "is_inventory_sale": is_inventory_sale,
             "settlement_only_reason": settlement_only_reason,
+            "income_only": income_only,
             "mapping_error": pending_mapping_error,
             "resolution": resolution,
         })
@@ -1228,6 +1233,7 @@ async def _import_sales_file(file, db, user, store_id, progress=None, *, preview
                 item["exchange_rate"],
                 item["mapping_error"],
                 settlement_only_reason=item["settlement_only_reason"],
+                income_only=item["income_only"],
             )
             if item.get("resolution"):
                 settlement_entry.raw_data = {**settlement_entry.raw_data, "_product_resolution": item["resolution"]}
@@ -1466,12 +1472,13 @@ def _build_sale_response(
     source_context: dict | None = None,
 ) -> SaleResponse:
     cost_context = cost_context or {}
-    adjusted_cost = sale.total_cost + cost_context.get("adjustment", Decimal(0))
+    income_only = cost_context.get("income_only", False)
+    adjusted_cost = Decimal(0) if income_only else sale.total_cost + cost_context.get("adjustment", Decimal(0))
     parts = cost_context.get("components")
     units = {key: (value / Decimal(sale.quantity)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-             for key, value in parts.items()} if parts is not None and sale.quantity > 0 else {}
+             for key, value in parts.items()} if parts is not None and sale.quantity > 0 and not income_only else {}
     unit_total = ((adjusted_cost / Decimal(sale.quantity)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-                  if sale.quantity > 0 and cost_context.get("cost_status") != "needs_review" else None)
+                  if sale.quantity > 0 and not income_only and cost_context.get("cost_status") != "needs_review" else None)
     parts = rounded_cost_components(parts, adjusted_cost) if parts is not None else {}
     currency = currency.upper()
     if currency == "CNY":
@@ -1493,9 +1500,10 @@ def _build_sale_response(
             sale.platform_fee if source_other_expense is None else source_other_expense
         )
         sales_revenue_cny = source_net_product_sales * exchange_rate_to_cny
-        selling_price_cny = (
-            sales_revenue_cny / sale.quantity if sale.quantity else Decimal("0")
-        )
+        if not income_only:
+            selling_price_cny = (
+                sales_revenue_cny / sale.quantity if sale.quantity else Decimal("0")
+            )
         platform_fee_cny = source_other_expense * exchange_rate_to_cny
         if cost_context.get("cost_status") != "needs_review":
             profit_cny = sales_revenue_cny - adjusted_cost - platform_fee_cny
@@ -1506,6 +1514,7 @@ def _build_sale_response(
         display_name=(source_context or {}).get("display_product_name") or (source_context or {}).get("source_product_name"),
         id=sale.id,
         business_kind="opening_deduction" if is_opening_deduction(sale) else "inventory_sale",
+        income_only=income_only,
         product_id=sale.product_id,
         user_id=sale.user_id,
         order_no=sale.order_no,
@@ -1529,7 +1538,8 @@ def _build_sale_response(
         unit_other_cost_cny=units.get("other"),
         unit_total_cost_cny=unit_total,
         platform_fee=sale.platform_fee,
-        profit=sale.profit,
+        profit=(source_net_product_sales if source_net_product_sales is not None else sale.selling_price * sale.quantity)
+            - (source_other_expense if source_other_expense is not None else sale.platform_fee) if income_only else sale.profit,
         currency=currency,
         source_row_net_product_sales=(source_context or {}).get("source_row_net_product_sales"),
         source_row_settlement_total=(source_context or {}).get("source_row_settlement_total"),
@@ -1538,7 +1548,8 @@ def _build_sale_response(
         exchange_rate_to_cny=exchange_rate_to_cny,
         exchange_rate_date=exchange_rate_date,
         exchange_rate_source=exchange_rate_source,
-        selling_price_cny=selling_price_cny,
+        selling_price_cny=None if income_only else selling_price_cny,
+        impairment_cny=Decimal(0) if income_only else None,
         sales_revenue_cny=sales_revenue_cny,
         platform_fee_cny=platform_fee_cny,
         profit_cny=profit_cny,
@@ -1550,7 +1561,7 @@ def _build_sale_response(
                 batch_id=d["batch_id"],
                 batch_no=d["batch_no"],
                 quantity=d["quantity"],
-                unit_cost=d["unit_cost"] + cost_context.get("batch_deltas", {}).get(d["batch_id"], Decimal(0)),
+                unit_cost=Decimal(0) if income_only else d["unit_cost"] + cost_context.get("batch_deltas", {}).get(d["batch_id"], Decimal(0)),
                 base_unit_cost=d["unit_cost"],
             )
             for d in cost_details
@@ -2205,9 +2216,10 @@ def _monthly_sales_summary(
                 "cost_review_count": 0,
             },
         )
+        income_only = (cost_contexts or {}).get(sale.id, {}).get("income_only", False)
         group["sales_count"] += 1
         group["sold_quantity"] += sale.quantity
-        cost = sale.total_cost + (cost_contexts or {}).get(sale.id, {}).get("adjustment", Decimal(0))
+        cost = Decimal(0) if income_only else sale.total_cost + (cost_contexts or {}).get(sale.id, {}).get("adjustment", Decimal(0))
         group["sales_cost_cny"] += cost
         if (cost_contexts or {}).get(sale.id, {}).get("cost_status") == "needs_review":
             group["cost_review_count"] += 1
@@ -2299,7 +2311,8 @@ async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids
         )
         batch_map = dict(batches_result.all())
 
-    cost_contexts = cost_contexts if cost_contexts is not None else await sale_cost_context(db, sales)
+    cost_contexts = cost_contexts if cost_contexts is not None else await sale_cost_context(
+        db, sales, source_entry_ids=source_entry_ids)
 
     response = []
     for sale in sales:
@@ -2343,12 +2356,13 @@ def _financial_event_response(event, store_name, local_product_name=None):
         allocated_net_product_sales=event.source_row_net_product_sales,
         allocated_settlement_total=event.source_amount,
         exchange_rate_date=event.rate_date, exchange_rate_source=event.rate_source,
-        selling_price_cny=event.revenue, sales_revenue_cny=event.revenue,
+        selling_price_cny=None if event.income_only else event.revenue, sales_revenue_cny=event.revenue,
         platform_fee_cny=event.expense,
         profit_cny=event.revenue-event.expense if event.revenue is not None and event.expense is not None else None,
         store_name=store_name, sold_at=event.occurred_at,
         created_at=event.created_at or event.occurred_at,
         business_kind="settlement",
+        income_only=event.income_only,
         record_type="compensation_income" if event.transaction_type in COMPENSATION_TRANSACTION_TYPES else "manual_settlement" if event.source_type == "manual_settlement" else "settlement_adjustment",
         display_sku=event.platform_sku_id or "-",
         display_name=event.display_product_name or local_product_name or event.product_name or "-",
@@ -2458,7 +2472,7 @@ async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include
             .where(Sale.id.in_([sale.id for sale in unknown])))).scalars().all()
         all_sales.update({sale.id: sale for sale in loaded})
     values = list(all_sales.values())
-    contexts = await sale_cost_context(db, values, include_details=include_details)
+    contexts = await sale_cost_context(db, values, include_details=include_details, source_entry_ids=source_entry_ids)
     responses = await _sale_response_rows(db, values, cost_contexts=contexts, source_entry_ids=source_entry_ids)
     impairment_details = await attach_sale_impairment(db, responses, include_details=include_details)
     products = {p.id: p for p in (await db.execute(select(Product).where(

@@ -180,10 +180,14 @@ async def ensure_batch_cost_editable(db, batch_id):
                                        "message": "批次已有成本调整，请追加调整或反向单，不能改写原批次。"})
 
 
-async def sale_cost_context(db, sales, *, include_details=False):
+async def sale_cost_context(db, sales, *, include_details=False, source_entry_ids=None):
     if not sales:
         return {}
     from models import SaleCostDetail
+    from services.sales_classification import CLASSIFICATION_TEXT, income_only_sale_ids
+    income_only_review_ids = set()
+    income_only_ids = await income_only_sale_ids(db, [sale.id for sale in sales],
+        source_entry_ids=source_entry_ids, review_ids=income_only_review_ids)
     details = (await db.execute(select(SaleCostDetail, InventoryBatch).join(
         InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id).where(
         SaleCostDetail.sale_id.in_([sale.id for sale in sales])
@@ -194,6 +198,12 @@ async def sale_cost_context(db, sales, *, include_details=False):
                        "saved_cost": ZERO, "breakdown_review_reason": None, "batch_lines": []} for sale in sales}
     for detail, batch in details:
         context = result[detail.sale_id]
+        if detail.sale_id in income_only_ids:
+            if include_details:
+                context["batch_lines"].append({"batch_id": batch.id, "batch_no": batch.batch_no,
+                    "quantity": detail.quantity, "unit_cost": ZERO, "total_cost_cny": ZERO,
+                    **{key + "_cost_cny": ZERO for key in COST_CATEGORIES}})
+            continue
         delta = unit_adjustment(layers.get(detail.batch_id, []))
         context["adjustment"] += delta * Decimal(detail.quantity)
         context["batch_deltas"][detail.batch_id] = delta
@@ -215,12 +225,20 @@ async def sale_cost_context(db, sales, *, include_details=False):
             context["voided_batches"].add(batch.batch_no)
     for sale in sales:
         context = result[sale.id]
+        if sale.id in income_only_ids:
+            context.update(income_only=True, cost_status="not_applicable", cost_review_reason=None)
+            continue
         context["cost_status"] = ("needs_review" if context["voided_batches"] else
                                   "actual" if context["states"] and all(s == "actual" for s in context["states"]) else "unverified")
         context["cost_review_reason"] = ("销售引用已作废批次：" + "、".join(sorted(context["voided_batches"]))
                                          if context["voided_batches"] else None)
         if context["voided_batches"] or context["detail_quantity"] != sale.quantity or context["saved_cost"] != sale.total_cost:
             context["breakdown_review_reason"] = "出库成本明细缺失、不一致或引用已作废批次，成本拆分待核对"
+        if sale.id in income_only_review_ids:
+            reason = CLASSIFICATION_TEXT["zh-CN"]["income_only_conflict"]
+            context["cost_status"] = "needs_review"
+            context["cost_review_reason"] = "；".join(filter(None, (context["cost_review_reason"], reason)))
+            context["breakdown_review_reason"] = "；".join(filter(None, (context["breakdown_review_reason"], reason)))
         if context["breakdown_review_reason"]:
             context["components"] = None
     return result

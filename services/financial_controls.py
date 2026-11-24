@@ -492,9 +492,9 @@ async def classify_settlement(db, user, entry_id, payload):
 
 
 async def reconciliation(db, store_id, report_month):
-    from services.financial_facts import settlement_expense
+    from services.financial_facts import settlement_expense, settlement_accounting_date_expression
     start, end = month_bounds(report_month)
-    occurred = func.coalesce(SettlementEntry.settlement_date, SettlementEntry.order_created_at, SettlementEntry.imported_at)
+    occurred = settlement_accounting_date_expression()
     # 与损益财务事件相同的历史归属兜底；缺少直接店铺的行只读展示并提示核对。
     owner = func.coalesce(SettlementEntry.store_id, SalesImportBatch.store_id, User.store_id)
     scoped_entries = select(SettlementEntry).outerjoin(

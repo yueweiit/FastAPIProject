@@ -106,7 +106,7 @@ class ProductProfitReportTests(unittest.IsolatedAsyncioTestCase):
         product=next(row for row in rows if row['product_id']==10)
         self.assertEqual(adjustment['current_quantity'],0)
         self.assertEqual(adjustment['current']['revenue'],D(5))
-        self.assertEqual(adjustment['current']['cost'],D(5)/D(85)*D(4))  # 沿用原店铺收入比例费用分摊
+        self.assertEqual(adjustment['current']['cost'],D(5)/D(85)*D(12))  # 三个订单；收入比例分摊方式不变
         self.assertEqual(adjustment['sku_count'],0)
         self.assertEqual(product['current_quantity'],4)  # 退款不恢复或反扣销售件数
         self.assertEqual(sum(row['current']['revenue'] for row in rows),D(85))

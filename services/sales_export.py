@@ -35,7 +35,7 @@ SOURCE_FIELDS = (
     ("source_specification", "来源规格（SKU 名称）"), ("requested_local_specification", "导入指定规格/型号"),
 )
 RECORD_NAMES = {"sale": "销售", "other_expense": "赔付费用", "compensation_income": "赔付收入", "manual_settlement": "手工结算补录", "settlement_adjustment": "退款/结算调整"}
-COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": "待核对"}
+COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": "待核对", "not_applicable": "赠品免成本"}
 
 
 def _append(sheet, values, row_number):

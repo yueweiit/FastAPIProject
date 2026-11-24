@@ -88,14 +88,14 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.engine.dispose()
 
     def entry(self, key, *, net, total, quantity, kind="订单", store=7, product=10,
-              occurred=datetime(2026, 9, 12), pending=False, currency="CNY", rate=1):
+              occurred=datetime(2026, 9, 12), pending=False, currency="CNY", rate=1, ordered=None):
         row = SettlementEntry(id=key, source_key=f"test-{key}", source_row_number=key,
                               order_id=f"ORDER-{key}", platform_sku_id="P10" if product else "-",
                               product_id=product, store_id=store, import_batch_id=1,
                               net_product_sales=Decimal(net), settlement_total=Decimal(total),
                               quantity=quantity, transaction_type=kind, currency=currency,
                               exchange_rate_to_cny=rate, settlement_date=occurred,
-                              order_created_at=datetime(2026, 8, 1),
+                              order_created_at=ordered or occurred,
                               mapping_status="pending_confirmation" if pending else "confirmed", raw_data={})
         self.session.add(row)
         return row
@@ -202,7 +202,8 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row.platform_fee_cny, Decimal(8))
         self.assertEqual(row.gross_profit_cny, Decimal(37))
         values = _build_store_profit_loss_values(await self.auto_values(), {})
-        self.assertEqual(values["net_profit"]["current"], row.gross_profit_cny - Decimal(4))
+        # 三个订单号：已出库、退款和待确认订单均参与；赔付不参与。
+        self.assertEqual(values["net_profit"]["current"], row.gross_profit_cny - Decimal(12))
         self.assertEqual(values["product_sales_revenue"]["current"], Decimal(80))
         self.assertEqual(values["compensation_revenue"]["current"], Decimal(5))
         self.assertEqual(values["operating_revenue"]["current"], row.sales_revenue_cny)
@@ -262,10 +263,10 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((summary.sales_revenue_cny,summary.platform_fee_cny,summary.gross_profit_cny),
                          (Decimal(85),Decimal(-12),Decimal(57)))
         auto = await self.auto_values()
-        self.assertEqual(auto['_fulfillment_counts']['current'], 0)
-        self.assertEqual(auto['fulfillment_cost']['current'], Decimal(0))
+        self.assertEqual(auto['_fulfillment_counts']['current'], 5)
+        self.assertEqual(auto['fulfillment_cost']['current'], Decimal(20))
         values=_build_store_profit_loss_values(auto,{})
-        self.assertEqual(values['net_profit']['current'],summary.gross_profit_cny)
+        self.assertEqual(values['net_profit']['current'],summary.gross_profit_cny - Decimal(20))
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)
         self.assertEqual(self.session.get(Sale,1).total_cost,40)
 
@@ -295,7 +296,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(summary.platform_fee_cny,Decimal(8))
         self.assertEqual(summary.gross_profit_cny,Decimal('83.2'))
         values=_build_store_profit_loss_values(await self.auto_values(),{})
-        self.assertEqual(values['net_profit']['current'], Decimal('90.75'))
+        self.assertEqual(values['net_profit']['current'], Decimal('82.75'))
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)
         self.assertEqual(self.session.get(Sale,1).total_cost,Decimal(40))
         self.entry(9,net=0,total=1,quantity=0,kind='物流赔付',product=None,currency='USD',rate=None)
@@ -342,7 +343,7 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         with patch("routers.reports._sale_provision_adjustments", new=AsyncMock(return_value={1: (Decimal(0), "")})):
             rows = await _product_line_profit_data(self.db, {7}, date(2026, 9, 1), date(2026, 9, 30))
         self.assertEqual(sum(r["current"]["revenue"] for r in rows), Decimal(85))
-        self.assertEqual(sum(r["current"]["cost"] for r in rows), Decimal(52))
+        self.assertEqual(sum(r["current"]["cost"] for r in rows), Decimal(60))
 
     async def test_actual_month_rows_derive_previous_and_ytd_without_overwriting_legacy(self):
         self.session.add_all([

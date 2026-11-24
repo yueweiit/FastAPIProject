@@ -134,7 +134,8 @@ class _Result:
 
 class _AutoValuesDb:
     def __init__(self, sales, cost_rows):
-        self.results = [_Result(sales), _Result(cost_rows), _Result([])]
+        # 独立结算、来源订单去重、赠品历史关联均为空；本组只验证 FIFO 科目和准备。
+        self.results = [_Result(sales), _Result(cost_rows), _Result([]), _Result([]), _Result([])]
 
     async def execute(self, _statement):
         return self.results.pop(0)

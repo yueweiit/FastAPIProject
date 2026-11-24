@@ -6,7 +6,7 @@ let checks = 0;
 const equal = (actual, expected) => { assert.equal(actual, expected); checks++; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const report = (month = '2026-09', store = 7, editable = true) => ({
-    report_month: month, store_id: store, can_edit: editable, calculation_policy: "month_end_fx_mxn8_compensation_v2", rows: [], warnings: [],
+    report_month: month, store_id: store, can_edit: editable, calculation_policy: "order_created_fx_mxn8_income_only_v3", rows: [], warnings: [],
 });
 
 function setup(file, {admin = false, deferStores = false, manualInput = '123', manualKey = 'salary'} = {}) {

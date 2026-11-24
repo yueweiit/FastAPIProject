@@ -69,7 +69,7 @@ from services.inventory_impairment import (
 )
 
 from services.business_audit import BusinessAuditRoute
-from services.sales_classification import inventory_sales_condition
+from services.sales_classification import CLASSIFICATION_TEXT, inventory_sales_condition, income_only_sale_ids
 
 router = APIRouter(prefix="/reports", tags=["报表"], route_class=BusinessAuditRoute)
 
@@ -138,7 +138,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("inventory_other_cost", "  入库其他成本", "auto", "按批次其他费用权重分配已保存的FIFO销售成本"),
     ("customs_import_tax", "  关税及进口税费（正报）", "manual", None),
     ("local_logistics_cost", "  本地物流配送成本", "manual", None),
-    ("fulfillment_cost", "  代发成本", "auto", "实际履约订单按店铺及原始订单号去重，每单8 MXN，按销售月月末汇率折算人民币"),
+    ("fulfillment_cost", "  代发成本", "auto", "交易类型为订单的原始订单号按店铺去重，含赠品；按订单创建月每单8 MXN及月末汇率折算人民币"),
     ("other_direct_cost", "  其他直接成本", "auto", "销售记录中的其他费用"),
     ("inventory_writeoff", "  减：销售转销跌价准备", "auto", "已售商品对应准备抵减营业成本；不修改保存的FIFO成本"),
     ("gross_profit", "毛利", "formula", None),
@@ -418,14 +418,19 @@ async def _store_profit_loss_auto_values(
     ))).scalars().all())
     from routers.sales import _sale_import_context
     from services.report_exchange_rates import (monthly_report_rates, rate_key, convert_report_amount,
-                                                fulfillment_orders, rate_warnings)
+                                                load_fulfillment_orders, rate_warnings)
     contexts, _ = await _sale_import_context(db, sales) if sales else ({}, {})
     cost_rows = (await db.execute(select(SaleCostDetail, InventoryBatch, Sale.sold_at)
         .join(Sale, Sale.id == SaleCostDetail.sale_id)
         .join(InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id)
         .where(SaleCostDetail.sale_id.in_([sale.id for sale in sales])))).all() if sales else []
     events = await unlinked_settlement_events(db, {store_id}, read_start, ytd_end)
-    orders = fulfillment_orders(sales, contexts, {sale.id: store_id for sale in sales})
+    orders = await load_fulfillment_orders(db, {store_id}, read_start, ytd_end, sales, contexts,
+                                          {sale.id: store_id for sale in sales})
+    income_only_review_ids = set()
+    income_only_ids = await income_only_sale_ids(db, [sale.id for sale in sales], review_ids=income_only_review_ids)
+    if income_only_ids:
+        cost_rows = [row for row in cost_rows if row[0].sale_id not in income_only_ids]
     requirements = {("MXN", month) for month in orders}
     for sale in sales:
         context = contexts.get(sale.id, {})
@@ -474,6 +479,12 @@ async def _store_profit_loss_auto_values(
         purchase, logistics, other = _fifo_cost_components(detail, batch, layers.get(batch.id, []))
         for key, amount in (("product_purchase_cost", purchase), ("head_logistics_cost", logistics), ("inventory_other_cost", other)):
             add(key, sold_at.date(), amount)
+    for sale in sales:
+        if sale.id in income_only_review_ids:
+            for key in ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost"):
+                add(key, sale.sold_at.date(), None)
+    if income_only_review_ids:
+        warnings.append(CLASSIFICATION_TEXT["zh-CN"]["income_only_conflict"])
     auto_values.update(await _store_provision_financial_values(db, store_id, periods))
     warnings.extend(auto_values.get("_warnings", []))
     auto_values["_warnings"] = warnings
@@ -665,7 +676,7 @@ async def _store_profit_loss_response(
         )
     values = _build_store_profit_loss_values(auto_values, manual_values)
     if any(_decimal_or_zero(value) for value in (saved_manual_values or {}).get("fulfillment_cost", {}).values()):
-        values["_warnings"].append("历史人工代发金额保留；当前代发成本按实际履约订单每单8 MXN及月末汇率重新计算。")
+        values["_warnings"].append("历史人工代发金额保留；当前代发按交易类型为订单的原始订单号去重，每单8 MXN及订单创建月月末汇率重新计算。")
     saved_manual_values = saved_manual_values if isinstance(saved_manual_values, dict) else {}
     remarks = report.remarks if report else {}
     rows = [
@@ -697,7 +708,7 @@ async def _store_profit_loss_response(
         salary_oa_breakdown=auto_values.get("_salary_oa_breakdown"),
         exchange_rates=auto_values.get("_exchange_rates", []),
         fulfillment_order_counts=auto_values.get("_fulfillment_counts", {}),
-        calculation_policy="month_end_fx_mxn8_compensation_v2",
+        calculation_policy="order_created_fx_mxn8_income_only_v3",
         warnings=values.get("_warnings", []),
     )
 
@@ -1301,7 +1312,7 @@ def _allocate_monthly_fulfillment_cost(
                     "name": "未分配产品线（代发成本）", "sku_ids": set(),
                     "row_type": "unallocated_fulfillment", "current_quantity": 0,
                     **{p: {"revenue": Decimal(0), "cost": Decimal(0)} for p in periods},
-                    "note": "实际履约订单产生代发成本，但该店铺当月收入为0，未按收入分摊。"})
+                    "note": "交易类型为订单的记录产生代发成本，但该店铺当月收入为0，未按收入分摊。"})
                 for period in selected_periods:
                     if amount is None:
                         item.setdefault("_unknown_cost_periods", set()).add(period)
@@ -1369,9 +1380,12 @@ async def _product_line_profit_data(
 
         import_context_by_sale, _ = await _sale_import_context(db, [sale for sale, _user_store_id in sales])
 
-    from services.report_exchange_rates import monthly_report_rates, rate_key, convert_report_amount, fulfillment_orders
-    fulfillment = fulfillment_orders([sale for sale, _ in sales], import_context_by_sale,
+    from services.report_exchange_rates import monthly_report_rates, rate_key, convert_report_amount, load_fulfillment_orders
+    fulfillment = await load_fulfillment_orders(db, store_ids, read_start, ytd_end,
+                                     [sale for sale, _ in sales], import_context_by_sale,
                                      {sale.id: sale.store_id or owner for sale, owner in sales})
+    income_only_review_ids = set()
+    income_only_ids = await income_only_sale_ids(db, [sale.id for sale, _ in sales], review_ids=income_only_review_ids)
     requirements = {rate_key(import_context_by_sale.get(sale.id, {}).get("currency"), sale.sold_at.date()) for sale, _ in sales}
     requirements.update(("MXN", month) for month in fulfillment)
     monthly_rates = await monthly_report_rates(db, requirements)
@@ -1394,6 +1408,8 @@ async def _product_line_profit_data(
         for period, (start, end) in periods.items():
             if not start <= sale.sold_at.date() < end:
                 continue
+            if sale.id in income_only_review_ids:
+                item.setdefault("_unknown_cost_periods", set()).add(period)
             if revenue is None:
                 unknown_store_periods[sale_store_id].add(period)
                 item.setdefault("_unknown_revenue_periods", set()).add(period)
@@ -1407,6 +1423,10 @@ async def _product_line_profit_data(
                 item[period]["cost"] += other_expense
         if revenue is None or other_expense is None:
             item["note"] += "；销售月末汇率缺失，相关收入、费用及毛利待核对。"
+        if sale.id in income_only_review_ids:
+            note = CLASSIFICATION_TEXT["zh-CN"]["income_only_conflict"]
+            if note not in item["note"]:
+                item["note"] = f"{item['note']}；{note}".strip("；")
 
     if sales:
         cost_rows = (await db.execute(
@@ -1429,7 +1449,9 @@ async def _product_line_profit_data(
                 if note not in line_data[line_id]["note"]:
                     line_data[line_id]["note"] = f"{line_data[line_id]['note']}；{note}".strip("；")
                 continue
-            batch_cost = (detail.unit_cost + unit_adjustment(cost_layers.get(batch.id, []))) * Decimal(detail.quantity)
+            # 赠品只免商品成本；库存准备转销及其未知状态仍按原规则处理。
+            batch_cost = (Decimal(0) if sale.id in income_only_ids else
+                (detail.unit_cost + unit_adjustment(cost_layers.get(batch.id, []))) * Decimal(detail.quantity))
             for period in STORE_PROFIT_LOSS_PERIODS:
                 start, end = periods[period]
                 if start <= sale.sold_at.date() < end:

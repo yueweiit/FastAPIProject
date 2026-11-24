@@ -382,7 +382,7 @@ class SettlementOnlyImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(displayed),3);self.assertEqual(sum(row['quantity'] for row in displayed),3)
         self.assertEqual(sum(D(row['total_cost']) for row in displayed),30)
 
-    async def test_adjustment_after_existing_order_stays_in_its_settlement_month(self):
+    async def test_adjustment_after_existing_order_uses_order_creation_month(self):
         sale=await self.upload([self.fee(net=100,total=90,商品原价小计=100,净运费=0)])
         self.assertEqual(sale.status_code,200,sale.text)
         adjustment=await self.upload([self.fee(settled_on='2026-10-07')])
@@ -390,14 +390,15 @@ class SettlementOnlyImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adjustment.json()['sales_created'],0)
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,9)
         september=(await self.request('GET','/sales/monthly-summary?month=2026-09')).json()[0]
-        october=(await self.request('GET','/sales/monthly-summary?month=2026-10')).json()[0]
-        self.assertEqual((september['sold_quantity'],D(september['gross_profit_cny'])),(1,80))
-        self.assertEqual((october['sold_quantity'],october['settlement_event_count'],D(october['gross_profit_cny'])),(0,1,20))
-        response=await self.request('GET','/sales/export?month=2026-10')
+        october=(await self.request('GET','/sales/monthly-summary?month=2026-10')).json()
+        self.assertEqual((september['sold_quantity'],september['settlement_event_count'],D(september['gross_profit_cny'])),(1,1,100))
+        self.assertEqual(october,[])
+        response=await self.request('GET','/sales/export?month=2026-09')
         rows=list(load_workbook(io.BytesIO(response.content),data_only=True)['销售拆分明细'].values)
-        self.assertEqual((rows[1][4],rows[1][8],rows[1][10]),(0,0,20))
+        event=next(row for row in rows[1:-1] if row[4]==0)
+        self.assertEqual((event[4],event[8],event[10]),(0,0,20))
         self.actor=NS(id=2,role='viewer',store_id=8)
-        self.assertEqual((await self.request('GET','/sales?month=2026-10')).json(),[])
+        self.assertEqual((await self.request('GET','/sales?month=2026-09')).json(),[])
         self.actor=NS(id=1,role='admin',store_id=None)
         rollback=await self.request('POST',f"/sales/imports/{adjustment.json()['import_batch_id']}/rollback")
         self.assertEqual(rollback.json()['restored_quantity'],0)

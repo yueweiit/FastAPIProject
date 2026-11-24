@@ -191,7 +191,8 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         loader.assert_not_awaited()
 
     async def test_records_removed_after_count_do_not_produce_empty_file(self):
-        with patch("routers.sales.list_sales", new_callable=AsyncMock, return_value=[]):
+        with patch("routers.sales.list_sales", new_callable=AsyncMock, return_value=[]), \
+             patch("routers.sales.export_sources", new_callable=AsyncMock, return_value=([], {}, set())):
             response = await self.client.get("/sales/export", params={"month": "2026-09"})
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["detail"]["code"], "sales_export_empty")

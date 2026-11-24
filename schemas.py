@@ -380,6 +380,7 @@ class SaleResponse(BaseModel):
 
     id: int
     business_kind: Literal["inventory_sale", "opening_deduction", "settlement"] = "inventory_sale"
+    income_only: bool = False
     product_id: int | None = None
     user_id: int | None = None
     order_no: str

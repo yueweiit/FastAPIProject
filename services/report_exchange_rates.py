@@ -1,10 +1,15 @@
 """损益使用核算月末汇率；仅读取外部数据，不重写销售保存的逐日汇率。"""
 import asyncio
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import exists, func, or_, select
+
+from models import Sale, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, User
 from services.exchange_rates import ExchangeRateError, get_cny_rates
+from services.financial_facts import settlement_accounting_date_expression
+from services.sales_classification import inventory_sales_condition
 
 
 def report_today():
@@ -70,7 +75,7 @@ def convert_report_amount(amount, rate):
 
 
 def fulfillment_orders(sales, contexts, store_ids_by_sale=None):
-    """按店铺、原始订单号及销售月去重，不按SKU或组合组件重复收取。"""
+    """兼容无结算来源的手工销售及旧三列 CSV；订单详情由来源查询统计。"""
     result = {}
     from services.sales_classification import is_opening_deduction
     for sale in sales:
@@ -86,6 +91,40 @@ def fulfillment_orders(sales, contexts, store_ids_by_sale=None):
         month = sale.sold_at.date().replace(day=1)
         store_id = (store_ids_by_sale or {}).get(sale.id, getattr(sale, "store_id", None))
         result.setdefault(month, set()).add((store_id, order))
+    return result
+
+
+async def load_fulfillment_orders(db, store_ids, start, end, sales=(), contexts=None, store_ids_by_sale=None):
+    """代发与扣库存资格分开：只按来源交易类型为订单的原始订单号去重。"""
+    if not store_ids:
+        return {}
+    contexts = contexts or {}
+    fallback = [sale for sale in sales if not contexts.get(sale.id)
+                or contexts[sale.id].get("source_file_type") == "legacy_csv"]
+    result = fulfillment_orders(fallback, contexts, store_ids_by_sale)
+    occurred = settlement_accounting_date_expression()
+    owner = func.coalesce(SettlementEntry.store_id, SalesImportBatch.store_id, User.store_id)
+    opening_direct = exists(select(Sale.id).where(Sale.id == SettlementEntry.sale_id,
+        ~inventory_sales_condition()).correlate(SettlementEntry))
+    opening_component = exists(select(SettlementEntryAllocation.id)
+        .join(Sale, Sale.id == SettlementEntryAllocation.sale_id)
+        .where(SettlementEntryAllocation.settlement_entry_id == SettlementEntry.id,
+               ~inventory_sales_condition()).correlate(SettlementEntry))
+    stmt = (select(owner, SettlementEntry.order_id, occurred)
+        .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id)
+        .outerjoin(User, User.id == SalesImportBatch.user_id)
+        .where(owner.in_(store_ids), SettlementEntry.transaction_type == "订单",
+               func.trim(SettlementEntry.order_id) != "",
+               or_(SalesImportBatch.file_type.is_(None), SalesImportBatch.file_type != "legacy_csv"),
+               or_(SalesImportBatch.status.is_(None), SalesImportBatch.status == "completed"),
+               ~opening_direct, ~opening_component))
+    if start is not None:
+        stmt = stmt.where(occurred >= datetime.combine(start, time.min))
+    if end is not None:
+        stmt = stmt.where(occurred < datetime.combine(end, time.min))
+    for store_id, order, created_at in (await db.execute(stmt.distinct())).all():
+        if created_at is not None:
+            result.setdefault(created_at.date().replace(day=1), set()).add((store_id, order.strip()))
     return result
 
 

@@ -21,6 +21,8 @@
         impairmentHelp:'按实际FIFO批次分别计算后汇总：稳健商品＝相隔自然日数×1%×本批订单成本；新品＝相隔自然日数×0.5%×本批订单成本；不跌价商品＝0。类型取订单建立当天生效记录，入库当天为0天，不扣安全库存、不设90%上限。订单成本含当前有效的采购、头程、尾程和其他入库成本；跌价单列，不重复计入成本或扣毛利，也不是报表的准备转销金额。',
         wholeHelp:'按同店铺原内部订单分组的全部授权出库明细汇总，不受当前商品、月份和页面筛选限制。导入订单按订单ID+来源SKU分组，组合组件归在同组；显示原始订单号不会将不同来源SKU合并。不同商品的单价不相加；本行和汇总金额不可重复合计。',
         basis:'数量口径：本地库存实际出库件数；组合商品按组件行展示，不等同于平台销售套数。',
+        giftHelp:'赠品按真实数量扣减库存；收入及原平台费用保留，商品成本和销售跌价不计入核算，不计算单价。',
+        giftBatchHelp:'以下为已实际扣减的FIFO批次及数量。原始出库凭据保留，赠品免成本不影响库存扣减或撤销恢复。',
         count:'出库明细数', wholeCost:'整单销售成本（元）', wholeImpairment:'整单出库跌价（元）',
         originalCurrency:'原币', rate:'汇率', rateDate:'汇率日期', rateSource:'汇率来源', missingRate:'汇率缺失，人民币金额待核对。',
         sourceRowHelp:'来源整行原币金额，用于对照Excel；组合各组件重复展示，不参与合计。人民币收入和费用仍按已保存的组件份额及汇率计算。',
@@ -267,7 +269,7 @@
         el('sales-tbody').innerHTML = rows.length ? rows.map(row => `<tr>${columns.map((meta,index) => {
             const v = value(row, meta, products[row.product_id] || {});
             const numeric = meta.kind === 'money' || meta.kind === 'unit';
-            const notApplicable = meta.kind === 'unit' && !(row.quantity > 0);
+            const notApplicable = meta.kind === 'unit' && (row.income_only === true || !(row.quantity > 0));
             const sourceMoney = meta.kind === 'source_money';
             const rate = meta.kind === 'rate';
             let text;
@@ -310,15 +312,19 @@
     }
     function detailHtml(data) {
         const sale = data.sale;
+        const gift = sale.income_only === true;
         const notes = [...new Set([sale.cost_review_reason, sale.cost_breakdown_review_reason, sale.impairment_review_reason, data.order_summary.review_reason].filter(Boolean))];
         const raw = key => sale[key+'_cost_cny'] == null ? null : unknownSum(data.cost_batches.map(batch => batch[key+'_cost_cny']));
         const lines = [...categories, 'total'].map(key => {
             const original = key === 'total' ? sale.total_cost : raw(key);
             const shown = key === 'total' ? totalCost(sale) : sale[key+'_cost_cny'];
             const unit = sale['unit_'+key+'_cost_cny'];
+            if (gift) return `<tr><td>${h(key === 'total' ? t('total') : t(key))}</td><td>${money(shown)}</td></tr>`;
             return `<tr><td>${h(key === 'total' ? t('total') : t(key))}</td><td>${preciseMoney(original)}</td><td>${money(shown)}</td><td>${money(unit,4)}</td><td>${original == null || unit == null ? t('pending') : `${preciseMoney(original)} ÷ ${h(sale.quantity)} = ${money(unit,4)}`}</td></tr>`;
         });
-        const costBatches = data.cost_batches.map(batch => `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td><td>${money(batch.unit_cost,4)}</td>${categories.map(key=>`<td>${preciseMoney(batch[key+'_cost_cny'])}</td>`).join('')}<td>${money(batch.total_cost_cny,4)}</td></tr>`);
+        const costBatches = data.cost_batches.map(batch => gift
+            ? `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td></tr>`
+            : `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.quantity)}</td><td>${money(batch.unit_cost,4)}</td>${categories.map(key=>`<td>${preciseMoney(batch[key+'_cost_cny'])}</td>`).join('')}<td>${money(batch.total_cost_cny,4)}</td></tr>`);
         const impairments = data.impairment_batches.map(batch=>{
             const known = batch.age_days != null && batch.daily_rate != null && batch.total_cost_cny != null && batch.impairment_cny != null;
             const kind = {stable:'stableType',safe_stock:'stableType',new:'newType',no_impairment:'noImpairmentType'}[batch.product_type];
@@ -327,9 +333,9 @@
         const order = data.order_summary;
         return `<p class="sales-calculation-identity">${h(data.sku)} · ${h(data.product_name)} · ${h(orderNumber(sale))}</p><p class="sales-calculation-identity">${h(t('localProduct'))}：${h([sale.local_sku,sale.local_product_name].filter(Boolean).join(' · ') || t('na'))} · ${h(t('localSpecification'))}：${h(sale.local_specification || (sale.product_id != null?'':t('na')))}</p><p class="sales-calculation-identity">${h(t('sourceProduct'))}：${h(sale.source_product_name || t('na'))} · ${h(t('sourceSpecification'))}：${h(sale.source_specification || t('na'))} · ${h(t('sourceQuantity'))}：${h(sale.source_quantity ?? t('na'))} · ${h(sale.transaction_type || '')}</p><p data-help-tip data-help-anchor="#sales-calc-title">${h(t('basis'))}</p>
             ${notes.map(note=>`<p class="msg msg-err" role="alert">${h(note)}</p>`).join('')}
-            ${section('row',t('row'),t('rowHelp'),table([t('category'),t('raw'),t('shown'),t('unit'),t('calculation')],lines))}
-            ${section('batches',t('batches'),t('batchHelp'),costBatches.length ? table([t('batch'),t('quantity'),t('unitCost'),...categories.map(t),t('total')],costBatches) : `<p>${h(t('noBatches'))}</p>`)}
-            ${section('impairment',t('impairment'),t('impairmentHelp'),`<strong>${money(sale.impairment_cny)}</strong>`+(impairments.length ? table([t('batch'),t('arrivalDate'),t('orderDate'),t('ageDays'),t('productType'),t('dailyRate'),t('batchOrderCost'),t('impairmentAmount'),t('calculation')],impairments) : `<p>${h(t('noImpairment'))}</p>`))}
+            ${section('row',t('row'),t(gift?'giftHelp':'rowHelp'),table(gift?[t('category'),t('shown')]:[t('category'),t('raw'),t('shown'),t('unit'),t('calculation')],lines))}
+            ${section('batches',t('batches'),t(gift?'giftBatchHelp':'batchHelp'),costBatches.length ? table(gift?[t('batch'),t('quantity')]:[t('batch'),t('quantity'),t('unitCost'),...categories.map(t),t('total')],costBatches) : `<p>${h(t('noBatches'))}</p>`)}
+            ${section('impairment',t('impairment'),t(gift?'giftHelp':'impairmentHelp'),`<strong>${money(sale.impairment_cny)}</strong>`+(gift?'':impairments.length ? table([t('batch'),t('arrivalDate'),t('orderDate'),t('ageDays'),t('productType'),t('dailyRate'),t('batchOrderCost'),t('impairmentAmount'),t('calculation')],impairments) : `<p>${h(t('noImpairment'))}</p>`))}
             ${section('whole',t('whole'),t('wholeHelp'),`<dl class="sales-order-totals"><div><dt>${h(t('count'))}</dt><dd>${h(order.line_count)}</dd></div><div><dt>${h(t('wholeCost'))}</dt><dd>${money(order.total_cost_cny)}</dd></div><div><dt>${h(t('wholeImpairment'))}</dt><dd>${money(order.impairment_cny)}</dd></div></dl>` + table([t('localSku'),t('localProduct'),t('quantity'),t('total'),t('impairmentAmount')],data.order_lines.map(row=>`<tr><td>${h(row.display_sku)}</td><td>${h(row.display_name)}</td><td>${h(row.quantity)}</td><td>${row.cost_status === 'needs_review' ? t('pending') : money(totalCost(row))}</td><td>${money(row.impairment_cny)}</td></tr>`)))} `;
     }
     function ensureDialog() {

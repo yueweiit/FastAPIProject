@@ -122,6 +122,16 @@ async function main(){
    purchase_cost_cny:0,head_shipping_cost_cny:0,last_mile_cost_cny:0,other_cost_cny:0,impairment_cny:0}];
   await c.loadSales();check(body('unit_total_cost_cny')[1],'—');check(body('calculation_action')[1],'—');
   check(total('order_total_cost_cny'),'¥20.00');
+  // 赠品保留真实出库数量和批次明细入口，免成本不等于不出库；单价不适用。
+  rows=[{...sale,income_only:true,record_type:'sale',quantity:2,total_cost:0,order_total_cost_cny:0,
+   purchase_cost_cny:0,head_shipping_cost_cny:0,last_mile_cost_cny:0,other_cost_cny:0,impairment_cny:0,
+   selling_price_cny:null,unit_purchase_cost_cny:null,unit_head_shipping_cost_cny:null,
+   unit_last_mile_cost_cny:null,unit_other_cost_cny:null,unit_total_cost_cny:null}];
+  await c.loadSales();check(body('quantity'),['2']);check(total('quantity'),'2');
+  for(const key of ['selling_price_cny','unit_purchase_cost_cny','unit_head_shipping_cost_cny',
+   'unit_last_mile_cost_cny','unit_other_cost_cny','unit_total_cost_cny'])check(body(key),['—']);
+  check(body('order_total_cost_cny'),['¥0.00']);check(body('impairment_cny'),['¥0.00']);
+  check(body('calculation_action')[0].includes('data-sale-calculation="1"'),true);
   rows=[sale,{...sale,id:2,order_no:'<script>unsafe</script>',purchase_cost_cny:null,unit_purchase_cost_cny:null,impairment_cny:null,
    cost_breakdown_review_reason:'<script>unsafe</script>',impairment_review_reason:'" onmouseover="unsafe'}];
   await c.loadSales();check(body('purchase_cost_cny')[1],'待核对');check(body('unit_purchase_cost_cny')[1],'待核对');

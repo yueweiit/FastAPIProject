@@ -15,6 +15,7 @@ TEXT = {"zh-CN": {
     "source_sheet": "原始结算对账", "detail_sheet": "销售拆分明细",
     "fulfilled": "已出库", "pending": "待确认", "settlement": "仅结算",
     "cost_actual": "已核对", "cost_unverified": "未核对（沿用现有成本）", "cost_review": "待核对", "cost_na": "不出库",
+    "cost_exempt": "赠品免成本",
     "review": "待核对", "legacy": "无原始结算记录", "unknown_store": "未关联店铺",
     "missing": "来源关联的出库明细不完整，出库数量、成本与毛利待核对",
     "shared": "销售明细关联多个来源行，不能重复归集出库数量与成本",
@@ -121,7 +122,11 @@ def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=())
         pending = entry.mapping_status == "pending_confirmation"
         reasons = [entry.mapping_error] if entry.mapping_error else []
         cost = None
-        if pending:
+        income_only = bool(event and event.get("income_only")) or (
+            not missing and not shared and bool(sales) and all(row.get("income_only") for row in sales))
+        if income_only:
+            status, cost = ("pending" if pending else "fulfilled" if ids else "settlement"), Decimal(0)
+        elif pending:
             status = "pending"
         elif ids:
             status = "fulfilled"
@@ -169,7 +174,7 @@ def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=())
             actual_quantity=sum(row["quantity"] for row in sales) if quantity_known else None, revenue=revenue, cost=cost,
             expense=expense, profit=profit, rate=rate, rate_date=entry.exchange_rate_date,
             detail_ids="\n".join([f"S{row['id']}" for row in sales] + ([f"F{entry.id}"] if event else [])),
-            cost_status=labels["cost_na"] if status == "settlement" else labels["cost_review"] if cost is None
+            cost_status=labels["cost_exempt"] if income_only else labels["cost_na"] if status == "settlement" else labels["cost_review"] if cost is None
                 else labels["cost_actual"] if all(row["cost_status"] == "actual" for row in sales) else labels["cost_unverified"],
         ))
     for row in rows:

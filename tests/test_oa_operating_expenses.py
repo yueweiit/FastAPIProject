@@ -80,7 +80,7 @@ class OaOperatingExpensesHttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_report_applies_http_shared_expenses_to_the_matched_store_without_dividing(self):
         month = date(2026, 11, 1)
         db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(
-            scalars=lambda: SimpleNamespace(all=lambda: [])
+            scalars=lambda: SimpleNamespace(all=lambda: []), all=lambda: []
         )))
         with (
             patch("routers.reports.unlinked_settlement_events", new=AsyncMock(return_value=[])),

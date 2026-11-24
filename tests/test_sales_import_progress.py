@@ -120,14 +120,13 @@ class StreamingImportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.session.scalars(select(model)).all(), [])
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 10)
 
-    async def test_file_dates_keep_september_goods_and_october_adjustment(self):
+    async def test_creation_date_keeps_goods_and_adjustment_in_september(self):
         rows = [{'name':'商品', 'order':'MONTH', 'ordered_on':'2026-09-30', 'settled_on':'2026-10-07'},
                 {'type':'物流赔付', 'name':'物流赔付', 'order':'COMP', 'quantity':0, 'net':0, 'total':5,
                  'ordered_on':'2026-09-29', 'settled_on':'2026-10-07'}]
         self.assertEqual((await self.upload(rows))[-1]['status'], 200)
         september = (await self.request('GET', '/sales?month=2026-09')).json()
         october = (await self.request('GET', '/sales?month=2026-10')).json()
-        self.assertEqual(len(september), 1)
-        self.assertEqual(september[0]['record_type'], 'sale')
-        self.assertEqual(len(october), 1)
-        self.assertEqual(october[0]['record_type'], 'compensation_income')
+        self.assertEqual(len(september), 2)
+        self.assertEqual({row['record_type'] for row in september}, {'sale', 'compensation_income'})
+        self.assertEqual(october, [])

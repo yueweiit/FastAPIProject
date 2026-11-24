@@ -46,7 +46,10 @@ async def _sale_order_dates(db, sales):
 
 
 async def attach_sale_impairment(db, rows, *, include_details=False):
-    sales = {row.id: row for row in rows if row.record_type == "sale"}
+    for row in rows:
+        if getattr(row, "income_only", False):
+            row.impairment_cny, row.impairment_review_reason = ZERO, None
+    sales = {row.id: row for row in rows if row.record_type == "sale" and not getattr(row, "income_only", False)}
     if not sales:
         return
     order_dates = await _sale_order_dates(db, sales)

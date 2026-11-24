@@ -10,12 +10,22 @@ from models import (
     Product, SalesImportBatch, SettlementEntry, SettlementEntryAllocation,
     StoreProfitLossReport, User,
 )
+from services.sales_classification import INCOME_ONLY_GIFT, income_only_entry_condition
 
 
 COMPENSATION_TYPES = {"物流赔付", "平台赔付", "物料赔付"}
 SETTLEMENT_ONLY_KEY = "_settlement_only_reason"
 SETTLEMENT_ONLY_REASONS = ("shipping_adjustment", "goods_refund", "amount_adjustment", "non_inventory")
 ZERO = Decimal("0")
+
+
+def settlement_accounting_date(entry):
+    return entry.order_created_at or entry.settlement_date or entry.imported_at
+
+
+def settlement_accounting_date_expression():
+    return func.coalesce(SettlementEntry.order_created_at, SettlementEntry.settlement_date,
+                         SettlementEntry.imported_at)
 
 
 def valid_rate(currency, rate):
@@ -41,7 +51,7 @@ def settlement_expense(net_sales, settlement_total, transaction_type=None):
 def is_fulfillment_settlement(transaction_type, quantity, net_sales, settlement_only_reason=None):
     """来源订单是否代表实物履约；兼容早期误关联销售的退款/赔付。"""
     return (transaction_type in (None, "订单") and quantity > 0 and net_sales >= 0
-            and not settlement_only_reason)
+            and settlement_only_reason in (None, "", INCOME_ONLY_GIFT))
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,7 @@ class FinancialEvent:
     display_product_name: str = ""
     source_row_net_product_sales: Decimal | None = None
     source_specification: str | None = None
+    income_only: bool = False
 
 
 def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword=None, entry_ids=None):
@@ -77,16 +88,17 @@ def _unlinked_settlement_stmt(store_ids, start, end, *, product_id=None, keyword
         SettlementEntryAllocation.settlement_entry_id == SettlementEntry.id,
         SettlementEntryAllocation.sale_id.is_not(None),
     ))
-    occurred = func.coalesce(SettlementEntry.settlement_date, SettlementEntry.order_created_at,
-                             SettlementEntry.imported_at)
+    occurred = settlement_accounting_date_expression()
+    income_only = income_only_entry_condition()
     owner = func.coalesce(SettlementEntry.store_id, SalesImportBatch.store_id, User.store_id)
-    stmt = (select(SettlementEntry, owner.label("financial_store_id"))
+    stmt = (select(SettlementEntry, owner.label("financial_store_id"), income_only.label("income_only"))
             .outerjoin(SalesImportBatch, SalesImportBatch.id == SettlementEntry.import_batch_id)
             .outerjoin(User, User.id == SalesImportBatch.user_id)
             .where(SettlementEntry.sale_id.is_(None), ~linked_sale,
                    or_(func.coalesce(SettlementEntry.transaction_type, "订单") != "订单",
                        SettlementEntry.quantity <= 0, SettlementEntry.net_product_sales < 0,
                        SettlementEntry.raw_data[SETTLEMENT_ONLY_KEY].as_string().in_(SETTLEMENT_ONLY_REASONS),
+                       income_only,
                        SalesImportBatch.file_type == "manual_settlement")))
     if store_ids is not None:
         stmt = stmt.where(owner.in_(store_ids))
@@ -122,14 +134,14 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
     stmt = _unlinked_settlement_stmt(store_ids, start, end, product_id=product_id, keyword=keyword, entry_ids=entry_ids)
     rows = (await db.execute(stmt)).all()
     result = []
-    for entry, store_id in rows:
+    for entry, store_id, income_only in rows:
         raw_data = entry.raw_data or {}
         manual = bool(raw_data.get("_manual_settlement"))
         rate = valid_rate(entry.currency, entry.exchange_rate_to_cny)
         net, expense = settlement_amounts(entry.net_product_sales or ZERO,
             entry.settlement_total or ZERO, entry.transaction_type)
         result.append(FinancialEvent(
-            entry.id, store_id, entry.settlement_date or entry.order_created_at or entry.imported_at,
+            entry.id, store_id, settlement_accounting_date(entry),
             net * rate if rate is not None else None,
             expense * rate if rate is not None else None,
             entry.settlement_total or ZERO, entry.currency or "",
@@ -142,6 +154,7 @@ async def unlinked_settlement_events(db, store_ids, start, end, *, product_id=No
             display_product_name=(entry.product_name or "") if manual else str(raw_data.get("产品名") or "").strip(),
             source_row_net_product_sales=entry.net_product_sales,
             source_specification=entry.sku_name,
+            income_only=bool(income_only),
         ))
     return result
 

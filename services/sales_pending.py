@@ -10,7 +10,8 @@ from sqlalchemy import case, or_, select
 from models import Product, Sale, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, Store, StoreProduct
 from schemas import PendingComponent
 from services.financial_facts import COMPENSATION_TYPES, SETTLEMENT_ONLY_KEY, SETTLEMENT_ONLY_REASONS
-from services.sales_classification import NON_INVENTORY, non_inventory_skus
+from services.sales_classification import (NON_INVENTORY, INCOME_ONLY_GIFT, non_inventory_skus,
+    is_income_only_order, FINANCIAL_CLASSIFICATION_KEY, gift_stock_retry_condition)
 from services import sales_mapping, sales_preview
 
 MAX_RETRY_ROWS = 200
@@ -53,7 +54,8 @@ def visible_conditions(user):
 
 
 def pending_conditions(user, reason=None, keyword=None):
-    conditions = [*visible_conditions(user), SettlementEntry.mapping_status == "pending_confirmation"]
+    conditions = [*visible_conditions(user), or_(SettlementEntry.mapping_status == "pending_confirmation",
+                                                gift_stock_retry_condition())]
     if reason:
         conditions.append(reason_expression() == reason)
     if keyword and keyword.strip():
@@ -131,13 +133,19 @@ async def retry_pending(db, user, data, *, preview=False):
     store_ids = {entry.store_id for entry in entries if entry.store_id is not None}
     mappings = await sales_mapping.load_mappings(db, store_ids, locked=not preview)
     non_stock_skus = await non_inventory_skus(db, store_ids)
-    active_stores = ({store.id for store in locked_stores if store.is_active} if not preview else
-        set((await db.execute(select(Store.id).where(Store.id.in_(store_ids), Store.is_active.is_(True)))).scalars().all()))
+    stores = {store.id: store for store in (locked_stores if not preview else
+        (await db.execute(select(Store).where(Store.id.in_(store_ids)))).scalars().all())}
+    active_stores = {key for key, store in stores.items() if store.is_active}
     store_products = (await db.execute(select(StoreProduct).where(StoreProduct.is_active.is_(True)))).scalars().all() if any(
         header.file_type == "legacy_csv" for header in headers.values()) else []
     candidates, results = [], []
     for entry in sorted(entries, key=lambda e: (e.import_batch_id or 0, e.source_row_number, e.id)):
-        if entry.mapping_status != "pending_confirmation":
+        income_only = entry.transaction_type == "订单" and is_income_only_order(
+            stores.get(entry.store_id), entry.order_id, entry.platform_sku_id, entry.order_created_at)
+        legacy_gift = (income_only and entry.quantity > 0 and entry.net_product_sales >= 0
+            and (entry.raw_data or {}).get(SETTLEMENT_ONLY_KEY) == INCOME_ONLY_GIFT
+            and entry.sale_id is None and entry.id not in linked)
+        if entry.mapping_status != "pending_confirmation" and not legacy_gift:
             results.append(dict(id=entry.id, status="skipped", message="记录已处理，未重复出库。"))
             continue
         header = headers.get(entry.import_batch_id)
@@ -160,7 +168,7 @@ async def retry_pending(db, user, data, *, preview=False):
                     settlement_only = row.get(SETTLEMENT_ONLY_KEY) if row.get(SETTLEMENT_ONLY_KEY) in SETTLEMENT_ONLY_REASONS else None
                     if not settlement_only and (entry.transaction_type or "订单") == "订单":
                         settlement_only = _order_settlement_only_reason(row, entry.net_product_sales, entry.settlement_total,
-                            non_inventory=(entry.store_id, entry.platform_sku_id) in non_stock_skus)
+                            non_inventory=not income_only and (entry.store_id, entry.platform_sku_id) in non_stock_skus)
                     is_inventory = (entry.transaction_type or "订单") == "订单" and entry.quantity > 0 and entry.net_product_sales >= 0 and not settlement_only
                 else:
                     is_inventory = True
@@ -209,7 +217,7 @@ async def retry_pending(db, user, data, *, preview=False):
         candidates.append(dict(entry=entry, row=row, components=components, quantity=entry.quantity,
             sold_at=sold_at, order_no=order_no, net_product_sales=entry.net_product_sales,
             other_expense=entry.net_product_sales-entry.settlement_total, is_inventory_sale=is_inventory and not error,
-            mapping_error=error, settlement_only_reason=settlement_only,
+            mapping_error=error, settlement_only_reason=settlement_only, income_only=income_only,
             resolution=resolution,
             manual=manual if data.components is not None and not error else None))
     orders = Counter(c["order_no"] for c in candidates if c["is_inventory_sale"])
@@ -271,6 +279,10 @@ async def retry_pending(db, user, data, *, preview=False):
             raw["_pending_resolution_history"] = [*(raw.get("_pending_resolution_history") or []), audit]
         if candidate["settlement_only_reason"]:
             raw[SETTLEMENT_ONLY_KEY] = candidate["settlement_only_reason"]
+        elif raw.get(SETTLEMENT_ONLY_KEY) == INCOME_ONLY_GIFT:
+            raw.pop(SETTLEMENT_ONLY_KEY)
+        if candidate["income_only"]:
+            raw[FINANCIAL_CLASSIFICATION_KEY] = INCOME_ONLY_GIFT
         entry.raw_data = raw
         entry.mapping_error = error[:500] if error else None
         entry.mapping_status = "pending_confirmation" if error else "confirmed"

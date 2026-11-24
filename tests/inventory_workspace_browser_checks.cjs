@@ -464,7 +464,7 @@ async function main() {
         let productProfitRows=[],productProfitStatus=200;const productProfitQueries=[];
         let profitLossFixture = null, profitLossStatus = 200;
         let salesRows = [];
-        let calculationGate=null,calculationStatus=200,calculationMissingOrderDate=false;
+        let calculationGate=null,calculationStatus=200,calculationMissingOrderDate=false,calculationGift=false;
         let fieldHelpStatus=200;
         let pendingStatus=200;
         const manualSettlementCalls=[];let manualStatus=200;
@@ -553,6 +553,17 @@ async function main() {
                 const status=calculationStatus;
                 if(calculationGate){const held=calculationGate;calculationGate=null;await held.promise;}
                 if(status!==200)return route.fulfill({status,contentType:'application/json',body:JSON.stringify({detail:{code:'sale_cost_not_found',message:'读取失败测试'}})});
+                if(calculationGift){
+                    const sale={...salesRows[0],income_only:true,quantity:2,total_cost:0,order_total_cost_cny:0,
+                        purchase_cost_cny:0,head_shipping_cost_cny:0,last_mile_cost_cny:0,other_cost_cny:0,impairment_cny:0,
+                        selling_price_cny:null,unit_total_cost_cny:null,unit_purchase_cost_cny:null,
+                        unit_head_shipping_cost_cny:null,unit_last_mile_cost_cny:null,unit_other_cost_cny:null};
+                    return fulfill({sale,sku:'GIFT',product_name:'实物赠品',quantity_basis:'inventory_units',
+                        cost_batches:[{batch_id:1,batch_no:'GIFT-BATCH',quantity:2,unit_cost:0,total_cost_cny:0,
+                            purchase_cost_cny:0,head_shipping_cost_cny:0,last_mile_cost_cny:0,other_cost_cny:0}],
+                        impairment_batches:[],order_lines:[sale],
+                        order_summary:{order_no:sale.order_no,line_count:1,complete:true,total_cost_cny:0,impairment_cny:0}});
+                }
                 const missingDate=calculationMissingOrderDate;
                 const sale={...salesRows[0],display_sku:'CW0001',display_name:'狗狗咀嚼玩具',...(missingDate?{impairment_cny:null,impairment_review_reason:'订单创建日期缺失，不能使用结算日期计算出库跌价'}:{})};
                 return fulfill({sale,sku:'CW0001',product_name:'狗狗咀嚼玩具',quantity_basis:'inventory_units',
@@ -1350,6 +1361,21 @@ async function main() {
             if(process.env.INVENTORY_QA_DIR&&suffix==='/')await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,'sales-cost-calculation-mobile.png'),fullPage:true});
             await page.locator('[data-sales-calc-close]').click();
             await page.setViewportSize({width:1440,height:1000});
+            // 赠品计算明细保留扣库批次和数量，免成本、不展示单价或跌价计算式。
+            calculationGift=true;
+            await firstSale.locator('[data-sale-calculation]').click();
+            await page.locator('#sales-calc-body .sales-order-totals').waitFor();
+            const giftBatches=page.locator('.sales-calculation-section').filter({has:page.locator('#sales-calc-batches')});
+            check(await giftBatches.locator('thead th').count(),2);
+            check(await giftBatches.locator('tbody tr').first().innerText(),'GIFT-BATCH\t2');
+            await page.locator('#sales-calc-row .help-tip-trigger').hover();
+            const giftTip=page.locator('[data-help-anchor="#sales-calc-row"]');
+            check(await giftTip.isVisible(),true);
+            check(await giftTip.innerText().then(v=>v.includes('按真实数量扣减库存')&&v.includes('不计算单价')),true);
+            await page.keyboard.press('Escape');
+            check(await page.locator('#sales-calc-body').innerText().then(v=>v.includes('÷')||v.includes('元/件')),false);
+            check(await page.locator('.sales-calculation-section').filter({has:page.locator('#sales-calc-impairment')}).locator('strong').innerText(),'¥0.00');
+            await page.locator('[data-sales-calc-close]').click();calculationGift=false;
             // 产品名与库存共用联想；选择只填名称，平台SKU及独立补录口径保持不变。
             const productInput=page.locator('#s-product-name'),productOptions=page.locator('#s-product-name-options [role="option"]');
             await page.locator('#s-sku').fill('00123456789012345678');
