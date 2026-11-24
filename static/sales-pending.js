@@ -240,8 +240,9 @@
         node('pending-name-unique-label').hidden=item?.mapping_identity?.kind!=='product_name';
         if(item)parts=(item.confirmed_components || []).map(part=>{
             const product=(typeof allProducts!=='undefined'?allProducts.find(product=>product.id===part.product_id):null) || {};
+            // 接口明确返回空规格时不能被旧商品缓存覆盖。
             return {...part,name:[part.sku || product.sku,part.name || product.name].filter(Boolean).join(' · ') || `#${part.product_id}`,
-                specification:part.specification ?? product.specification};
+                specification:part.specification === undefined ? product.specification : part.specification};
         });
         renderParts();dialog.showModal();node(item?'pending-product':'pending-cancel').focus();
     }

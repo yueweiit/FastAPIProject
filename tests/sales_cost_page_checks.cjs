@@ -36,6 +36,14 @@ async function main(){
   await c.loadSales();
   check(body('local_product'),['PINK · 同名商品']);check(body('local_specification'),['&lt;粉色&gt;']);check(body('source_specification'),['Rosa']);
   check(total('local_specification'),'');check(total('source_specification'),'');
+  // 模拟另一个标签页改动规格：商品缓存仍是旧值，销售接口返回最新值。
+  vm.runInContext('allProducts=[{id:1,sku:"SKU",name:"商品",specification:"<缓存旧规格>"}];',c);
+  for(const [specification,expected] of [[null,''],['',''],['<最新规格>','&lt;最新规格&gt;']]){
+   rows=[{...sale,local_specification:specification}];await c.loadSales();check(body('local_specification'),[expected]);
+  }
+  // 旧接口完全缺少字段时仍兼容商品缓存。
+  rows=[sale];await c.loadSales();check(body('local_specification'),['&lt;缓存旧规格&gt;']);
+  vm.runInContext('allProducts=[];',c);
   rows=[{...sale,local_specification:null}];await c.loadSales();check(body('local_specification'),['']);
   rows=[{...sale,product_id:null,local_specification:null}];await c.loadSales();check(body('local_specification'),['-']);
   rows=[{...sale,currency:'MXN',source_row_net_product_sales:'84.9000',source_row_settlement_total:'58.7300',

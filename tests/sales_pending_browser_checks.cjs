@@ -83,6 +83,23 @@ async function main(){
             await page.waitForFunction(()=>CURRENT_USER_ID===1);await page.getByRole('button',{name:'销售记录',exact:true}).click();
             const ready=()=>page.waitForFunction(()=>document.getElementById('pending-confirmations-summary').textContent.includes('当前筛选共'));
             await ready();
+            // 当前页保留商品缓存；刷新后的待确认组件必须尊重接口明确返回的空规格。
+            check(await page.evaluate(()=>allProducts.find(product=>product.id===1).specification),products[0].specification);
+            const pendingEntry=entries.find(item=>item.id===2),retryBeforeSpecs=retryCalls.length,mappingBeforeSpecs=mappingCalls.length;
+            for(const [specification,expected] of [[null,''],['',''],[undefined,products[0].specification],['<最新规格>','<最新规格>']]){
+                pendingEntry.confirmed_components=[{product_id:1,sku:products[0].sku,name:products[0].name,multiplier:2,
+                    ...(specification===undefined?{}:{specification})}];
+                await page.locator('#pending-refresh').click();await ready();
+                await page.locator('[data-pending-row-action="resolve"][data-pending-id="2"]').click();
+                const shownSpecs=(await page.locator('#pending-components p').allTextContents()).map(text=>text.replace(/^本地商品规格\/型号：/,'')).filter(Boolean);
+                check(shownSpecs,expected?[expected]:[]);
+                check(await page.locator('#pending-components').textContent().then(text=>text.includes(products[0].sku)&&text.includes(products[0].name)),true);
+                check(await page.locator('[data-part-index="0"]').inputValue(),'2');
+                await page.locator('#pending-cancel').click();
+            }
+            check(retryCalls.length,retryBeforeSpecs);check(mappingCalls.length,mappingBeforeSpecs);
+            pendingEntry.confirmed_components=[];
+            await page.locator('#pending-refresh').click();await ready();
             check(await page.locator('#pending-confirmations-tbody tr').count(),4);
             check(await page.locator('#pending-reason option').count(),9);
             check(await page.locator('#pending-confirmations-tbody 商品').count(),0);

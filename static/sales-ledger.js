@@ -225,7 +225,11 @@
         if (meta.key === 'sku') return row.display_sku || product.sku || '-';
         if (meta.key === 'product_name') return row.display_name || product.name || '-';
         if (meta.key === 'local_product') return [row.local_sku ?? product.sku,row.local_product_name ?? product.name].filter(Boolean).join(' · ') || '-';
-        if (meta.key === 'local_specification') return (row.local_specification ?? product.specification) || (row.product_id != null?'':'-');
+        if (meta.key === 'local_specification') {
+            // null/空串表示当前无规格；只有旧接口缺字段时才兼容商品缓存。
+            const specification = row.local_specification === undefined ? product.specification : row.local_specification;
+            return specification || (row.product_id != null?'':'-');
+        }
         if (meta.key === 'store_name') return row.store_name || t('unknownStore');
         if (meta.kind === 'date') return row[meta.key]?.slice(0,10) || '-';
         if (meta.key === 'order_total_cost_cny') return totalCost(row);
