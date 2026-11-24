@@ -453,7 +453,7 @@ def _resolve_product_components(
     *, strict_names: bool = False,
 ) -> tuple[list[dict] | None, str | None]:
     """Resolve a platform product expression into local products and multipliers."""
-    product_name = _text_value(_source_value(row, "产品名", "商品名称"))
+    product_name = _text_value(row.get("产品名")) or _text_value(row.get("商品名称"))
     if not product_name:
         if strict_names:
             return None, "产品名为空，请填写本地商品名称或名称组合（例如商品A*2+商品B）"

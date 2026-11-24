@@ -100,6 +100,15 @@ async function main(){
             check(retryCalls.length,retryBeforeSpecs);check(mappingCalls.length,mappingBeforeSpecs);
             pendingEntry.confirmed_components=[];
             await page.locator('#pending-refresh').click();await ready();
+            await page.evaluate(()=>{
+                window.previewChoice=SalesDeductionPreview.confirm({preview_token:'recognition-preview',rows:
+                    ['local_sku','product_name'].map((method,index)=>({row:index+2,order_no:`MATCH-${index}`,source_sku:index?'':'SKU*2',
+                        product_name:'本地商品',source_quantity:1,status:'deduct',resolution:{method},
+                        components:[{sku:'SKU',name:'本地商品',specification:'粉色',multiplier:2,required_quantity:2,available_quantity:10,deduct_quantity:2}]}))});
+            });
+            check(await page.locator('#sales-deduction-rows tr').evaluateAll(rows=>rows.map(row=>row.cells[4].textContent)),['本地 SKU 编码','产品名唯一匹配']);
+            await page.locator('#sales-deduction-cancel').click();
+            check(await page.evaluate(()=>window.previewChoice),null);
             check(await page.locator('#pending-confirmations-tbody tr').count(),4);
             check(await page.locator('#pending-reason option').count(),9);
             check(await page.locator('#pending-confirmations-tbody 商品').count(),0);

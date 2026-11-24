@@ -17,7 +17,7 @@ from services import sales_mapping, sales_preview
 MAX_RETRY_ROWS = 200
 REASON_PATTERNS = (
     ("stock_shortage", ("销售日可用库存不足%", "截至销售日可用库存不足%", "库存不足%")),
-    ("product_ambiguous", ("%匹配到多个本地商品%", "%映射到多个本地商品%")),
+    ("product_ambiguous", ("%匹配到多个本地商品%", "%映射到多个本地商品%", "商品编码或规格冲突%")),
     ("expression_invalid", ("产品名为空%", "商品名称组合格式无效%", "商品数量必须大于%")),
     ("product_missing", ("未找到本地商品映射%", "未配置平台 SKU ID 映射%")),
     ("mapping_invalid", ("平台 SKU 映射在%", "平台 SKU ID 未配置商品组件%", "商品映射失败%", "历史映射配置无效%")),

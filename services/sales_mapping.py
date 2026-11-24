@@ -11,7 +11,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from models import Sale, SalesProductMapping, SalesProductMappingComponent, SettlementEntry, SettlementEntryAllocation, Store
 from services.sales_product_identity import source_local_specification
 
-LOCAL_SKU_HEADERS = ("本地SKU", "本地 SKU", "本地商品SKU", "本地商品 SKU")
+LOCAL_SKU_HEADERS = ("本地SKU", "本地 SKU", "本地商品SKU", "本地商品 SKU", "SKU")
 MERCHANT_SKU_HEADERS = ("商家SKU", "商家 SKU", "商家编码", "Seller SKU", "Seller sku")
 
 
@@ -180,7 +180,7 @@ def precision_error(row):
 
 
 def resolve(row, products, mappings, store_id, on):
-    """名称只使用确认过的别名；未知编码不回退名称或旧全局映射。"""
+    """文件本地编码优先；无本地编码时兼容已确认店铺规则或唯一名称，不要求新建映射。"""
     if error := precision_error(row):
         return [], error, None
     local = first(row, LOCAL_SKU_HEADERS)
@@ -188,11 +188,14 @@ def resolve(row, products, mappings, store_id, on):
     if local:
         direct = local_components(local, products)
         if not direct:
-            return [], "未找到本地商品映射: 本地SKU不存在或不唯一", None
-    key = source_identity(row)
-    keys = [key] if key and key["kind"] != "local_sku" else []
+            return [], "未找到本地商品映射: SKU/本地SKU不存在、不唯一或组合倍数无效，请核对编码", None
     merchant = first(row, MERCHANT_SKU_HEADERS)
-    if merchant and (not key or key["kind"] != "merchant_sku"):
+    if not local and merchant:
+        direct = local_components(merchant, products)
+    key = source_identity(row)
+    # 明确的本地编码决定商品和倍数，旧店铺映射不覆盖文件编码。
+    keys = [key] if not direct and key and key["kind"] != "local_sku" else []
+    if not direct and merchant and (not key or key["kind"] != "merchant_sku"):
         keys.append(identity("merchant_sku", merchant))
     found = []
     for current in keys:
@@ -214,18 +217,20 @@ def resolve(row, products, mappings, store_id, on):
     if len({tuple(signature(p)) for p in choices}) > 1:
         return [], "平台 SKU 映射到多个本地商品: 文件编码与已确认映射冲突", None
     if not choices:
+        if merchant:
+            return [], "未找到本地商品映射: 商家编码无法匹配本地SKU或已确认店铺映射，请核对编码", None
         from routers.sales import _resolve_product_components
-        suggested, error = _resolve_product_components(row, products, [], on, strict_names=True)
+        parts, error = _resolve_product_components(row, products, [], on, strict_names=True)
         if error:
             return [], error, None
-        codes = "、".join(f"{p['product'].sku} × {p['multiplier']}" for p in suggested)
-        return [], f"未配置平台 SKU ID 映射: {key['value'] if key else '-'}；名称候选为 {codes}，请确认商品及每份扣库数量", None
-    parts = choices[0]
+    else:
+        parts = choices[0]
     spec = source_local_specification(row)
     if spec and (len(parts) != 1 or normalized("product_name", parts[0]["product"].specification) != normalized("product_name", spec)):
-        return [], "平台 SKU 映射到多个本地商品: 指定规格与已确认商品冲突，请核对", None
+        return [], "商品编码或规格冲突: 指定规格与识别商品不一致，请核对", None
     mapping = found[0][1] if found else None
-    resolved = snapshot(parts, "store_mapping" if mapping else "local_sku", mapping.id if mapping else None)
+    resolved = snapshot(parts, "store_mapping" if mapping else "local_sku" if direct else "product_name",
+                        mapping.id if mapping else None)
     if mapping:
         resolved["source_unit"] = mapping.source_unit
     return parts, None, resolved

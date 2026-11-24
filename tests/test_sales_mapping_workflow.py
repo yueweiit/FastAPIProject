@@ -40,12 +40,142 @@ class SalesMappingWorkflowTests(unittest.IsolatedAsyncioTestCase):
             remaining_quantity=10, purchase_price=10, unit_cost=10, arrived_at=datetime(2026, 1, 1)))
         self.session.commit()
 
-    async def test_unknown_code_does_not_guess_by_unique_name_or_old_global_mapping(self):
-        result = await self.upload([{'sku': 'PLAT', 'name': '商品', 'quantity': 1}])
+    async def test_missing_local_code_uses_unique_name_without_platform_mapping(self):
+        result = await self.upload([{'sku': 'PLAT', 'name': '商品*3', 'quantity': 1}])
         self.assertEqual(result.status_code, 200, result.text)
-        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (0, 1))
-        self.assertEqual(self.session.scalars(select(Sale)).all(), [])
+        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (1, 0))
+        self.assertEqual(self.session.scalar(select(Sale)).quantity, 3)  # 旧全局PLAT映射的倍数为1，不采用。
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 7)
+        self.assertEqual(self.session.scalar(select(SettlementEntry)).raw_data['_product_resolution']['method'], 'product_name')
+
+    async def test_sku_column_has_priority_over_name_and_existing_platform_mapping(self):
+        self.second_product()
+        self.session.get(Product, 1).sku = 'CW000007'
+        self.session.commit()
+        await self.mapping(parts=[{'product_id': 2, 'multiplier': 1}])
+        rows = [{'sku': 'EXT', 'SKU': 'CW000007*2', 'name': '另一个名称*5', 'quantity': 3}]
+        preview = await self.upload(rows, headers=('SKU',), preview=True)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        plan = preview.json()
+        component, = plan['rows'][0]['components']
+        self.assertEqual((component['sku'], component['multiplier'], component['deduct_quantity']), ('CW000007', 2, 6))
+        self.assertEqual(plan['rows'][0]['resolution']['method'], 'local_sku')
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 10)
+        applied = await self.upload(rows, headers=('SKU',), token=plan['preview_token'])
+        self.assertEqual(applied.status_code, 200, applied.text)
+        self.assertEqual((applied.json()['sales_created'], applied.json()['pending_confirmation']), (1, 0))
+        self.assertEqual(self.session.scalar(select(Sale)).quantity, 6)
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 4)
+        self.assertEqual(self.session.get(InventoryBatch, 4).remaining_quantity, 10)
+
+    async def test_xlsx_bd_name_be_sku_uses_code_components_and_multipliers(self):
+        self.second_product()
+        self.session.get(Product, 1).sku = 'CW000007'
+        self.session.get(Product, 2).sku = 'CW000092'
+        self.session.commit()
+        headers = ['结算日期', '结算单 ID', '付款 ID', '状态', '货币', '交易类型', '订单ID/调整单ID',
+                   'SKU ID', '数量', '订单创建日期', '净商品销售额', '结算总金额']
+        headers += [None] * (55 - len(headers)) + ['产品名', 'SKU']
+        values = {'结算日期': '2026-10-02', '结算单 ID': 'BILL', '付款 ID': 'PAY', '状态': '已结算',
+            '货币': 'CNY', '交易类型': '订单', '订单ID/调整单ID': 'EXCEL-CODES', 'SKU ID': 'PLATFORM-UNMAPPED',
+            '数量': 2, '订单创建日期': '2026-09-03', '净商品销售额': 200, '结算总金额': 180,
+            '产品名': '不用按这个名称扣库', 'SKU': 'CW000007*2+CW000092'}
+        book = Workbook(); book.active.title = '订单详情'
+        book.active.append(headers); book.active.append([values.get(h) for h in headers])
+        output = io.BytesIO(); book.save(output)
+        files = {'file': ('codes.xlsx', output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
+        preview = await self.request('POST', '/sales/import-preview', data={'store_id': '7'}, files=files)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertEqual([(p['sku'], p['deduct_quantity']) for p in preview.json()['rows'][0]['components']],
+                         [('CW000007', 4), ('CW000092', 2)])
+        result = await self.request('POST', '/sales/import', data={'store_id': '7',
+            'preview_token': preview.json()['preview_token']}, files=files)
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual([(s.product_id, s.quantity) for s in self.session.scalars(select(Sale).order_by(Sale.product_id))], [(1, 4), (2, 2)])
+
+    async def test_blank_sku_uses_name_but_invalid_sku_does_not_fall_back(self):
+        valid = await self.upload([{'SKU': ' ', 'name': '商品*2+商品', 'quantity': 1}], headers=('SKU',))
+        self.assertEqual(valid.json()['sales_created'], 1)
+        self.assertEqual(self.session.scalar(select(Sale)).quantity, 3)
+        for index, code in enumerate(('MISSING', 'SKU*0', 'SKU*2+MISSING', 'SKU*2.5')):
+            with self.subTest(code=code):
+                result = await self.upload([{'order': f'BAD-{index}', 'SKU': code, 'name': '商品', 'quantity': 1}], headers=('SKU',))
+                self.assertEqual(result.status_code, 200, result.text)
+                self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (0, 1))
+        self.assertEqual(len(self.session.scalars(select(Sale)).all()), 1)
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 7)
+
+    async def test_sku_and_name_pending_retry_reuses_original_source_and_deducts_once(self):
+        result = await self.upload([{'SKU': 'LATER*2', 'name': '商品', 'quantity': 2},
+            {'SKU': '', 'name': '后来建档的商品', 'quantity': 1}], headers=('SKU',))
+        self.assertEqual(result.json()['pending_confirmation'], 2)
+        entries = self.session.scalars(select(SettlementEntry).order_by(SettlementEntry.id)).all()
+        source_keys = [e.source_key for e in entries]
+        self.second_product()
+        product = self.session.get(Product, 2)
+        product.sku, product.name = 'LATER', '后来建档的商品'
+        self.session.commit()
+        payload = {'entry_ids': [e.id for e in entries]}
+        preview = await self.request('POST', '/sales/pending-confirmations/preview', json=payload)
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertEqual([r['resolution']['method'] for r in preview.json()['rows']], ['local_sku', 'product_name'])
+        applied = await self.request('POST', '/sales/pending-confirmations/retry', json={
+            **payload, 'preview_token': preview.json()['preview_token']})
+        self.assertEqual((applied.json()['sales_created'], applied.json()['pending_rows']), (2, 0))
+        self.assertEqual(self.session.get(InventoryBatch, 4).remaining_quantity, 5)
+        self.assertEqual([e.source_key for e in entries], source_keys)
+        again = await self.request('POST', '/sales/pending-confirmations/retry', json=payload)
+        self.assertEqual((again.json()['sales_created'], again.json()['skipped_rows']), (0, 2))
+        self.assertEqual(self.session.get(InventoryBatch, 4).remaining_quantity, 5)
+
+    async def test_blank_product_name_uses_original_name_without_local_code(self):
+        result = await self.upload([{'SKU': '', 'name': ' ', 'original': '商品*2', 'quantity': 1}], headers=('SKU',))
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (1, 0))
+        self.assertEqual(self.session.scalar(select(Sale)).quantity, 2)
+        entry = self.session.scalar(select(SettlementEntry))
+        self.assertEqual(entry.raw_data['商品名称'], '商品*2')
+        self.assertEqual(entry.raw_data['_product_resolution']['method'], 'product_name')
+
+    async def test_ambiguous_name_stays_pending_but_explicit_sku_selects_one_product(self):
+        self.second_product()
+        result = await self.upload([
+            {'order': 'NAME-AMBIGUOUS', 'SKU': '', 'name': '商品', 'quantity': 1},
+            {'order': 'CODE-UNIQUE', 'SKU': 'SECOND*2', 'name': '商品', 'quantity': 1}], headers=('SKU',))
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (1, 1))
+        sale = self.session.scalar(select(Sale))
+        self.assertEqual((sale.product_id, sale.quantity), (2, 2))
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 10)
+        self.assertEqual(self.session.get(InventoryBatch, 4).remaining_quantity, 8)
+
+    async def test_merchant_code_matches_local_sku_or_stays_pending_without_name_fallback(self):
+        result = await self.upload([
+            {'order': 'MERCHANT-LOCAL', '商家SKU': 'SKU*2', 'name': '不同名称', 'quantity': 1},
+            {'order': 'MERCHANT-UNKNOWN', '商家SKU': 'UNKNOWN', 'name': '商品', 'quantity': 1}], headers=('商家SKU',))
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (1, 1))
+        self.assertEqual(self.session.scalar(select(Sale)).quantity, 2)
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 8)
+
+    async def test_sku_column_expression_aliases_keep_historical_deduplication(self):
+        from routers.sales import _source_key
+        row = {'sku': '', 'SKU': 'SKU*2', 'name': '商品*2', 'order': 'CODE-REPLAY', 'quantity': 1}
+        self.assertEqual((await self.upload([row], headers=('SKU',))).json()['sales_created'], 1)
+        entry = self.session.scalar(select(SettlementEntry))
+        sale = self.session.scalar(select(Sale))
+        # 旧版忽略SKU列、按名称保存占位；不回填或重写旧凭据。
+        entry.source_key = _source_key({key: value for key, value in entry.raw_data.items() if key != 'SKU'}, 'order_detail')
+        sale.order_no = sale.order_claim = row['order']
+        self.session.commit()
+        before = (entry.source_key, sale.order_no, sale.total_cost)
+        for source in ({**row, 'SKU': 'SKU + SKU'}, {**row, 'SKU': '', '本地SKU': 'SKU*2'}):
+            repeat = await self.upload([source], headers=('SKU', '本地SKU'))
+            self.assertEqual(repeat.status_code, 200, repeat.text)
+            self.assertEqual(repeat.json()['skipped_duplicates'], 1)
+        self.assertEqual((entry.source_key, sale.order_no, sale.total_cost), before)
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 8)
+        self.assertEqual(len(self.session.scalars(select(SaleCostDetail)).all()), 1)
 
     async def test_confirmed_code_bundle_ignores_name_and_deducts_once(self):
         self.second_product()
@@ -146,7 +276,7 @@ class SalesMappingWorkflowTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mapping_is_store_scoped_and_cannot_be_written_by_viewer_or_other_store(self):
         self.assertEqual((await self.mapping()).status_code, 201)
-        result = await self.upload([{'sku': 'EXT', 'name': '商品', 'quantity': 1}], store=8)
+        result = await self.upload([{'sku': 'EXT', 'name': '仅店铺7已确认的外部名称', 'quantity': 1}], store=8)
         self.assertEqual(result.json()['pending_confirmation'], 1)
         self.actor = SimpleNamespace(id=2, username='operator', role='operator', store_id=7)
         self.assertEqual((await self.mapping(store=8)).status_code, 403)
@@ -173,14 +303,14 @@ class SalesMappingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (1, 1))
         self.assertEqual(len(self.session.scalars(select(SettlementEntry)).all()), 2)
 
-    async def test_local_sku_is_exact_and_explicit_spec_or_mapping_conflict_stops_deduction(self):
+    async def test_local_sku_overrides_mapping_but_explicit_spec_conflict_stops_deduction(self):
         self.second_product()
         await self.mapping()
         result = await self.upload([{'sku': 'UNKNOWN', 'name': '改名', '本地SKU': 'SECOND', 'quantity': 1},
             {'sku': 'EXT', '本地SKU': 'SECOND', 'quantity': 1},
             {'sku': 'EXT', '规格/型号': '错误规格', 'quantity': 1}], headers=('本地SKU', '规格/型号'))
-        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (1, 2))
-        self.assertEqual(self.session.get(InventoryBatch, 4).remaining_quantity, 9)
+        self.assertEqual((result.json()['sales_created'], result.json()['pending_confirmation']), (2, 1))
+        self.assertEqual(self.session.get(InventoryBatch, 4).remaining_quantity, 8)
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 10)
 
     async def test_import_preview_only_reads_and_token_rejects_inventory_changes(self):
@@ -314,7 +444,7 @@ class SalesMappingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 10)
 
     async def test_audit_mapping_and_pending_deduction_are_atomic_with_correct_store(self):
-        await self.upload([{'sku': 'EXT', 'quantity': 1}])
+        await self.upload([{'sku': 'EXT', 'name': '待人工确认的名称', 'quantity': 1}])
         entry = self.session.scalar(select(SettlementEntry))
         body = {'entry_ids': [entry.id], 'components': [{'product_id': 1, 'multiplier': 2}],
                 'save_mapping': {'effective_from': '2026-01-01'}}
@@ -403,7 +533,7 @@ class SalesMappingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(s.quantity for s in self.session.scalars(select(Sale))), 2)
 
     async def test_same_file_in_other_store_is_not_silently_treated_as_already_imported(self):
-        rows = [{'sku': 'UNKNOWN', 'quantity': 1}]
+        rows = [{'sku': 'UNKNOWN', 'name': '未建档名称', 'quantity': 1}]
         self.assertEqual((await self.upload(rows)).json()['pending_confirmation'], 1)
         other = await self.upload(rows, store=8)
         self.assertEqual(other.status_code, 409, other.text)
@@ -417,8 +547,10 @@ class SalesMappingWorkflowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.json()['sales_created'], 1)
         repeat = await self.upload([{'sku': 'EXT', 'name': '商品', 'order': 'SAME', 'quantity': 1}])
         self.assertEqual(repeat.status_code, 400, repeat.text)
+        repeat = await self.upload([{'sku': 'UNKNOWN', 'name': '商品', 'order': 'SAME', 'quantity': 1}])
+        self.assertEqual(repeat.status_code, 400, repeat.text)
         # 未确认的改编码来源可保存，但后续人工确认也不能绕过整单防重。
-        pending = await self.upload([{'sku': 'UNKNOWN', 'name': '商品', 'order': 'SAME', 'quantity': 1}])
+        pending = await self.upload([{'sku': 'UNKNOWN', 'name': '无法匹配的名称', 'order': 'SAME', 'quantity': 1}])
         self.assertEqual(pending.json()['pending_confirmation'], 1)
         entry = self.session.scalars(select(SettlementEntry).order_by(SettlementEntry.id.desc())).first()
         result = await self.request('POST', '/sales/pending-confirmations/retry', json={
