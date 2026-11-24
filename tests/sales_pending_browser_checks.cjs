@@ -3,6 +3,9 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const {chromium}=require(process.env.INVENTORY_PLAYWRIGHT_MODULE || 'playwright');
 let checks=0;const check=(actual,expected)=>{assert.deepEqual(actual,expected);checks++;};
 const deferred=()=>{let resolve;return {promise:new Promise(done=>resolve=done),resolve};};
+const fullyInView=async locator=>(await locator.evaluate(node=>new Promise(resolve=>{
+    const observer=new IntersectionObserver(entries=>{resolve(entries[0].intersectionRatio);observer.disconnect();});observer.observe(node);
+})))>0.99;
 const products=[{id:1,sku:'SKU',name:'本地商品',specification:'粉色 / 厚度1.2丝',stock_quantity:10,stock_value:100,image:null,product_type:'stable',safe_stock_quantity:0},
     {id:2,sku:'SECOND',name:'本地商品',specification:'紫色 / 厚度1.2丝',stock_quantity:3,stock_value:60,image:null,product_type:'stable',safe_stock_quantity:0}];
 const seed=()=>[
@@ -23,7 +26,7 @@ async function main(){
     try{
         browser=await chromium.launch({headless:true,...(process.env.INVENTORY_BROWSER_CHANNEL?{channel:process.env.INVENTORY_BROWSER_CHANNEL}:{})});
         const page=await browser.newPage({viewport:{width:1440,height:1000}});let entries=seed(),role='admin',stockFixed=false,failRetry=false,gate=null,pendingStatus=200;
-        const retryCalls=[],exportCalls=[],mappingCalls=[],errors=[];page.on('pageerror',error=>{if(!errors.includes(error.message))process.stderr.write(error.stack+'\n');errors.push(error.message);});
+        const retryCalls=[],previewCalls=[],exportCalls=[],mappingCalls=[],errors=[];page.on('pageerror',error=>{if(!errors.includes(error.message))process.stderr.write(error.stack+'\n');errors.push(error.message);});
         await page.route('**/*',async route=>{
             const url=new URL(route.request().url());if(url.hostname!=='127.0.0.1')return route.abort();
             const json=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
@@ -53,6 +56,7 @@ async function main(){
             }
             if(url.pathname==='/sales/pending-confirmations/preview'){
                 const body=route.request().postDataJSON();
+                previewCalls.push(body);
                 const items=entries.filter(item=>body.entry_ids?body.entry_ids.includes(item.id):(!body.reason || item.reason_code===body.reason)&&(!body.keyword || `${item.order_id} ${item.product_name}`.includes(body.keyword)));
                 return json({preview_token:'browser-preview',rows:items.map(item=>({row:item.source_row_number,order_no:item.order_id,source_sku:item.platform_sku_id,
                     product_name:item.product_name,source_quantity:item.quantity,status:body.components?'deduct':'pending',reason:null,resolution:{method:'manual'},
@@ -109,6 +113,29 @@ async function main(){
             check(await page.locator('#sales-deduction-rows tr').evaluateAll(rows=>rows.map(row=>row.cells[4].textContent)),['本地 SKU 编码','产品名唯一匹配']);
             await page.locator('#sales-deduction-cancel').click();
             check(await page.evaluate(()=>window.previewChoice),null);
+            // 长编号、单条及长列表使用同一预览；只有表格滚动，确认按钮始终在视口内。
+            await page.evaluate(()=>{
+                const row={row:1415,order_no:'585892814667416675-1736252602595574914',source_sku:'1736252602595574914',
+                    product_name:'除毛手套*2',source_quantity:1,status:'deduct',resolution:{method:'manual'},
+                    components:[{sku:'CW000012',name:'双向除毛手套',multiplier:2,required_quantity:2,available_quantity:2507,deduct_quantity:2}]};
+                window.longPreviewRow=row;
+                window.previewChoice=SalesDeductionPreview.confirm({preview_token:'single-preview',rows:[row]});
+            });
+            const inside=()=>page.locator('#sales-deduction-preview').evaluate(node=>{
+                const box=node.getBoundingClientRect(),button=node.querySelector('#sales-deduction-confirm').getBoundingClientRect();
+                return box.top>=0&&box.bottom<=innerHeight&&box.left>=0&&box.right<=innerWidth&&button.bottom<=innerHeight&&button.width>=120&&button.height<=60;
+            });
+            check(await inside(),true);
+            if(process.env.INVENTORY_QA_DIR){fs.mkdirSync(process.env.INVENTORY_QA_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`deduction-${suffix==='/'?'template':'copy'}-single.png`)});}
+            await page.keyboard.press('Escape');check(await page.evaluate(()=>window.previewChoice),null);
+            await page.evaluate(()=>{window.previewChoice=SalesDeductionPreview.confirm({preview_token:'long-preview',rows:Array.from({length:40},(_,index)=>({
+                ...window.longPreviewRow,row:index+2,status:index%2?'pending':'settlement',reason:index%2?'<b>待确认原因</b>':null,
+                components:window.longPreviewRow.components.map(part=>({...part,deduct_quantity:0}))}))});});
+            check(await page.locator('#sales-deduction-rows b').count(),0);
+            check(await page.locator('.sales-deduction-scroll').evaluate(node=>node.scrollHeight>node.clientHeight),true);
+            await page.locator('.sales-deduction-scroll').evaluate(node=>{node.scrollTop=node.scrollHeight;});
+            check(await inside(),true);
+            await page.keyboard.press('Escape');check(await page.evaluate(()=>window.previewChoice),null);
             check(await page.locator('#pending-confirmations-tbody tr').count(),4);
             check(await page.locator('#pending-reason option').count(),9);
             check(await page.locator('#pending-confirmations-tbody 商品').count(),0);
@@ -140,8 +167,11 @@ async function main(){
             await page.locator('[data-pending-row-action="retry"]').click();await page.locator('#pending-cancel').click();
             check(retryCalls.length,beforeCancel);
             await page.locator('[data-pending-row-action="retry"]').click();await page.locator('#pending-submit').click();
+            await page.locator('#sales-deduction-preview').waitFor();
+            check(await page.locator('dialog[open]').evaluateAll(nodes=>nodes.map(node=>node.id)),['sales-deduction-preview']);
             await page.locator('#sales-deduction-cancel').click();
             check(retryCalls.length,beforeCancel);check(await page.locator('#pending-submit').isEnabled(),true);
+            check(await page.locator('dialog[open]').evaluateAll(nodes=>nodes.map(node=>node.id)),['pending-retry-dialog']);
             await page.locator('#pending-cancel').click();
             await page.locator('[data-pending-row-action="retry"]').click();await page.locator('#pending-submit').click();await page.locator('#sales-deduction-confirm').click();
             await page.locator('#pending-result').filter({hasText:'仍待确认 1 条'}).waitFor();
@@ -156,7 +186,13 @@ async function main(){
             check(await page.locator('#pending-dialog-info').textContent().then(value=>value.includes('来源规格（SKU 名称）：来源SKU')),true);
             check(await page.locator('#pending-dialog-info').textContent().then(value=>value.includes('导入指定规格/型号：<待核实规格>')),true);
             check(await page.locator('#pending-dialog-info 待核实规格').count(),0);
+            await page.locator('#pending-submit').click();
+            await page.locator('#pending-dialog-error').filter({hasText:'请至少选择一个本地商品'}).waitFor();
+            check(await fullyInView(page.locator('#pending-dialog-error')),true);
+            check(await page.evaluate(()=>document.activeElement.id),'pending-dialog-error');
+            check(await page.locator('#pending-mapping-fields').isVisible(),false);
             await page.locator('#pending-save-mapping').check();
+            check(await page.locator('#pending-mapping-fields').isVisible(),true);
             const input=page.locator('#pending-product');await input.fill('SKU');
             await page.locator('#pending-product-options [role="option"]').first().waitFor();
             check(await page.locator('#pending-product-options').textContent().then(value=>value.includes('粉色 / 厚度1.2丝')),true);
@@ -169,14 +205,57 @@ async function main(){
             check(await page.locator('#pending-components [data-remove-part]').count(),2);
             check(await page.locator('#pending-components').textContent().then(value=>value.includes('所需库存数量 4')),true);
             if(process.env.INVENTORY_QA_DIR){fs.mkdirSync(process.env.INVENTORY_QA_DIR,{recursive:true});await page.locator('#pending-retry-dialog').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`pending-${suffix==='/'?'template':'copy'}-components.png`)});}
+            await page.setViewportSize({width:390,height:844});
+            check(await page.locator('#pending-retry-dialog').evaluate(node=>{
+                const box=node.getBoundingClientRect(),button=node.querySelector('#pending-submit').getBoundingClientRect();
+                return box.top>=0&&box.bottom<=innerHeight&&box.left>=0&&box.right<=innerWidth&&button.bottom<=innerHeight&&button.width>=120&&button.height<=60;
+            }),true);
+            if(process.env.INVENTORY_QA_DIR)await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`pending-${suffix==='/'?'template':'copy'}-edit-mobile.png`)});
+            await page.setViewportSize({width:1440,height:1000});
+            await page.locator('#pending-submit').click();await page.locator('#sales-deduction-cancel').click();
+            check(await page.locator('[data-part-index="0"]').inputValue(),'2');
+            check(await page.locator('#pending-components [data-remove-part]').count(),2);
+            check(await page.locator('#pending-save-mapping').isChecked(),true);
+            check(await page.locator('#pending-dialog-error').isVisible(),false);
+            // 日期只填写一部分后取消保存映射，隐藏字段不能阻止本次商品确认。
+            const mappingDate=page.locator('#pending-mapping-date');
+            await mappingDate.focus();await mappingDate.press('ArrowLeft');await mappingDate.press('Backspace');
+            check(await mappingDate.evaluate(node=>node.validity.badInput),true);
+            await page.locator('#pending-save-mapping').uncheck();
+            check(await page.locator('#pending-mapping-fields').isVisible(),false);
+            check(await mappingDate.isDisabled(),true);
+            check(await mappingDate.evaluate(node=>node.willValidate),false);
+            check(await page.locator('#pending-dialog-form').evaluate(node=>node.checkValidity()),true);
+            const beforeHiddenPreview=previewCalls.length,beforeHiddenRetry=retryCalls.length;
+            await page.locator('#pending-submit').click();await page.locator('#sales-deduction-preview').waitFor();
+            check(previewCalls.length,beforeHiddenPreview+1);check(previewCalls.at(-1).save_mapping,undefined);
+            check(previewCalls.at(-1).components,[{product_id:1,multiplier:2},{product_id:2,multiplier:1}]);
+            await page.locator('#sales-deduction-cancel').click();check(retryCalls.length,beforeHiddenRetry);
+            check(await mappingDate.isDisabled(),true);
+            await page.locator('#pending-save-mapping').check();
+            check(await mappingDate.isEnabled(),true);
+            check(await mappingDate.evaluate(node=>node.validity.badInput),true);
+            check(await page.locator('#pending-dialog-form').evaluate(node=>node.checkValidity()),false);
+            await mappingDate.fill('2026-09-01');
             failRetry=true;await page.locator('#pending-submit').click();await page.locator('#sales-deduction-confirm').waitFor();
+            check(await page.locator('dialog[open]').evaluateAll(nodes=>nodes.map(node=>node.id)),['sales-deduction-preview']);
             if(process.env.INVENTORY_QA_DIR)await page.locator('#sales-deduction-preview').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`deduction-${suffix==='/'?'template':'copy'}-desktop.png`)});
             await page.setViewportSize({width:390,height:844});
+            check(await inside(),true);
             check(await page.locator('#sales-deduction-preview').evaluate(node=>{const box=node.getBoundingClientRect();return box.left>=0&&box.right<=innerWidth;}),true);
             if(process.env.INVENTORY_QA_DIR)await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`deduction-${suffix==='/'?'template':'copy'}-mobile.png`)});
             await page.setViewportSize({width:1440,height:1000});await page.locator('#sales-deduction-confirm').click();
             await page.locator('#pending-dialog-error').filter({hasText:'模拟失败'}).waitFor();
             check(await page.locator('#pending-dialog-error b').count(),0);
+            check(await page.evaluate(()=>document.activeElement.id),'pending-dialog-error');
+            for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:820,height:480}]){
+                await page.setViewportSize(viewport);
+                await page.locator('#pending-retry-dialog .sales-review-body').evaluate(node=>{node.scrollTop=0;});
+                check(await fullyInView(page.locator('#pending-dialog-error')),true);
+                check(await fullyInView(page.locator('#pending-submit')),true);
+                if(process.env.INVENTORY_QA_DIR)await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`pending-${suffix==='/'?'template':'copy'}-error-${viewport.width}.png`)});
+            }
+            await page.setViewportSize({width:1440,height:1000});
             check(await page.locator('#pending-components [data-remove-part]').count(),2);
             await page.locator('#pending-submit').click();await page.locator('#sales-deduction-confirm').click();await page.locator('#pending-result').filter({hasText:'新增销售明细 2 条'}).waitFor();
             check(retryCalls.at(-1).components,[{product_id:1,multiplier:2},{product_id:2,multiplier:1}]);
@@ -191,6 +270,8 @@ async function main(){
             check(retryCalls.at(-1).entry_ids,undefined);
             gate={...deferred(),started:deferred()};await page.locator('[data-pending-row-action="retry"]').click();
             const before=retryCalls.length;await page.locator('#pending-submit').click();await page.locator('#sales-deduction-confirm').click();await gate.started.promise;
+            check(await page.locator('#pending-dialog-status').isVisible(),true);check(await page.locator('#pending-dialog-error').isVisible(),false);
+            check(await fullyInView(page.locator('#pending-dialog-status')),true);
             await page.evaluate(()=>document.getElementById('pending-submit').click());check(retryCalls.length,before+1);
             await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
             await page.getByRole('button',{name:'销售记录',exact:true}).click();await ready();
@@ -204,6 +285,12 @@ async function main(){
             if(process.env.INVENTORY_QA_DIR){fs.mkdirSync(process.env.INVENTORY_QA_DIR,{recursive:true});await page.screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`pending-${suffix==='/'?'template':'copy'}-mobile.png`)});}
             await page.setViewportSize({width:1440,height:1000});
             if(process.env.INVENTORY_QA_DIR)await page.locator('#pending-confirmations-card').screenshot({path:path.join(process.env.INVENTORY_QA_DIR,`pending-${suffix==='/'?'template':'copy'}-desktop.png`)});
+            const beforePreviewReset=retryCalls.length;
+            await page.locator('[data-pending-row-action="retry"][data-pending-id="3"]').click();await page.locator('#pending-submit').click();
+            await page.locator('#sales-deduction-preview').waitFor();
+            await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
+            await page.getByRole('button',{name:'销售记录',exact:true}).click();await ready();
+            check(await page.locator('dialog[open]').count(),0);check(retryCalls.length,beforePreviewReset);
             role='viewer';await page.evaluate(async()=>{handleSessionExpired();await loadCurrentUser();});
             await page.getByRole('button',{name:'销售记录',exact:true}).click();await ready();
             check(await page.locator('[data-pending-row-action]').count(),0);

@@ -25,6 +25,8 @@
         mappingKinds:{platform_sku:'平台 SKU ID',merchant_sku:'商家编码',product_name:'名称别名',local_sku:'本地 SKU'},
         invalidMultiplier:'倍数必须是1至2147483647之间的整数。',units:'来源数量 {source} × 倍数 {multiple} = 所需库存数量 {count}',
         submitting:'正在处理，请勿重复提交…',result:'已确认 {confirmed} 条，仍待确认 {pending} 条，已处理跳过 {skipped} 条；新增销售明细 {sales} 条。',
+        previewLoading:'正在核对商品和销售日可用库存…',sourceRecord:'来源记录',sourceFile:'来源文件',sourceOrder:'原始订单号',
+        sourceProduct:'来源商品',sourceStore:'店铺',selectComponents:'选择本地商品',previewHelp:'先预览扣库，核对后再提交。',
         refreshFailed:'处理结果已保存，部分列表刷新失败，请手动刷新核对。',
         submitFailed:'处理未完成，请保留选择并刷新核对后重试：',exportFailed:'待确认列表导出失败：',exported:'待确认筛选结果已导出。',
         reasons:{stock_shortage:'销售日库存不足',product_missing:'未找到本地商品',product_ambiguous:'商品名称或映射不唯一',
@@ -171,23 +173,25 @@
     function refresh() {return dirty()?search():load(window.SalesLedger?.requestOptions() || {});}
     function initializeDialog() {
         if(dialog)return;
-        dialog=document.createElement('dialog');dialog.id='pending-retry-dialog';dialog.className='product-import-dialog';
+        dialog=document.createElement('dialog');dialog.id='pending-retry-dialog';dialog.className='sales-review-dialog';
         dialog.setAttribute('aria-labelledby','pending-dialog-title');
-        dialog.innerHTML=`<form id="pending-dialog-form"><h3 id="pending-dialog-title"></h3><p id="pending-dialog-info" style="white-space:pre-wrap;overflow-wrap:anywhere"></p>
-            <p id="pending-dialog-help"></p><fieldset id="pending-component-field"><legend>${h(text('resolveTitle'))}</legend>
+        dialog.innerHTML=`<form id="pending-dialog-form"><header class="sales-review-head"><h3 id="pending-dialog-title"></h3><p id="pending-dialog-help"></p></header>
+            <div class="sales-review-body"><div class="pending-review-layout"><aside id="pending-dialog-info" class="pending-source-panel"></aside>
+            <fieldset id="pending-component-field"><legend>${h(text('selectComponents'))}</legend>
             <div class="form-group inventory-product-picker"><label for="pending-product">${h(text('product'))}</label><div class="inventory-product-control">
                 <input id="pending-product" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="pending-product-options" autocomplete="off" maxlength="255">
                 <div id="pending-product-popup" class="inventory-product-popup" hidden><div id="pending-product-options" role="listbox" class="inventory-product-options"></div>
                 <p id="pending-product-status" role="status" class="inventory-product-search-status"></p></div></div></div>
             <div id="pending-components"></div>
-            <div id="pending-mapping-settings"><label><input type="checkbox" id="pending-save-mapping"> ${h(text('saveMapping'))}</label><p>${h(text('mappingHelp'))}</p>
-            <div style="display:flex;gap:12px;flex-wrap:wrap"><label>${h(text('effectiveFrom'))}<input type="date" id="pending-mapping-date"></label><label>${h(text('sourceUnit'))}<input id="pending-source-unit" maxlength="32" value="${h(text('unit'))}" style="width:100px"></label></div>
-            <label id="pending-name-unique-label"><input type="checkbox" id="pending-name-unique"> ${h(text('nameUnique'))}</label></div>
-            </fieldset><p id="pending-dialog-error" class="msg msg-err" role="alert" hidden></p>
-            <div class="page-action-buttons"><button type="button" id="pending-cancel" class="btn btn-secondary">${h(text('cancel'))}</button>
-            <button type="submit" id="pending-submit" class="btn btn-primary">${h(text('preview'))}</button></div></form>`;
+            <div id="pending-mapping-settings"><label class="pending-mapping-toggle"><input type="checkbox" id="pending-save-mapping"> <span>${h(text('saveMapping'))}</span></label><p>${h(text('mappingHelp'))}</p>
+            <fieldset id="pending-mapping-fields" hidden disabled><p id="pending-mapping-source"></p><div class="pending-mapping-inputs"><label>${h(text('effectiveFrom'))}<input type="date" id="pending-mapping-date"></label><label>${h(text('sourceUnit'))}<input id="pending-source-unit" maxlength="32" value="${h(text('unit'))}"></label></div>
+            <label id="pending-name-unique-label"><input type="checkbox" id="pending-name-unique"> <span>${h(text('nameUnique'))}</span></label></fieldset></div>
+            </fieldset></div></div><p id="pending-dialog-status" role="status" hidden></p><p id="pending-dialog-error" class="msg msg-err" role="alert" tabindex="-1" hidden></p>
+            <footer class="sales-review-footer"><p id="pending-footer-help"></p><div class="page-action-buttons"><button type="button" id="pending-cancel" class="btn btn-secondary">${h(text('cancel'))}</button>
+            <button type="submit" id="pending-submit" class="btn btn-primary">${h(text('preview'))}</button></div></footer></form>`;
         document.body.appendChild(dialog);
         node('pending-cancel').onclick=closeDialog;
+        node('pending-save-mapping').onchange=syncMappingFields;
         dialog.addEventListener('cancel',event=>{event.preventDefault();if(!busy)closeDialog();});
         node('pending-dialog-form').onsubmit=event=>{event.preventDefault();submit().catch(()=>{});};
         node('pending-components').onchange=event=>{
@@ -208,40 +212,51 @@
             enabled:()=>dialog.open && !!target?.item && !busy,captureContext:()=>{const opened=target;return context(()=>target===opened && dialog.open);},
             onSelect:product=>{
                 const previous=parts.find(part=>part.product_id===product.id);
-                if(previous)previous.multiplier++;else parts.push({product_id:product.id,multiplier:1,name:`${product.sku} · ${product.name}`,specification:product.specification});
+                if(previous)previous.multiplier++;else parts.push({product_id:product.id,multiplier:1,sku:product.sku,name:product.name,specification:product.specification});
                 node('pending-product').value='';renderParts();
             }});
     }
+    function syncMappingFields() {
+        const fields=node('pending-mapping-fields');
+        const enabled=node('pending-save-mapping').checked && !node('pending-mapping-settings').hidden;
+        fields.hidden=!enabled;fields.disabled=!enabled;
+    }
     const componentUnits=part=>text('units',{source:target.item.quantity,multiple:part.multiplier,count:target.item.quantity*part.multiplier});
     function renderParts() {
-        node('pending-components').innerHTML=parts.map((part,index)=>`<div style="border-top:1px solid var(--line);padding:10px 0">
-            <strong>${h(part.name || `#${part.product_id}`)}</strong><p>${h(text('localSpecification'))}：${h(part.specification || '')}</p><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <label>${h(text('multiplier'))} <input type="number" min="1" max="2147483647" step="1" required data-part-index="${index}" value="${h(part.multiplier)}" style="width:100px"></label>
-            <button type="button" class="btn btn-secondary" data-remove-part="${index}">${h(text('remove'))}</button></div>
-            <small data-part-units="${index}">${h(componentUnits(part))}</small></div>`).join('');
+        node('pending-components').innerHTML=parts.map((part,index)=>`<section class="pending-component"><div class="pending-component-heading"><div>
+            ${part.sku?`<span class="sales-review-code">${h(part.sku)}</span>`:''}<strong>${h(part.name || `#${part.product_id}`)}</strong>
+            ${part.specification?`<p class="sales-review-secondary">${h(text('localSpecification'))}：${h(part.specification)}</p>`:''}</div>
+            <button type="button" class="btn btn-secondary" data-remove-part="${index}">${h(text('remove'))}</button></div><div class="pending-component-controls">
+            <label>${h(text('multiplier'))} <input type="number" min="1" max="2147483647" step="1" required data-part-index="${index}" value="${h(part.multiplier)}"></label>
+            <small class="pending-component-equation" data-part-units="${index}">${h(componentUnits(part))}</small></div></section>`).join('');
     }
     function openDialog(payload,count,item=null) {
         if(!writable() || busy || loading || dirty() || exporting)return;
         initializeDialog();target={payload,count,item};parts=[];
         node('pending-dialog-title').textContent=text(item?'resolveTitle':'title');
-        node('pending-dialog-info').textContent=item?[item.store_name,item.source_file,item.order_id,item.product_name,
-            `${text('sourceSku')}：${item.platform_sku_id || '-'}`,`${text('sourceSpecification')}：${item.sku_name || '-'}`,
-            `${text('requestedSpecification')}：${item.requested_local_specification || '-'}`,item.mapping_error].filter(Boolean).join('\n'):'';
-        if(item?.mapping_identity)node('pending-dialog-info').textContent+=`\n${text('mappingSource')}：${text('mappingKinds')[item.mapping_identity.kind]} · ${item.mapping_identity.value}`;
+        node('pending-footer-help').textContent=text('previewHelp');
+        dialog.dataset.mode=item?'manual':'auto';node('pending-dialog-info').hidden=!item;
+        node('pending-dialog-info').innerHTML=item?`<h4>${h(text('sourceRecord'))}</h4><dl class="pending-source-fields">${[
+            ['sourceStore',item.store_name],['sourceFile',item.source_file,true],['sourceOrder',item.order_id,true,true],['sourceProduct',item.product_name,true],
+            ['sourceSku',item.platform_sku_id,false,true],['sourceSpecification',item.sku_name],['requestedSpecification',item.requested_local_specification]]
+            .filter(([,value])=>value).map(([key,value,wide,code])=>`<div${wide?' class="pending-source-wide"':''}><dt>${h(text(key))}：</dt><dd${code?' class="sales-review-code"':''}>${h(value)}</dd></div>`).join('')}</dl>
+            ${item.mapping_error?`<p class="pending-source-issue">${h(item.mapping_error)}</p>`:''}`:'';
+        node('pending-mapping-source').textContent=item?.mapping_identity?`${text('mappingSource')}：${text('mappingKinds')[item.mapping_identity.kind]} · ${item.mapping_identity.value}`:'';
         node('pending-dialog-help').textContent=text(item?'componentHelp':'autoHelp',{count});
         node('pending-component-field').hidden=!item;
         node('pending-component-field').disabled=false;node('pending-cancel').disabled=false;node('pending-submit').disabled=false;
-        node('pending-dialog-error').hidden=true;node('pending-product').value='';picker?.close();
+        node('pending-dialog-error').hidden=true;node('pending-dialog-status').hidden=true;node('pending-product').value='';picker?.close();
         node('pending-save-mapping').checked=false;node('pending-name-unique').checked=false;
         node('pending-save-mapping').disabled=false;node('pending-submit').textContent=text('preview');
         node('pending-source-unit').value=text('unit');
         node('pending-mapping-date').value=(item?.order_created_at || item?.settlement_date || '').slice(0,10);
         node('pending-mapping-settings').hidden=!item?.mapping_identity || item.mapping_identity.kind==='local_sku';
         node('pending-name-unique-label').hidden=item?.mapping_identity?.kind!=='product_name';
+        syncMappingFields();
         if(item)parts=(item.confirmed_components || []).map(part=>{
             const product=(typeof allProducts!=='undefined'?allProducts.find(product=>product.id===part.product_id):null) || {};
             // 接口明确返回空规格时不能被旧商品缓存覆盖。
-            return {...part,name:[part.sku || product.sku,part.name || product.name].filter(Boolean).join(' · ') || `#${part.product_id}`,
+            return {...part,sku:part.sku || product.sku,name:part.name || product.name || `#${part.product_id}`,
                 specification:part.specification === undefined ? product.specification : part.specification};
         });
         renderParts();dialog.showModal();node(item?'pending-product':'pending-cancel').focus();
@@ -270,7 +285,9 @@
             if(!target)return;
             target.mapping={store_id:storeId,key_kind:selectedMapping.key_kind,key_value:selectedMapping.key_value};
             node('pending-dialog-title').textContent=text('newVersion');node('pending-submit').textContent=text('saveVersion');
+            node('pending-footer-help').textContent=text('mappingHistory');
             node('pending-save-mapping').checked=true;node('pending-save-mapping').disabled=true;
+            syncMappingFields();
             node('pending-source-unit').value=selectedMapping.source_unit;node('pending-mapping-date').value='';
         };
         mappingDialog.showModal();
@@ -282,9 +299,9 @@
             node('pending-components').querySelectorAll('[data-part-index]').forEach(input=>{
                 parts[Number(input.dataset.partIndex)].multiplier=Number(input.value);
             });
-            if(!parts.length){error.hidden=false;error.textContent=text('needComponent');return;}
+            if(!parts.length){error.hidden=false;error.textContent=text('needComponent');error.focus({preventScroll:true});return;}
             if(parts.some(part=>!Number.isInteger(part.multiplier) || part.multiplier<1 || part.multiplier>2147483647)) {
-                error.hidden=false;error.textContent=text('invalidMultiplier');return;
+                error.hidden=false;error.textContent=text('invalidMultiplier');error.focus({preventScroll:true});return;
             }
             payload.components=parts.map(({product_id,multiplier})=>({product_id,multiplier}));
             if(node('pending-save-mapping').checked && !node('pending-mapping-settings').hidden){
@@ -295,7 +312,8 @@
         }
         const current=context();busy=true;controls();node('pending-cancel').disabled=true;node('pending-submit').disabled=true;
         node('pending-component-field').disabled=true;
-        error.hidden=false;error.textContent=text('submitting');
+        error.hidden=true;
+        const status=node('pending-dialog-status');status.hidden=false;status.textContent=text(target.mapping?'submitting':'previewLoading');
         try {
             if(target.mapping){
                 await api('POST','/sales/product-mappings',{...target.mapping,...payload.save_mapping,components:payload.components},{isCurrent:current});
@@ -306,8 +324,13 @@
             if(!window.SalesDeductionPreview)throw new Error(text('previewUnavailable'));
             const plan=await api('POST','/sales/pending-confirmations/preview',payload,{isCurrent:current});
             if(!current())return;
+            // 切换到预览步骤，保留原表单与选择；同一时刻只展示一个模态窗口。
+            picker?.close();dialog.close();
             const token=await window.SalesDeductionPreview.confirm(plan,{isCurrent:current});
-            if(!current() || !token){if(current())error.hidden=true;return;}
+            if(!current())return;
+            dialog.showModal();
+            if(!token)return;
+            status.textContent=text('submitting');
             payload.preview_token=token;
             const result=await api('POST','/sales/pending-confirmations/retry',payload,{isCurrent:current});
             if(!current())return;
@@ -318,7 +341,10 @@
         } catch(failure) {
             if(current()){error.hidden=false;error.textContent=text('submitFailed')+failure.message;}
         } finally {
-            if(current()){busy=false;node('pending-cancel').disabled=false;node('pending-submit').disabled=false;node('pending-component-field').disabled=false;controls();}
+            if(current()){
+                busy=false;status.hidden=true;node('pending-cancel').disabled=false;node('pending-submit').disabled=false;node('pending-component-field').disabled=false;controls();
+                if(target){if(!dialog.open)dialog.showModal();(error.hidden?node('pending-submit'):error).focus({preventScroll:true});}
+            }
         }
     }
     async function exportRows() {

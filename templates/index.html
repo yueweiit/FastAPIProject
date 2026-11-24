@@ -293,6 +293,96 @@
         .profit-loss-fx-details p { margin:8px 0; white-space:pre-line; overflow-wrap:anywhere; }
         .product-import-dialog { width:min(1080px,94vw); max-height:88vh; margin:auto; padding:24px; border:0; border-radius:12px; color:var(--ink); box-shadow:0 20px 70px rgba(17,30,50,.25); }
         .page-action-dialog { width:min(520px,94vw); box-sizing:border-box; }
+        /* 销售核对弹窗：来源与商品分区，表格独立滚动，操作区始终可见。 */
+        .sales-review-dialog { width:min(1380px,calc(100vw - 48px)); max-width:calc(100vw - 48px); max-height:calc(100dvh - 48px); margin:auto; padding:0; border:1px solid var(--line); border-radius:14px; background:var(--surface); color:var(--ink); box-shadow:0 24px 80px #15223838; overflow:hidden; }
+        .sales-review-dialog[open], .sales-review-dialog > form { display:flex; flex-direction:column; min-height:0; }
+        .sales-review-dialog > form { flex:1; overflow:hidden; }
+        .sales-review-dialog::backdrop { background:#15223880; }
+        .sales-review-dialog [hidden] { display:none !important; }
+        .sales-review-head { flex:none; padding:22px 24px 18px; border-bottom:1px solid var(--line); }
+        .sales-review-head h3 { margin:0; font-size:20px; font-weight:700; line-height:1.4; }
+        .sales-review-head p { margin:7px 0 0; color:var(--muted); font-size:13px; line-height:1.7; }
+        .sales-review-body { min-height:0; padding:20px 24px; overflow:auto; overscroll-behavior:contain; }
+        .sales-review-footer { flex:none; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 24px; border-top:1px solid var(--line); background:#f8fafc; }
+        .sales-review-footer > p { color:var(--muted); font-size:12px; line-height:1.6; }
+        .sales-review-footer .page-action-buttons { flex:none; margin:0; gap:10px; }
+        .sales-review-dialog .btn { min-height:40px; white-space:nowrap; transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease; }
+        .sales-review-dialog :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+        .sales-review-dialog button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+        .sales-review-code { display:block; font-family:Consolas,"SFMono-Regular",monospace; font-size:12px; line-height:1.6; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+        .sales-review-primary { display:block; font-weight:600; line-height:1.6; }
+        .sales-review-secondary { display:block; margin-top:4px; color:var(--muted); font-size:12px; line-height:1.6; }
+        #sales-deduction-preview .sales-review-body { display:flex; flex-direction:column; gap:16px; }
+        .sales-deduction-summary { flex:none; display:flex; align-items:stretch; gap:28px; padding:0 0 16px; border-bottom:1px solid var(--line); }
+        .sales-deduction-metric { min-width:100px; display:flex; align-items:baseline; flex-wrap:wrap; gap:5px 9px; color:var(--muted); font-size:12px; }
+        .sales-deduction-metric strong { font-size:24px; color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums; }
+        .sales-deduction-metric:first-child strong { color:var(--teal); }
+        .sales-deduction-metric[data-attention="true"] strong { color:#9a6700; }
+        .sales-review-guidance { flex:none; color:var(--muted); font-size:12px; line-height:1.7; }
+        .sales-review-guidance summary { cursor:pointer; width:fit-content; }
+        .sales-review-guidance p { margin:8px 0 0; max-width:960px; }
+        .sales-review-scroll-hint { display:none; margin:0; color:var(--muted); font-size:12px; }
+        .sales-deduction-scroll { min-height:0; overflow:auto; overscroll-behavior:contain; border:1px solid var(--line); border-radius:8px; }
+        .sales-deduction-table { width:100%; min-width:1300px; table-layout:fixed; border-collapse:separate; border-spacing:0; margin:0; }
+        .sales-deduction-table th { position:sticky; top:0; z-index:1; background:#f3f6fa; padding:12px 10px; font-size:12px; white-space:normal; line-height:1.6; border-bottom:1px solid var(--line); }
+        .sales-deduction-table td { padding:14px 10px; font-size:13px; line-height:1.6; vertical-align:top; white-space:normal; overflow-wrap:anywhere; border-bottom:1px solid var(--line); }
+        .sales-deduction-table tr:last-child td { border-bottom:0; }
+        .sales-deduction-table .sales-review-number { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+        .sales-deduction-table .sales-review-deduct { font-size:16px; font-weight:700; color:var(--teal); }
+        .sales-deduction-table tr[data-status="pending"] { background:#fffbf1; }
+        .sales-deduction-table tr[data-status="settlement"] .sales-review-deduct { color:var(--muted); }
+        .sales-deduction-table tr[data-group-start="true"] td { border-top:2px solid var(--line); }
+        .sales-review-badge { display:inline-block; padding:3px 8px; border-radius:5px; font-size:12px; line-height:1.6; font-weight:600; color:var(--teal); background:#edf7f4; }
+        .sales-review-badge[data-status="pending"] { color:#946200; background:#fff0c7; }
+        .sales-review-badge[data-status="settlement"] { color:#5c6879; background:#eef1f5; }
+        #pending-retry-dialog { width:min(1060px,calc(100vw - 48px)); }
+        #pending-retry-dialog[data-mode="auto"] { width:min(580px,calc(100vw - 24px)); }
+        .pending-review-layout { display:grid; grid-template-columns:minmax(240px,300px) minmax(0,1fr); gap:24px; align-items:start; }
+        #pending-retry-dialog[data-mode="auto"] .pending-review-layout { display:block; }
+        .pending-source-panel { padding:16px; border-radius:8px; background:#f5f7fa; min-width:0; }
+        .pending-source-panel h4 { margin:0 0 14px; font-size:14px; }
+        .pending-source-fields { display:grid; gap:12px; margin:0; font-size:13px; }
+        .pending-source-fields dt { color:var(--muted); font-size:12px; margin-bottom:3px; }
+        .pending-source-fields dd { margin:0; overflow-wrap:anywhere; line-height:1.6; }
+        .pending-source-issue { margin:16px 0 0; border-top:1px solid var(--line); padding-top:12px; color:#946200; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+        #pending-component-field { min-width:0; border:0; padding:0; margin:0; }
+        #pending-component-field > legend { padding:0; margin-bottom:14px; font-size:14px; font-weight:700; }
+        #pending-component-field .form-group input { width:100%; }
+        #pending-component-field .inventory-product-picker { width:100%; }
+        #pending-components { display:grid; gap:12px; margin-top:16px; }
+        .pending-component { border:1px solid var(--line); border-radius:8px; padding:14px 16px; min-width:0; }
+        .pending-component-heading { display:flex; justify-content:space-between; align-items:start; gap:12px; }
+        .pending-component-heading strong { font-size:14px; overflow-wrap:anywhere; }
+        .pending-component-heading .sales-review-code { color:var(--muted); margin-bottom:3px; }
+        .pending-component-heading button.btn { padding:5px 10px; min-height:32px; font-size:12px; flex:none; }
+        .pending-component-controls { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:12px; }
+        .pending-component-controls label { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+        #pending-component-field input[type="number"], #pending-mapping-fields input { padding:8px 10px; min-height:38px; border:1px solid #d6dce5; border-radius:6px; background:white; color:var(--ink); font:inherit; }
+        #pending-component-field input[type="number"] { width:90px; font-variant-numeric:tabular-nums; }
+        .pending-component-equation { flex-basis:100%; color:var(--teal); background:#edf7f4; border-radius:5px; padding:8px 10px; font-size:12px; line-height:1.7; }
+        #pending-mapping-settings { border-top:1px solid var(--line); margin-top:20px; padding-top:16px; font-size:13px; }
+        .pending-mapping-toggle, #pending-name-unique-label { display:flex; align-items:start; gap:8px; line-height:1.7; }
+        #pending-mapping-settings input[type="checkbox"] { flex:none; width:16px; height:16px; margin-top:3px; accent-color:var(--accent); }
+        #pending-mapping-settings p { color:var(--muted); font-size:12px; line-height:1.7; margin:6px 0 0; }
+        #pending-mapping-fields { min-width:0; border:0; margin-top:12px; padding:14px; background:#f5f7fa; border-radius:8px; }
+        .pending-mapping-inputs { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; margin:12px 0; }
+        .pending-mapping-inputs label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+        #pending-mapping-fields input { width:100%; min-width:0; }
+        #pending-dialog-status, #pending-dialog-error { flex:none; margin:0 24px 16px; max-height:min(160px,25dvh); overflow:auto; overflow-wrap:anywhere; }
+        #pending-dialog-status { padding:10px 12px; border-radius:6px; background:#f0f5fa; color:#405a78; font-size:13px; }
+        @media(max-width:760px) {
+            .sales-review-dialog, #pending-retry-dialog { width:calc(100vw - 24px); max-width:calc(100vw - 24px); max-height:calc(100dvh - 24px); border-radius:10px; }
+            .sales-review-head { padding:18px 16px 14px; }.sales-review-head h3 { font-size:18px; }
+            .sales-review-body { padding:16px; }.sales-review-footer { padding:14px 16px; flex-wrap:wrap; gap:10px; }
+            #pending-dialog-status, #pending-dialog-error { margin:0 16px 14px; }
+            .sales-review-footer .page-action-buttons { width:100%; }.sales-review-footer .page-action-buttons .btn { flex:1; padding:10px 8px; }
+            .sales-review-scroll-hint { display:block; }
+            .sales-deduction-summary { gap:12px; justify-content:space-between; }.sales-deduction-metric { min-width:0; flex:1; display:block; }.sales-deduction-metric strong { display:block; font-size:22px; margin:2px 0; }
+            .pending-review-layout { grid-template-columns:minmax(0,1fr); gap:20px; }
+            .pending-source-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }.pending-source-fields .pending-source-wide { grid-column:1 / -1; }
+            .pending-mapping-inputs { grid-template-columns:minmax(0,1fr); }
+        }
+        @media(prefers-reduced-motion:reduce) { .sales-review-dialog .btn { transition:none; transform:none; } }
         .page-action-dialog [hidden] { display:none; }
         .page-action-dialog label { display:block; }
         .page-action-dialog textarea { width:100%; margin-top:8px; box-sizing:border-box; }
