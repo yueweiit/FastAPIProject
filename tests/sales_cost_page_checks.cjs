@@ -36,7 +36,7 @@ async function main(){
   await c.loadSales();
   check(body('local_product'),['PINK · 同名商品']);check(body('local_specification'),['&lt;粉色&gt;']);check(body('source_specification'),['Rosa']);
   check(total('local_specification'),'');check(total('source_specification'),'');
-  rows=[{...sale,local_specification:null}];await c.loadSales();check(body('local_specification'),['待补充']);
+  rows=[{...sale,local_specification:null}];await c.loadSales();check(body('local_specification'),['']);
   rows=[{...sale,product_id:null,local_specification:null}];await c.loadSales();check(body('local_specification'),['-']);
   rows=[{...sale,currency:'MXN',source_row_net_product_sales:'84.9000',source_row_settlement_total:'58.7300',
    allocated_net_product_sales:'42.45',allocated_settlement_total:'29.365',

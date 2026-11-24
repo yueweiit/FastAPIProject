@@ -108,11 +108,11 @@ def build_product_import_template() -> BytesIO:
     sheet.add_data_validation(stock)
     stock.add(f"E2:E{MAX_IMPORT_ROWS + 1}")
     specification = DataValidation(
-        type="textLength", operator="between", formula1=1,
-        formula2=SPECIFICATION_MAX_LENGTH, allow_blank=False,
+        type="textLength", operator="between", formula1=0,
+        formula2=SPECIFICATION_MAX_LENGTH, allow_blank=True,
     )
     specification.errorTitle = SPECIFICATION_LABEL + "无效"
-    specification.error = SPECIFICATION_LABEL + "必填，最多 255 字符；请按文本填写"
+    specification.error = SPECIFICATION_LABEL + "选填，最多 255 字符；请按文本填写"
     specification.showErrorMessage = True
     specification.errorStyle = "stop"
     sheet.add_data_validation(specification)
@@ -122,7 +122,7 @@ def build_product_import_template() -> BytesIO:
         "在“商品导入”工作表填写数据；一行一个商品，最多 2000 条，文件不超过 5 MB。",
         "SKU 必须按文本填写，最多 64 字符；数字 SKU 丢失的前导零无法自动恢复。",
         "商品名称必填，最多 255 字符；商品类型必填，选择" + TYPE_OPTIONS + "。",
-        SPECIFICATION_LABEL + "必填，按文本填写，最多 255 字符，例如“黑色 / 标准版”；旧模板须补充此列。",
+        SPECIFICATION_LABEL + "选填，按文本填写，最多 255 字符，例如“黑色 / 标准版”；兼容没有规格列的旧模板。",
         "规格中的换行统一转为空格后校验长度、保存；不接受 Excel/XML 不支持的字符。",
         "安全库存留空按 0 处理；新品和不跌价商品必须为 0；关键列不接受公式。",
         "稳健商品仅超出安全库存部分每日计提1%；新品全部库存每日0.5%；不跌价商品不新增准备。",
@@ -130,7 +130,7 @@ def build_product_import_template() -> BytesIO:
         "数据库已有 SKU 默认跳过；文件内重复 SKU 为错误，需修正后再导入。",
         "预览包含隐藏行；有错误时整批不写入。确认时会再次校验数据库状态。",
         "这里只新增商品基础资料及当天规则，不导入图片、库存数量、成本或历史日期。",
-        "兼容商品导出的五个同名字段；历史商品空规格需补齐后才可预览，已有 SKU 仍只跳过、不更新。",
+        "兼容商品导出的五个同名字段；空规格保留为空，已有 SKU 仍只跳过、不更新。",
         "商品 ID、图片、库存、金额和日期等列不参与导入。",
         "下方仅为填写示例，不会作为导入数据。",
     ):
@@ -205,7 +205,10 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
                 if field in indexes:
                     raise HTTPException(400, f"Excel 重复列：{cell.value}")
                 indexes[field] = index
-        missing = [label for label in IMPORT_HEADERS if HEADER_FIELDS[label.casefold()] not in indexes]
+        missing = [
+            label for label in IMPORT_HEADERS
+            if HEADER_FIELDS[label.casefold()] != "specification" and HEADER_FIELDS[label.casefold()] not in indexes
+        ]
         if missing:
             raise HTTPException(400, "Excel 缺少必要列：" + "、".join(missing))
         rows = []
@@ -243,11 +246,11 @@ def parse_product_import(filename: str, content: bytes) -> ParsedProductImport:
                 elif len(raw_name.strip()) > 255:
                     error("商品名称", "商品名称不能超过 255 字符")
             raw_type = selected["product_type"].value
-            raw_specification = selected["specification"].value
+            raw_specification = selected["specification"].value if "specification" in selected else None
             specification = _display(raw_specification, 512)
             if "specification" not in invalid_fields:
                 try:
-                    specification = normalize_product_specification(raw_specification)
+                    specification = normalize_product_specification(raw_specification) or ""
                 except HTTPException as exc:
                     error(SPECIFICATION_LABEL, exc.detail["message"])
             type_value = TYPE_VALUES.get(str(raw_type or "").strip().casefold())
@@ -411,7 +414,7 @@ async def confirm_product_import(
         raise HTTPException(400, report.message)
     candidates = [row for row in report.rows if row.status == "new"]
     products = [Product(
-        sku=row.sku, name=row.name, specification=row.specification, product_type=row.product_type,
+        sku=row.sku, name=row.name, specification=row.specification or None, product_type=row.product_type,
         safe_stock_quantity=row.safe_stock_quantity,
     ) for row in candidates]
     try:

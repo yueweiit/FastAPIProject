@@ -17,7 +17,7 @@
 
 ## 请求和查询
 
-单条商品 POST/PUT 使用 multipart/form-data；sku、name、specification 必填，image 可选。规格先将 CRLF/CR/LF 及 Unicode 行/段分隔符转为空格，再去首尾空白，须为 1–255 字符；缺参/空串由 FastAPI 返回 422，空白或超长返回 422 和稳定 code `product_specification_required` / `product_specification_too_long`，附兼容 message。原文中出现 XML 1.0 不支持的控制字符、孤立代理项或 U+FFFE/U+FFFF 时返回 `product_specification_invalid_characters`，首尾字符也不静默删除。历史记录可以读取空规格，但任何编辑保存都必须补齐，旧写入客户端需同步传参。POST 的 product_type 默认 stable、safe_stock_quantity 默认 0；PUT 的两个规则字段可不传，保留现值。PUT 是商品表单更新，不是 JSON ProductCreate；schemas.py 中 ProductCreate 不能直接当该接口的接收契约。
+单条商品 POST/PUT 使用 multipart/form-data；sku、name 必填，specification、image 可选。规格先将 CRLF/CR/LF 及 Unicode 行/段分隔符转为空格，再去首尾空白，空串或纯空白保存为 NULL；填写时最多 255 字符，超长返回 422 和稳定 code `product_specification_too_long`，附兼容 message。原文中出现 XML 1.0 不支持的控制字符、孤立代理项或 U+FFFE/U+FFFF 时返回 `product_specification_invalid_characters`，首尾字符也不静默删除。POST 省略规格保存为 NULL；PUT 省略规格保留原值，显式提交空串或纯空白清空为 NULL，兼容旧写入客户端；历史空规格可以继续留空。POST 的 product_type 默认 stable、safe_stock_quantity 默认 0；PUT 的两个规则字段可不传，保留现值。PUT 是商品表单更新，不是 JSON ProductCreate；schemas.py 中 ProductCreate 不能直接当该接口的接收契约。
 
 `product_type`正常写入为stable、new、no_impairment三种；兼容旧safe_stock输入并规范为stable。未知值或负安全库存返回422；稳健商品保留安全库存，新品/不跌价商品保存为0。查询不批量改写旧存储，前端及导出将safe_stock显示为稳健商品并保留数量。历史规则、当日生效事务及数组/分页契约不变，详见[业务规则](overview.md#业务规则)。
 

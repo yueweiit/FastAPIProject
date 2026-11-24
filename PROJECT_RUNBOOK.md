@@ -31,10 +31,10 @@
 
 销售规格展示及匹配同样依赖此字段：同步销售路由/契约、sales_product_identity、financial_facts、sales_reconciliation、sales_export及sales-ledger/sales-pending/product-search脚本和sales-fields.zh-CN.json；字段资源与脚本须成套更新。此扩展不新增销售数据库列，不回填历史规格、不重新扣库。若目标库仍无products.specification，先按下述原商品规格步骤准备结构；当前版本的文件导入也依赖上节result_snapshot。通过目标预检后再按获准流程重载Python进程并刷新页面，不能用静态页面已更新推断后端或数据库已升级。业务规则及隔离回归见[销售流程](docs/modules/sales/workflow.md#文件导入)和[代码映射](docs/modules/sales/code-map.md)。
 
-`products.specification VARCHAR(255) NULL` 用于规格/型号，历史记录保留 NULL；新增及编辑保存、Excel 新增均要求非空文本，换行转为空格后去首尾空白，最多255字符；拒绝XML非法字符。已有异常规格的导出以码点和批注提示，不回填原数据；此边界修复不再增加数据库结构。页面位置在产品名称后，列表空值显示待补充，导出空白保留未知值。旧模板须补规格列，已有SKU仍只跳过、不覆盖，详情见[商品流程](docs/modules/products/workflow.md)。库存/FIFO/成本和历史规则不回填。
+`products.specification VARCHAR(255) NULL` 用于规格/型号，历史记录保留 NULL；2026-11-24 起新增及编辑保存、Excel 新增均为选填，空内容按 NULL 保存，换行转为空格后去首尾空白，最多255字符；拒绝XML非法字符。已有异常规格的导出以码点和批注提示，不回填原数据；此边界修复不再增加数据库结构。页面位置在产品名称后，列表、图册及导出空值均显示空白。兼容没有规格列的旧模板，已有SKU仍只跳过、不覆盖，详情见[商品流程](docs/modules/products/workflow.md)。库存/FIFO/成本和历史规则不回填。
 
 1. 离线生成待审核DDL：`python migrations/add_product_specification.py --write-sql output/product_specification.sql`。脚本不连接数据库。执行前核验目标库、备份及加列锁表影响；已有同名列先核对类型/长度/可空性，不重复执行ALTER。
-2. 同步 models.py、schemas.py、migrate.py、商品路由/导入/规格校验服务、审计字段、两份首页及日志页面；字段准备完成后再按原流程重载后端并刷新页面。旧POST/PUT调用方须同步提交specification；仅更新HTML或仅更新数据库均不足以启用。
+2. 同步 models.py、schemas.py、migrate.py、商品路由/导入/规格校验服务、审计字段、两份首页及日志页面；字段准备完成后再按原流程重载后端并刷新页面。POST省略specification保存为NULL，PUT省略保留原值、显式提交空串或纯空白则清空；仅更新HTML或仅更新数据库均不足以启用。
 3. 启动兼容迁移已登记该可空列，按列存在性检查添加；不要用启动服务代替迁移预检，启动仍执行其他建表/兼容修复/快照逻辑。回退代码时保留规格列及已填数据，不以删列回退。
 4. 回归使用隔离SQLite/ASGI和页面测试，未执行本地业务库或生产DDL、历史数据回填、服务重启及部署；真实目标MySQL结构与上线表现需在获准环境核验。验证入口见[商品代码映射](docs/modules/products/code-map.md)。
 

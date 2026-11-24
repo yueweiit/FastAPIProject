@@ -3,7 +3,7 @@
 | 页面/功能 | 前端函数 | 后端方法 | 表/服务 |
 | --- | --- | --- | --- |
 | 共用新增/编辑侧栏 | openNewProduct、openEditProduct、openProductEditor、saveProduct、closeEditProduct | create_product、update_product、_impairment_settings | products、product_impairment_rules |
-| 规格/历史空值/必填校验 | readProductSpecification、productTypeText | normalize_product_specification、specification_export_text | services/product_specification.py；products.specification；创建/编辑/列表/Excel |
+| 选填规格/历史空值/文本校验 | readProductSpecification、productTypeText | normalize_product_specification、specification_export_text | services/product_specification.py；products.specification；创建/编辑/列表/Excel |
 | 类型/安全库存/旧规则兼容 | productTypeValue、productTypeLabel、productTypeText、toggleSafeStockField | effective_product_type、protected_stock_quantity | services/inventory_impairment.py；商品及规则历史 |
 | 商品批量新增 | openProductImport、previewProductImport、confirmProductImport | preview_products、import_products | services/product_import.py；products、product_impairment_rules |
 | 模板/结果清单 | downloadProductImportTemplate、downloadProductImportResult | product_import_template、export_product_import_result | openpyxl；ProductImportResponse、ProductImportResultRequest |
@@ -21,7 +21,7 @@
 
 图片校验、重新编码、历史活动文件隔离及失败清理由 [test_product_images.py](../../../tests/test_product_images.py) 验证；不写实际上传目录或业务数据库。
 
-规格回归：[test_product_specification.py](../../../tests/test_product_specification.py)覆盖缺失/空白/超长/特殊字符、三角色、历史空值可读及补齐、导出列位/数值日期格式/公式文本安全、旧模板提示、表头别名和增加可空列后旧数据保留。[product_types_page_checks.cjs](../../../tests/product_types_page_checks.cjs)同时验证两份页面字段顺序、必填、回显、空值提示、预览转义与空表列数；[test_business_audit.py](../../../tests/test_business_audit.py)覆盖规格前后值和审计失败回滚。数据库测试仅隔离SQLite，非真实MySQL迁移或生产验收。常规商品测试进程使用 `FIFO_OPERATION_AUDIT_ENABLED=0` 隔离本地配置，审计用例自行显式启用，未改变应用配置或权限。
+规格回归：[test_product_specification.py](../../../tests/test_product_specification.py)覆盖缺失/空白/超长/特殊字符、三角色、历史空值可读写、编辑省略保留及显式清空、导出列位/数值日期格式/公式文本安全、旧四列模板、可空模板规则、表头别名和增加可空列后旧数据保留。[product_types_page_checks.cjs](../../../tests/product_types_page_checks.cjs)同时验证两份页面字段顺序、选填、回显、空白展示、预览转义与空表列数；[test_business_audit.py](../../../tests/test_business_audit.py)覆盖规格前后值和审计失败回滚。数据库测试仅隔离SQLite，非真实MySQL迁移或生产验收。常规商品测试进程使用 `FIFO_OPERATION_AUDIT_ENABLED=0` 隔离本地配置，审计用例自行显式启用，未改变应用配置或权限。
 
 2026-11-23初版验证（边界修复前）：全量695项unittest、上述两份页面112项商品检查及认证/批次编辑/销售补录/销售导出页面回归通过；另使用独立本地模拟API及Chrome验证两份真实HTML的必填拦截、历史补齐、保存清空、列表/预览转义，并检查1600及390像素宽度。未启动main、连接业务库、执行MySQL迁移或发布。
 

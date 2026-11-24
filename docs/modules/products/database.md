@@ -11,7 +11,7 @@
 | `id` | `Integer` | 否 | 自增主键 | 主键 |
 | `sku` | `String(64)` | 否 | 本地商品 SKU | 唯一；索引 |
 | `name` | `String(255)` | 否 | 名称 | — |
-| `specification` | `String(255)` | 是 | 规格/型号 | 历史允许 NULL；新建/编辑/导入将换行转为空格后去首尾空白，要求 1–255 字符，拒绝 XML 非法字符 |
+| `specification` | `String(255)` | 是 | 规格/型号 | 选填；新建/编辑/导入将换行转为空格后去首尾空白，空值存 NULL，填写时最多 255 字符，拒绝 XML 非法字符 |
 | `image` | `String(500)` | 是 | 图片访问路径 | — |
 | `product_type` | `String(16)` | 否 | stable / new / no_impairment（旧safe_stock兼容为stable），详见[业务规则](overview.md#业务规则) | Python 默认：'stable' |
 | `safe_stock_quantity` | `Integer` | 否 | 安全库存数量 | Python 默认：0 |

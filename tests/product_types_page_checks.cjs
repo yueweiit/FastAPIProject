@@ -48,7 +48,7 @@ async function verify(path) {
         productSaving=false; productEditorSerial=0; productPreviewUrl=''; productOriginalImage=''; CURRENT_USER_ID=1;`, context);
     for (const prefix of ['p']) {
         const specificationInput = html.match(new RegExp(`<textarea id="${prefix}-specification"[^>]*>`))[0];
-        assert(specificationInput.includes('required') && specificationInput.includes('maxlength="255"'));
+        assert(!specificationInput.includes('required') && specificationInput.includes('maxlength="255"'));
         assert(html.indexOf(`id="${prefix}-name"`) < html.indexOf(`id="${prefix}-specification"`));
         assert(html.indexOf(`id="${prefix}-specification"`) < html.indexOf(`id="${prefix}-product-type"`));
         const select = html.match(new RegExp(`<select id="${prefix}-product-type"[^>]*>(.*?)<\\/select>`))[1];
@@ -73,7 +73,8 @@ async function verify(path) {
     assert.equal(element('p-safe-stock-quantity').value, 25);
     assert.equal(element('p-specification').value, '');
     assert.equal(element('p-specification-help').hidden, false);
-    assert(body.includes('待补充') && body.includes('&lt;stable&gt; / 标准款'));
+    assert(!body.includes('待补充') && body.includes('&lt;stable&gt; / 标准款'));
+    assert(body.includes('<td></td>'));
     for (const product of products.slice(0, 3)) {
         await vm.runInContext(`openEditProduct(${product.id})`, context);
         assert.equal(element('p-product-type').value, product.product_type);
@@ -125,10 +126,22 @@ async function verify(path) {
     element('p-specification').value = '🔵';
     assert.equal(vm.runInContext("readProductSpecification('p')", context), '🔵');
     checks += 4;
+    for (const editing of [false, true]) {
+        for (const value of ['', ' \t\n ']) {
+            await vm.runInContext(editing ? 'openEditProduct(1)' : 'openNewProduct()', context);
+            element('p-sku').value = 'OPTIONAL'; element('p-name').value = '选填规格';
+            element('p-specification').value = value;
+            const before = requests.length;
+            await vm.runInContext(editing ? 'saveEditProduct()' : 'createProduct()', context);
+            assert.equal(requests.length, before + 1);
+            assert.equal(requests.at(-1).options.body.get('specification'), '');
+            checks += 2;
+        }
+    }
     const before = requests.length;
     for (const editing of [false, true]) {
         vm.runInContext(editing ? 'openEditProduct(1)' : 'openNewProduct()', context);
-        for (const value of ['', '  ', 'x'.repeat(256), '黑色\x0b标准版', '\x0c标准版', '标准版\x1f', '\ufffe', '\ud800']) {
+        for (const value of ['x'.repeat(256), '黑色\x0b标准版', '\x0c标准版', '标准版\x1f', '\ufffe', '\ud800']) {
             element('p-specification').value = value;
             await vm.runInContext(editing ? 'saveEditProduct()' : 'createProduct()', context);
             assert.equal(requests.length, before);
@@ -136,7 +149,7 @@ async function verify(path) {
             checks += 2;
         }
     }
-    assert.equal(vm.runInContext("formatApiError({code:'product_specification_required'}, '')", context), '请填写规格/型号');
+    assert.equal(vm.runInContext("formatApiError({code:'product_specification_invalid_type'}, '')", context), '规格/型号请按文本填写');
     assert.equal(vm.runInContext("formatApiError({code:'product_specification_invalid_characters'}, '')", context), '规格/型号含无法保存到 Excel 的字符，请删除后重试');
     vm.runInContext('currentProductList = []; renderProductPage()', context);
     assert(element('products-tbody').innerHTML.includes('colspan="6"'));

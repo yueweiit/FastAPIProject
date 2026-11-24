@@ -595,7 +595,7 @@
                 <div class="product-editor-fields">
                     <div class="form-group"><label for="p-sku">SKU</label><input id="p-sku" maxlength="64" required data-product-editor-control></div>
                     <div class="form-group"><label for="p-name" data-product-type-text="name"></label><input id="p-name" maxlength="255" required data-product-editor-control></div>
-                    <div class="form-group"><label id="p-specification-label" for="p-specification" data-product-type-text="specificationRequiredLabel"></label><textarea id="p-specification" class="product-specification-input" rows="2" maxlength="255" required aria-required="true" aria-describedby="p-specification-help" data-product-editor-control></textarea><small id="p-specification-help" data-product-type-text="specificationLegacyHelp" hidden></small></div>
+                    <div class="form-group"><label id="p-specification-label" for="p-specification" data-product-type-text="specificationOptionalLabel"></label><textarea id="p-specification" class="product-specification-input" rows="2" maxlength="255" aria-describedby="p-specification-help" data-product-editor-control></textarea><small id="p-specification-help" data-product-type-text="specificationLegacyHelp" hidden></small></div>
                     <div class="form-group"><label for="p-image" id="p-image-label" data-product-type-text="image"></label><input id="p-image" type="file" accept="image/*" data-product-editor-control></div>
                     <div id="p-preview" class="product-image-preview"></div>
                     <details id="product-accounting" class="product-accounting">
@@ -1124,7 +1124,7 @@ function formatApiError(detail, fallback) {
     }
     if (detail && typeof detail === 'object') {
         if (detail.code === 'sales_import_result_not_found') return window.PageInteractions?.text('importResultNotFound') || detail.message;
-        const productErrorKey = {product_specification_required: 'specificationRequired', product_specification_too_long: 'specificationTooLong', product_specification_invalid_characters: 'specificationInvalidCharacters'}[detail.code];
+        const productErrorKey = {product_specification_invalid_type: 'specificationInvalidType', product_specification_too_long: 'specificationTooLong', product_specification_invalid_characters: 'specificationInvalidCharacters'}[detail.code];
         if (productErrorKey) return productTypeText(productErrorKey);
         const batchErrorKey = {batch_edit_version_required: 'batchEditVersionRequired', batch_edit_conflict: 'batchEditConflict',
             batch_quantity_inconsistent: 'batchQuantityInconsistent', batch_quantity_below_sold: 'batchQuantityBelowSold',
@@ -1503,7 +1503,7 @@ function productTypeText(key) {
         import: '批量导入', export: '导出', exportSelected: '导出所选商品', exportAll: '导出全部商品',
         exportOne: '导出此商品', actions: '操作', viewInventory: '查看库存', more: '更多', delete: '删除',
         search: '搜索', clear: '清空', refresh: '刷新', searchPlaceholder: '搜索商品名称、SKU 或规格',
-        allProducts: '全部商品', missingSpecification: '规格待补充', missingImage: '缺少图片', completeness: '资料完整性',
+        allProducts: '全部商品', missingSpecification: '缺少规格', missingImage: '缺少图片', completeness: '资料完整性',
         listView: '列表', galleryView: '图册', viewMode: '商品展示方式', searchResults: '商品搜索结果',
         selectProduct: '选择商品', selectPage: '选择当前页商品', selected: '已选商品：', clearSelection: '清空选择',
         empty: '没有匹配的商品，请调整搜索或筛选条件。', loading: '正在读取商品…', loadFailed: '商品加载失败：',
@@ -1511,16 +1511,16 @@ function productTypeText(key) {
         identityRequired: '请填写 SKU 和产品名称', saved: '商品保存成功', savedRefreshFailed: '商品已保存，但列表刷新失败，请点击刷新重试。',
         deleteConfirm: '确认删除该商品？有关联记录的商品将由系统阻止删除。', deleted: '商品已删除',
         exportFailed: '商品导出失败', exportDone: '商品 Excel 已生成，请查看浏览器下载列表。',
-        specification: '规格/型号', specificationRequiredLabel: '规格/型号（必填）',
+        specification: '规格/型号', specificationOptionalLabel: '规格/型号（选填）',
         specificationPlaceholder: '例如：黑色 / 标准版、500 mL',
-        specificationRequired: '请填写规格/型号', specificationTooLong: '规格/型号不能超过 255 字符',
+        specificationInvalidType: '规格/型号请按文本填写', specificationTooLong: '规格/型号不能超过 255 字符',
         specificationInvalidCharacters: '规格/型号含无法保存到 Excel 的字符，请删除后重试',
-        specificationHelp: '规格/型号必填，最多255字符。换行保存时统一转为空格，避免词语拼接；不支持的特殊字符需删除后再保存。',
-        specificationMissing: '待补充', specificationLegacyHelp: '此商品尚未填写规格/型号，请补齐后保存。',
+        specificationHelp: '规格/型号选填，最多255字符。换行保存时统一转为空格，避免词语拼接；不支持的特殊字符需删除后再保存。',
+        specificationLegacyHelp: '规格/型号选填，可以留空。',
         saveFailed: '商品保存失败',
         stable: '稳健商品', new: '新品', safe_stock: '稳健商品', no_impairment: '不跌价商品',
         ruleHelp: '三选一：稳健商品每日计提1%，设置安全库存时仅对超出部分计提；新品全部库存每日0.5%；不跌价商品停止新增计提。累计上限90%，已有准备保留并随销售转销。',
-        importHelp: '新增商品基础资料，规格/型号必填；旧模板需补充该列，历史空规格需补齐后导入。已有 SKU 校验后跳过、不更新。库存、成本和图片通过对应功能单独维护；新品和不跌价商品安全库存填0。安全库存仅适用于稳健商品；旧安全库存商品兼容为稳健商品。',
+        importHelp: '新增商品基础资料，规格/型号选填；兼容没有规格列的旧模板，空规格保留为空。已有 SKU 校验后跳过、不更新。库存、成本和图片通过对应功能单独维护；新品和不跌价商品安全库存填0。安全库存仅适用于稳健商品；旧安全库存商品兼容为稳健商品。',
     }};
     return (messages[document.documentElement.lang] || messages['zh-CN'])[key];
 }
@@ -1559,7 +1559,6 @@ function readProductSpecification(prefix) {
     const raw = input.value;
     const value = raw.replace(/\r\n|[\r\n\u2028\u2029]/g, ' ').trim();
     const error = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\ud800-\udfff\ufffe\uffff]/u.test(raw) ? productTypeText('specificationInvalidCharacters')
-        : !value ? productTypeText('specificationRequired')
         : [...value].length > 255 ? productTypeText('specificationTooLong') : '';
     input.setCustomValidity(error);
     if (error) {
@@ -1697,7 +1696,7 @@ function renderProductImportReport(report) {
         const errors = row.errors.map(error => `${error.field}：${error.message}`).join('；');
         const existing = row.existing_product_name ? `已有商品：${row.existing_product_name}；` : '';
         return `<tr><td>${row.row_number}</td><td>${escapeHtml(row.sku)}</td>
-            <td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.specification || productTypeText('specificationMissing'))}</td><td>${escapeHtml(type || '-')}</td>
+            <td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.specification || '')}</td><td>${escapeHtml(type || '-')}</td>
             <td>${row.safe_stock_quantity ?? '-'}</td><td><span class="tag ${css}">${label}</span></td>
             <td>${escapeHtml(existing + (errors || row.message))}</td></tr>`;
     }).join('');
@@ -1812,7 +1811,7 @@ function renderProductPage() {
         const image = productImageUrl(p), id = Number(p.id);
         return `<tr><td><input type="checkbox" data-product-select="${id}" ${selectedProductIds.has(id) ? 'checked' : ''} onchange="toggleProductSelection(${id}, this.checked)" aria-label="${h(text('selectProduct') + ' ' + p.sku)}"></td>
             <td>${image ? `<a href="${h(image)}" target="_blank" rel="noopener" aria-label="${h(text('viewImage') + ' ' + p.sku)}"><img class="product-thumbnail" src="${h(image)}" alt="" loading="lazy"></a>` : `<span class="product-thumbnail product-no-image">${h(text('noImage'))}</span>`}</td>
-            <td><strong>${h(p.sku)}</strong></td><td>${h(p.name)}</td><td>${h(p.specification || text('specificationMissing'))}</td><td>${productRowActions(p)}</td></tr>`;
+            <td><strong>${h(p.sku)}</strong></td><td>${h(p.name)}</td><td>${h(p.specification || '')}</td><td>${productRowActions(p)}</td></tr>`;
     }).join('') : `<tr><td colspan="6" class="empty">${h(text('empty'))}</td></tr>`;
     document.getElementById('gallery-grid').innerHTML = currentProductList.length ? currentProductList.map(p => {
         const image = productImageUrl(p), id = Number(p.id);
@@ -1820,7 +1819,7 @@ function renderProductPage() {
             ? `<a href="${h(image)}" target="_blank" rel="noopener" aria-label="${h(text('viewImage') + ' ' + p.sku)}"><img src="${h(image)}" alt="${h(p.name)}" loading="lazy"></a><a class="btn btn-secondary gallery-download" href="${h(image)}" download>${h(text('downloadImage'))}</a>`
             : `<span>${h(text('noImage'))}</span>`}</div>
             <div class="product-gallery-body"><div class="product-gallery-identity"><strong>${h(p.sku)}</strong><input type="checkbox" data-product-select="${id}" ${selectedProductIds.has(id) ? 'checked' : ''} onchange="toggleProductSelection(${id}, this.checked)" aria-label="${h(text('selectProduct') + ' ' + p.sku)}"></div>
-            <div class="product-gallery-name">${h(p.name)}</div><div class="product-gallery-specification">${h(p.specification || text('specificationMissing'))}</div>${productRowActions(p)}</div></article>`;
+            <div class="product-gallery-name">${h(p.name)}</div><div class="product-gallery-specification">${h(p.specification || '')}</div>${productRowActions(p)}</div></article>`;
     }).join('') : `<div class="empty">${h(text('empty'))}</div>`;
     renderPagination('products-pagination', productPage, Math.max(1, Math.ceil(productTotal / productPageSize)), productTotal, productPageSize);
     setProductView(productView);
@@ -2162,7 +2161,7 @@ function openProductEditor(product = null) {
     setProductSaving(false);
     const dialog = document.getElementById('product-editor');
     if (!dialog.open) dialog.showModal();
-    document.getElementById(product && !product.specification ? 'p-specification' : 'p-sku').focus();
+    document.getElementById('p-sku').focus();
 }
 
 function openNewProduct() { openProductEditor(); }

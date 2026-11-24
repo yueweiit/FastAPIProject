@@ -3,7 +3,7 @@
     'use strict';
     const messages = {'zh-CN': {
         pending:'待核对', na:'—', empty:'暂无销售记录', pageTotal:'本页合计', unknownStore:'未关联店铺',
-        missingSpecification:'待补充',localProduct:'本地商品',localSpecification:'本地商品规格/型号',sourceSpecification:'来源规格（SKU 名称）',
+        localProduct:'本地商品',localSpecification:'本地商品规格/型号',sourceSpecification:'来源规格（SKU 名称）',
         pageTotalHelp:'只合计当前页展示的实际出库数量和可加总金额，来源数量及单价不合计；月度统计按月份汇总全部筛选记录。左右滚动明细可查看对应列，本页合计会同步移动。明细区可独立上下滚动，表头保持可见。',
         detail:'计算明细', close:'关闭', loading:'正在读取完整订单与FIFO明细…',
         failed:'计算明细读取失败，请重试。', unavailable:'销售计算接口或字段资源尚未加载，请更新并重启后端后刷新。',
@@ -225,7 +225,7 @@
         if (meta.key === 'sku') return row.display_sku || product.sku || '-';
         if (meta.key === 'product_name') return row.display_name || product.name || '-';
         if (meta.key === 'local_product') return [row.local_sku ?? product.sku,row.local_product_name ?? product.name].filter(Boolean).join(' · ') || '-';
-        if (meta.key === 'local_specification') return (row.local_specification ?? product.specification) || (row.product_id != null?t('missingSpecification'):'-');
+        if (meta.key === 'local_specification') return (row.local_specification ?? product.specification) || (row.product_id != null?'':'-');
         if (meta.key === 'store_name') return row.store_name || t('unknownStore');
         if (meta.kind === 'date') return row[meta.key]?.slice(0,10) || '-';
         if (meta.key === 'order_total_cost_cny') return totalCost(row);
@@ -321,7 +321,7 @@
             return `<tr><td>${h(batch.batch_no)}</td><td>${h(batch.arrival_date || t('pending'))}</td><td>${h(batch.order_date || t('pending'))}</td><td>${h(batch.age_days ?? t('pending'))}</td><td>${h(kind ? t(kind) : t('pending'))}</td><td>${h(rateLabel(batch.daily_rate))}</td><td>${preciseMoney(batch.total_cost_cny)}</td><td>${money(batch.impairment_cny)}</td><td>${known ? `${h(batch.age_days)} × ${h(rateLabel(batch.daily_rate))} × ${preciseMoney(batch.total_cost_cny)} = ${money(batch.impairment_cny)}` : t('pending')}</td></tr>`;
         });
         const order = data.order_summary;
-        return `<p class="sales-calculation-identity">${h(data.sku)} · ${h(data.product_name)} · ${h(orderNumber(sale))}</p><p class="sales-calculation-identity">${h(t('localProduct'))}：${h([sale.local_sku,sale.local_product_name].filter(Boolean).join(' · ') || t('na'))} · ${h(t('localSpecification'))}：${h(sale.local_specification || (sale.product_id != null?t('missingSpecification'):t('na')))}</p><p class="sales-calculation-identity">${h(t('sourceProduct'))}：${h(sale.source_product_name || t('na'))} · ${h(t('sourceSpecification'))}：${h(sale.source_specification || t('na'))} · ${h(t('sourceQuantity'))}：${h(sale.source_quantity ?? t('na'))} · ${h(sale.transaction_type || '')}</p><p data-help-tip data-help-anchor="#sales-calc-title">${h(t('basis'))}</p>
+        return `<p class="sales-calculation-identity">${h(data.sku)} · ${h(data.product_name)} · ${h(orderNumber(sale))}</p><p class="sales-calculation-identity">${h(t('localProduct'))}：${h([sale.local_sku,sale.local_product_name].filter(Boolean).join(' · ') || t('na'))} · ${h(t('localSpecification'))}：${h(sale.local_specification || (sale.product_id != null?'':t('na')))}</p><p class="sales-calculation-identity">${h(t('sourceProduct'))}：${h(sale.source_product_name || t('na'))} · ${h(t('sourceSpecification'))}：${h(sale.source_specification || t('na'))} · ${h(t('sourceQuantity'))}：${h(sale.source_quantity ?? t('na'))} · ${h(sale.transaction_type || '')}</p><p data-help-tip data-help-anchor="#sales-calc-title">${h(t('basis'))}</p>
             ${notes.map(note=>`<p class="msg msg-err" role="alert">${h(note)}</p>`).join('')}
             ${section('row',t('row'),t('rowHelp'),table([t('category'),t('raw'),t('shown'),t('unit'),t('calculation')],lines))}
             ${section('batches',t('batches'),t('batchHelp'),costBatches.length ? table([t('batch'),t('quantity'),t('unitCost'),...categories.map(t),t('total')],costBatches) : `<p>${h(t('noBatches'))}</p>`)}

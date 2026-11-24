@@ -15,7 +15,7 @@
         componentHelp:'选择本地商品并填写每份对应的库存数量（倍数）。库存数量 = 来源数量 × 倍数；可添加多个商品组成组合。退款、调整不强制出库。',
         product:'查找本地商品名称 / SKU / 规格',multiplier:'倍数',remove:'移除',needComponent:'请至少选择一个本地商品。',
         sourceSku:'来源 SKU ID',sourceSpecification:'来源规格（SKU 名称）',requestedSpecification:'导入指定规格/型号',
-        localSpecification:'本地商品规格/型号',missingSpecification:'待补充',
+        localSpecification:'本地商品规格/型号',
         saveMapping:'保存为此店铺来源标识的后续映射',effectiveFrom:'映射生效日期',sourceUnit:'来源数量单位',unit:'份',mappingSource:'本次保存标识',
         nameUnique:'我已核实此名称在本店只代表这组商品和装量',mappingHelp:'默认仅处理本次。保存映射后，同店相同来源标识可复用；历史已扣库记录保持原结果。',
         preview:'预览扣库',previewUnavailable:'扣库预览未加载，请更新后端后刷新页面。',
@@ -215,7 +215,7 @@
     const componentUnits=part=>text('units',{source:target.item.quantity,multiple:part.multiplier,count:target.item.quantity*part.multiplier});
     function renderParts() {
         node('pending-components').innerHTML=parts.map((part,index)=>`<div style="border-top:1px solid var(--line);padding:10px 0">
-            <strong>${h(part.name || `#${part.product_id}`)}</strong><p>${h(text('localSpecification'))}：${h(part.specification || text('missingSpecification'))}</p><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <strong>${h(part.name || `#${part.product_id}`)}</strong><p>${h(text('localSpecification'))}：${h(part.specification || '')}</p><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <label>${h(text('multiplier'))} <input type="number" min="1" max="2147483647" step="1" required data-part-index="${index}" value="${h(part.multiplier)}" style="width:100px"></label>
             <button type="button" class="btn btn-secondary" data-remove-part="${index}">${h(text('remove'))}</button></div>
             <small data-part-units="${index}">${h(componentUnits(part))}</small></div>`).join('');
@@ -256,7 +256,7 @@
         if(!mappingDialog){mappingDialog=document.createElement('dialog');mappingDialog.id='sales-mappings-dialog';
             mappingDialog.style.cssText='width:min(1100px,94vw);max-width:94vw;max-height:90vh;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:20px';document.body.appendChild(mappingDialog);}
         mappingDialog.innerHTML=`<h3>${h(text('mappings'))} · ${h(store.selectedOptions?.[0]?.textContent || storeId)}</h3><p>${h(text('mappingHistory'))}</p>
-            <div style="overflow:auto">${items.length?`<table style="min-width:760px"><thead><tr>${[text('mappingSource'),text('effectiveFrom'),text('localSpecification'),text('actions')].map(value=>`<th>${h(value)}</th>`).join('')}</tr></thead><tbody>${[...items].reverse().map(item=>`<tr><td>${h(text('mappingKinds')[item.key_kind])} · ${h(item.key_value)} · #${item.id}${item.is_active?'':` · ${h(text('disabledMapping'))}`}</td><td>${h(item.effective_from)}</td><td>${item.components.map(c=>h(`${c.sku} · ${c.name} · ${c.specification || text('missingSpecification')} × ${c.multiplier}`)).join('<br>')}</td><td><button class="btn btn-secondary" data-mapping-version="${item.id}">${h(text('newVersion'))}</button></td></tr>`).join('')}</tbody></table>`:`<p>${h(text('mappingEmpty'))}</p>`}</div>
+            <div style="overflow:auto">${items.length?`<table style="min-width:760px"><thead><tr>${[text('mappingSource'),text('effectiveFrom'),text('localSpecification'),text('actions')].map(value=>`<th>${h(value)}</th>`).join('')}</tr></thead><tbody>${[...items].reverse().map(item=>`<tr><td>${h(text('mappingKinds')[item.key_kind])} · ${h(item.key_value)} · #${item.id}${item.is_active?'':` · ${h(text('disabledMapping'))}`}</td><td>${h(item.effective_from)}</td><td>${item.components.map(c=>h(`${[c.sku,c.name,c.specification].filter(Boolean).join(' · ')} × ${c.multiplier}`)).join('<br>')}</td><td><button class="btn btn-secondary" data-mapping-version="${item.id}">${h(text('newVersion'))}</button></td></tr>`).join('')}</tbody></table>`:`<p>${h(text('mappingEmpty'))}</p>`}</div>
             <div class="page-action-buttons"><button type="button" class="btn btn-secondary" data-mapping-close>${h(text('cancel'))}</button></div>`;
         mappingDialog.onclick=event=>{
             if(event.target.closest('[data-mapping-close]'))mappingDialog.close();

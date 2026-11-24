@@ -4,7 +4,7 @@
     const messages = {'zh-CN': {
         loading:'正在查找商品…', empty:'没有匹配商品，请修改 SKU 或名称。',
         more:'仅显示前20项，请继续输入以缩小范围。', failed:'读取失败，请重试：',
-        specification:'规格/型号：',missingSpecification:'待补充',
+        specification:'规格/型号：',
     }};
     const text = key => (messages[document.documentElement.lang] || messages['zh-CN'])[key] || key;
     const h = value => escapeHtml(String(value ?? ''));
@@ -22,7 +22,7 @@
         function render(message='') {
             list.innerHTML=items.map((product,index)=>`<button type="button" role="option" tabindex="-1"
                 id="${h(input.id)}-option-${index}" data-product-search-option="${index}" ${config.optionAttributes?.(index) || ''}
-                aria-selected="${index===active}"><strong>${h(product.sku)}</strong><span>${h(product.name)}</span>${config.showSpecification?`<small>${h(text('specification'))}${h(product.specification || text('missingSpecification'))}</small>`:''}</button>`).join('');
+                aria-selected="${index===active}"><strong>${h(product.sku)}</strong><span>${h(product.name)}</span>${config.showSpecification && product.specification?`<small>${h(text('specification'))}${h(product.specification)}</small>`:''}</button>`).join('');
             status.textContent=message;popup.hidden=false;input.setAttribute('aria-expanded','true');
             if(active>=0)input.setAttribute('aria-activedescendant',`${input.id}-option-${active}`);
             else input.removeAttribute('aria-activedescendant');

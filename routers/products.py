@@ -4,10 +4,10 @@ from datetime import date, datetime
 from io import BytesIO
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from services.cost_layers import adjusted_cost_expression
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Request
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.comments import Comment
@@ -86,7 +86,7 @@ async def _save_product_image(normalized: tuple[str, bytes] | None) -> Path | No
 async def create_product(
     sku: str = Form(...),
     name: str = Form(...),
-    specification: str = Form(...),
+    specification: Annotated[str | None, Form()] = None,
     product_type: str = Form(default=PRODUCT_TYPE_STABLE),
     safe_stock_quantity: int = Form(default=0),
     image: UploadFile | None = File(None),
@@ -403,15 +403,21 @@ async def update_product(
     product_id: int,
     sku: str = Form(...),
     name: str = Form(...),
-    specification: str = Form(...),
+    specification: Annotated[str | None, Form()] = None,
     product_type: str | None = Form(default=None),
     safe_stock_quantity: int | None = Form(default=None),
     image: UploadFile | None = File(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    request: Request = None,
 ):
     """编辑商品 - 所有角色可操作。"""
-    specification = normalize_product_specification(specification)
+    # Form 将空字符串解析为 None；保留字段是否提交，区分旧调用省略和主动清空。
+    specification_supplied = specification is not None or (
+        request is not None and "specification" in await request.form()
+    )
+    if specification_supplied:
+        specification = normalize_product_specification(specification)
     product = await db.get(Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="商品不存在")
@@ -424,7 +430,8 @@ async def update_product(
     normalized_image = await read_product_image(image)
     product.sku = sku
     product.name = name
-    product.specification = specification
+    if specification_supplied:
+        product.specification = specification
     if product_type is not None or safe_stock_quantity is not None:
         previous_product_type = product.product_type
         previous_safe_stock_quantity = product.safe_stock_quantity

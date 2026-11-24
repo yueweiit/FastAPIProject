@@ -112,7 +112,7 @@ class UserResponse(BaseModel):
 class ProductCreate(BaseModel):
     sku: str = Field(..., max_length=64, examples=["SKU-001"])
     name: str = Field(..., max_length=255, examples=["蓝牙耳机"])
-    specification: str = Field(..., min_length=1, max_length=255, examples=["黑色 / 标准版"])
+    specification: str | None = Field(default=None, max_length=255, examples=["黑色 / 标准版"])
 
     @field_validator("specification", mode="before")
     @classmethod

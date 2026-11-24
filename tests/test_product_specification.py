@@ -1,10 +1,12 @@
-"""规格必填、历史空值、导入导出与兼容 DDL；仅隔离 SQLite/ASGI。"""
+"""规格选填、历史空值、导入导出与兼容 DDL；仅隔离 SQLite/ASGI。"""
 
 import unittest
 from datetime import datetime
 from decimal import Decimal
 from io import BytesIO
 from types import SimpleNamespace
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -19,7 +21,7 @@ from models import InventoryBatch, Product, ProductImpairmentRule
 from routers.products import router
 from schemas import ProductCreate, ProductImportRow
 from services.product_import import (
-    IMPORT_HEADERS, build_product_import_result, confirm_product_import, issue_product_import_token,
+    IMPORT_HEADERS, build_product_import_result, build_product_import_template, confirm_product_import, issue_product_import_token,
     parse_product_import, preview_product_import,
 )
 from services.product_specification import normalize_product_specification, specification_export_text
@@ -49,16 +51,27 @@ class ProductSpecificationApiTests(unittest.IsolatedAsyncioTestCase):
         self.session.close()
         self.engine.dispose()
 
-    async def test_create_requires_nonblank_bounded_specification_without_writes(self):
-        for value in (None, "", " \t\n ", "规" * 256):
+    async def test_create_accepts_missing_or_blank_specifications_as_null(self):
+        for index, value in enumerate((None, "", " \t\n ")):
             with self.subTest(value=value):
-                data = {"sku": "NEW", "name": "商品"}
+                data = {"sku": f"NEW-{index}", "name": "商品"}
                 if value is not None:
                     data["specification"] = value
                 response = await self.client.post("/products", data=data)
-                self.assertEqual(response.status_code, 422, response.text)
-                self.assertEqual(self.session.scalar(select(func.count()).select_from(Product)), 0)
-                self.assertEqual(self.session.scalar(select(func.count()).select_from(ProductImpairmentRule)), 0)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIsNone(response.json()["specification"])
+                self.assertIsNone(self.session.get(Product, response.json()["id"]).specification)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(Product)), 3)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(ProductImpairmentRule)), 3)
+
+    async def test_create_rejects_overlong_specification_without_writes(self):
+        response = await self.client.post("/products", data={
+            "sku": "LONG", "name": "商品", "specification": "规" * 256,
+        })
+        self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(response.json()["detail"]["code"], "product_specification_too_long")
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(Product)), 0)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(ProductImpairmentRule)), 0)
 
     async def test_all_roles_can_save_and_read_trimmed_specifications(self):
         for role in ("admin", "operator", "viewer"):
@@ -77,20 +90,20 @@ class ProductSpecificationApiTests(unittest.IsolatedAsyncioTestCase):
         })
         self.assertEqual(duplicate.status_code, 400)
 
-    async def test_legacy_product_is_readable_and_requires_specification_when_edited(self):
+    async def test_edit_legacy_blank_specification_and_preserve_omitted_or_clear_submitted_value(self):
         legacy = Product(sku="OLD", name="历史商品", product_type="stable", safe_stock_quantity=20)
         self.session.add(legacy)
         self.session.commit()
         listed = (await self.client.get("/products?page=1")).json()["items"][0]
         self.assertIsNone(listed["specification"])
-        for value in (None, "", "  ", "x" * 256):
-            data = {"sku": "OLD", "name": "不应改名"}
+        for value in (None, "", "  "):
+            data = {"sku": "OLD", "name": "历史商品已编辑"}
             if value is not None:
                 data["specification"] = value
             response = await self.client.put(f"/products/{legacy.id}", data=data)
-            self.assertEqual(response.status_code, 422, response.text)
+            self.assertEqual(response.status_code, 200, response.text)
             self.session.refresh(legacy)
-            self.assertEqual(legacy.name, "历史商品")
+            self.assertEqual(legacy.name, "历史商品已编辑")
             self.assertIsNone(legacy.specification)
         response = await self.client.put(f"/products/{legacy.id}", data={
             "sku": "OLD", "name": "历史商品", "specification": " 白色 / L ",
@@ -99,12 +112,29 @@ class ProductSpecificationApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["specification"], "白色 / L")
         self.assertEqual(response.json()["safe_stock_quantity"], 20)
         self.assertEqual(self.session.scalar(select(func.count()).select_from(ProductImpairmentRule)), 0)
+        for as_multipart in (False, True):
+            data = {"sku": "OLD", "name": "历史商品"}
+            payload = {"files": {key: (None, value) for key, value in data.items()}} if as_multipart else {"data": data}
+            response = await self.client.put(f"/products/{legacy.id}", **payload)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["specification"], "白色 / L")
         response = await self.client.put(f"/products/{legacy.id}", data={
-            "sku": "OLD", "name": "历史商品", "specification": " ",
+            "sku": "OLD", "name": "不应改名", "specification": "x" * 256,
         })
         self.assertEqual(response.status_code, 422)
         self.session.refresh(legacy)
-        self.assertEqual(legacy.specification, "白色 / L")
+        self.assertEqual((legacy.name, legacy.specification), ("历史商品", "白色 / L"))
+        for value in ("", " \t\n "):
+            legacy.specification = "白色 / L"
+            self.session.commit()
+            response = await self.client.put(f"/products/{legacy.id}", files={
+                "sku": (None, "OLD"), "name": (None, "历史商品"), "specification": (None, value),
+            })
+            self.assertEqual(response.status_code, 200, response.text)
+            self.session.refresh(legacy)
+            self.assertIsNone(legacy.specification)
+            self.assertEqual(legacy.safe_stock_quantity, 20)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(ProductImpairmentRule)), 0)
 
     async def test_maximum_length_and_special_text_round_trip(self):
         for index, specification in enumerate(("规" * 255, "🔵" * 255, '<img src=x onerror="alert(1)">', "000123")):
@@ -199,7 +229,8 @@ class ProductSpecificationApiTests(unittest.IsolatedAsyncioTestCase):
         imported = parse_product_import("export.xlsx", response.content)
         self.assertEqual(imported.rows[0].specification, "=1+1")
         self.assertFalse(imported.rows[0].errors)
-        self.assertEqual(imported.rows[1].status, "error")
+        self.assertFalse(imported.rows[1].errors)
+        self.assertEqual(imported.rows[1].specification, "")
 
 
 class ProductSpecificationImportTests(unittest.IsolatedAsyncioTestCase):
@@ -217,7 +248,7 @@ class ProductSpecificationImportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(db.added[0].specification, "黑色 标准版 大号 USB")
 
     async def test_invalid_specifications_block_preview_and_are_field_errors(self):
-        values = (None, "", " \t ", 123, "x" * 256, "=1+1", "#N/A")
+        values = (123, "x" * 256, "=1+1", "#N/A")
         content = spreadsheet([[f"SKU-{i}", "商品", spec, "新品", 0] for i, spec in enumerate(values)])
         parsed = parse_product_import("spec.xlsx", content)
         self.assertTrue(all(row.status == "error" for row in parsed.rows))
@@ -236,14 +267,38 @@ class ProductSpecificationImportTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(parsed.rows[0].errors)
             self.assertEqual(parsed.rows[0].specification, "0007 / 蓝色")
 
-    def test_old_template_requires_new_column_and_duplicate_aliases_are_rejected(self):
-        for headers, message in (
-            (("SKU", "商品名称", "商品类型", "安全库存"), "缺少必要列：规格/型号"),
-            ((*IMPORT_HEADERS, "规格"), "重复列"),
+    async def test_blank_specifications_and_old_templates_can_be_confirmed_without_overwriting_existing_skus(self):
+        for headers, rows in (
+            (IMPORT_HEADERS, [[f"SKU-{i}", "商品", value, "新品", 0] for i, value in enumerate((None, "", " \t "))]),
+            (("SKU", "商品名称", "商品类型", "安全库存"), [["SKU-0", "商品", "新品", 0], ["SKU-1", "商品", "新品", 0]]),
         ):
-            with self.assertRaises(HTTPException) as error:
-                parse_product_import("old.xlsx", spreadsheet([], headers))
-            self.assertIn(message, error.exception.detail)
+            with self.subTest(headers=headers):
+                parsed = parse_product_import("optional.xlsx", spreadsheet(rows, headers))
+                db = FakeSession(parsed.rows, existing={"SKU-0": (10, "已有商品")})
+                preview = await preview_product_import(db, parsed)
+                self.assertTrue(preview.can_import)
+                self.assertEqual(preview.skipped_count, 1)
+                self.assertEqual(preview.error_count, 0)
+                self.assertTrue(all(row.specification == "" for row in preview.rows))
+                token = issue_product_import_token(parsed, preview, 1, "fixture-only")
+                result = await confirm_product_import(db, parsed, token, 1, "fixture-only")
+                self.assertEqual(result.created_count, len(rows) - 1)
+                products = [item for item in db.added if isinstance(item, Product)]
+                self.assertEqual(len(products), len(rows) - 1)
+                self.assertTrue(all(item.specification is None and item.sku != "SKU-0" for item in products))
+                sheet = load_workbook(build_product_import_result(result.rows)).active
+                self.assertTrue(all(sheet.cell(row, 4).value is None for row in range(2, sheet.max_row + 1)))
+
+    def test_template_allows_blank_specification_and_duplicate_aliases_are_rejected(self):
+        # openpyxl 3.1.2 读取时会覆盖 allowBlank，直接核对用户收到的文件规则。
+        with ZipFile(build_product_import_template()) as archive:
+            sheet = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+        rule = next(rule for rule in sheet.findall(".//{*}dataValidation") if rule.get("sqref") == "C2:C2001")
+        self.assertEqual(rule.get("allowBlank"), "1")
+        self.assertEqual((rule.findtext("{*}formula1"), rule.findtext("{*}formula2")), ("0", "255"))
+        with self.assertRaises(HTTPException) as error:
+            parse_product_import("duplicate.xlsx", spreadsheet([], (*IMPORT_HEADERS, "规格")))
+        self.assertIn("重复列", error.exception.detail)
 
     def test_result_export_does_not_interpret_specification_as_formula(self):
         sheet = load_workbook(build_product_import_result([
@@ -279,10 +334,13 @@ class ProductSpecificationCompatibilityTests(unittest.TestCase):
         finally:
             engine.dispose()
 
-    def test_schema_normalizes_and_rejects_whitespace(self):
+    def test_schema_normalizes_blank_to_null_and_rejects_invalid_text(self):
         self.assertEqual(ProductCreate(sku="A", name="商品", specification=" 标准款 ").specification, "标准款")
         self.assertEqual(ProductCreate(sku="A", name="商品", specification="黑色\r\n标准版").specification, "黑色 标准版")
-        for value in ("   ", "黑色\x0b标准版", "\ud800"):
+        self.assertIsNone(ProductCreate(sku="A", name="商品").specification)
+        for value in (None, "", " \t\n "):
+            self.assertIsNone(ProductCreate(sku="A", name="商品", specification=value).specification)
+        for value in (123, "黑色\x0b标准版", "\ud800"):
             with self.assertRaises(ValueError):
                 ProductCreate(sku="A", name="商品", specification=value)
 

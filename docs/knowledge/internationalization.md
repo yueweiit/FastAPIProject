@@ -10,9 +10,9 @@
 
 ## 当前能力
 
-销售的来源规格、本地商品及本地规格列集中于[static/sales-fields.zh-CN.json](../../static/sales-fields.zh-CN.json)；确认窗口、候选及历史待补充提示复用sales-pending.js、sales-ledger.js、product-search.js的局部zh-CN字典。source_specification/local_specification等API字段保持语言中立，平台SKU名称和本地规格均为业务原文，不自动翻译后匹配。销售可选规格导入表头集中于[services/sales_product_identity.py](../../services/sales_product_identity.py)，Excel仍沿用中文表头契约，新增列追加表尾。尚无其他界面语言或新增翻译依赖。
+销售的来源规格、本地商品及本地规格列集中于[static/sales-fields.zh-CN.json](../../static/sales-fields.zh-CN.json)；确认窗口、候选及规格标签复用sales-pending.js、sales-ledger.js、product-search.js的局部zh-CN字典。source_specification/local_specification等API字段保持语言中立，平台SKU名称和本地规格均为业务原文，不自动翻译后匹配。销售可选规格导入表头集中于[services/sales_product_identity.py](../../services/sales_product_identity.py)，Excel仍沿用中文表头契约，新增列追加表尾。尚无其他界面语言或新增翻译依赖。
 
-商品规格新增标签、必填/超长/非法字符错误、换行规则帮助、占位、历史待补充提示集中于两份首页`productTypeText`局部zh-CN字典（specification*键），按页面lang回退中文；稳定API字段为`specification`，写入错误使用`product_specification_required/product_specification_too_long/product_specification_invalid_characters`。后端Excel标签及写入校验文案集中于[product_specification.py](../../services/product_specification.py)，表头同时接受“规格/型号”“规格”“型号”和specification。规格是用户业务文本，换行按单行规则转为空格，页面转义、Excel按字面量写入；历史不支持字符以稳定码点 `[U+XXXX]` 展示并附中文说明批注，不改原数据；操作日志字段标签复用operation-logs.js字典。当前仍仅中文，无新增语言、翻译依赖或业务数据翻译模型。
+商品规格选填标签、文本类型/超长/非法字符错误、换行规则帮助、输入示例及留空说明集中于两份首页`productTypeText`局部zh-CN字典（specification*键），按页面lang回退中文；稳定API字段为`specification`，写入错误使用`product_specification_invalid_type/product_specification_too_long/product_specification_invalid_characters`。后端Excel标签及写入校验文案集中于[product_specification.py](../../services/product_specification.py)，表头同时接受“规格/型号”“规格”“型号”和specification。规格是用户业务文本，换行按单行规则转为空格，页面转义、Excel按字面量写入；历史不支持字符以稳定码点 `[U+XXXX]` 展示并附中文说明批注，不改原数据；操作日志字段标签复用operation-logs.js字典。当前仍仅中文，无新增语言、翻译依赖或业务数据翻译模型。
 
 截至 2026-10-19 静态核对，项目是简体中文界面，尚未建立通用国际化框架、翻译资源目录、统一翻译函数、语言选择器或用户语言偏好。不能将跨境店铺、多币种或 OA 中西文表单名描述为已支持多语言界面。
 

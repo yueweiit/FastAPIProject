@@ -1,4 +1,4 @@
-"""商品规格的写入校验及中文导出标签；历史空值仅在读取时兼容。"""
+"""商品选填规格的写入校验及中文导出标签；空值统一保留为 NULL。"""
 
 import re
 
@@ -11,23 +11,25 @@ SPECIFICATION_LABEL = "规格/型号"
 INVALID_SPECIFICATION_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 SPECIFICATION_LINE_BREAKS = re.compile(r"\r\n|[\r\n\u2028\u2029]")
 SPECIFICATION_ERRORS = {
-    "product_specification_required": "请填写规格/型号",
+    "product_specification_invalid_type": "规格/型号请按文本填写",
     "product_specification_too_long": "规格/型号不能超过 255 字符",
     "product_specification_invalid_characters": "规格/型号含无法保存到 Excel 的字符，请删除后重试",
 }
 SPECIFICATION_EXPORT_WARNING = "原规格含 Excel 不支持的字符，已用 [U+XXXX] 标出；原始数据未修改，请核对后在商品编辑中修正。"
 
 
-def normalize_product_specification(value: str | None) -> str:
+def normalize_product_specification(value: str | None) -> str | None:
+    if value is None:
+        return None
     code = None
     if not isinstance(value, str):
-        code = "product_specification_required"
+        code = "product_specification_invalid_type"
     elif INVALID_SPECIFICATION_CHARACTERS.search(value):
         code = "product_specification_invalid_characters"
     else:
         value = SPECIFICATION_LINE_BREAKS.sub(" ", value).strip()
         if not value:
-            code = "product_specification_required"
+            return None
         elif len(value) > SPECIFICATION_MAX_LENGTH:
             code = "product_specification_too_long"
     if code:

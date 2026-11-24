@@ -6,7 +6,7 @@
         row:'来源行 / 订单',source:'来源商品 / 编码',quantity:'销售数量',local:'本地 SKU / 商品 / 规格',
         multiplier:'每份库存数量',required:'所需库存数量',available:'销售日可用',deduct:'本次扣库数量',status:'处理结果',
         method:'匹配依据',store_mapping:'已确认店铺映射',local_sku:'明确本地 SKU',legacy_sku:'旧 CSV 编码',manual:'本次人工确认',
-        pending:'待确认，不扣库',settlement:'仅结算，不扣库',ready:'预计出库',missing:'待补充',na:'—',
+        pending:'待确认，不扣库',settlement:'仅结算，不扣库',ready:'预计出库',na:'—',
         cancel:'返回',confirm:'确认此计划并提交',summary:'本次预计扣减 {units} 个库存单位；待确认 {pending} 行；重复跳过 {duplicates} 行。',
         invalid:'预览数据不可用，请更新后端后重新预览。',version:'映射版本',
     }};
@@ -33,7 +33,7 @@
             if(row.status==='pending')pending++;
             return (row.components?.length?row.components:[null]).map(part=>{
                 units+=Number(part?.deduct_quantity || 0);
-                const local=part?[part.sku,part.name,part.specification || t('missing')].join(' · '):t('na');
+                const local=part?[part.sku,part.name,part.specification].filter(Boolean).join(' · '):t('na');
                 const method=row.resolution?t(row.resolution.method)+(row.resolution.version_id?` / ${t('version')} ${row.resolution.version_id}`:''):t('na');
                 const quantity=`${row.source_quantity}${row.resolution?.source_unit?' '+row.resolution.source_unit:''}`;
                 const values=[`${row.row} / ${row.order_no}`,`${row.source_sku || ''} · ${row.product_name || ''}`,quantity,local,method,
