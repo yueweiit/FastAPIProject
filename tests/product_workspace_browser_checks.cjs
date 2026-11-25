@@ -138,6 +138,8 @@ async function main() {
             check(await evaluate('document.querySelector(".product-table thead").textContent'), '产品图片SKU产品名称规格/型号操作');
             check(await evaluate('document.querySelectorAll("#products-tbody tr").length'),20);
             check(await evaluate('document.querySelector("#product-editor").open'),false);
+            check(await evaluate('document.querySelector("#product-completeness")'),null);
+            check(await evaluate('[...document.querySelectorAll("#products-tbody tr:first-child .product-row-actions button")].map(node=>node.textContent)'),['编辑商品','查看库存','删除']);
             check(await evaluate('!!window.catalogInjected'),false);
             await query('  狗狗  ');check(await evaluate('document.querySelector("#product-keyword").value'),'狗狗');
             await evaluate('goProductPage(2)');await ready();check(calls.at(-1).searchParams.get('page'),'2');
@@ -158,9 +160,7 @@ async function main() {
             await click('#product-options [role=option]');await ready();
             check(await evaluate('currentProductList.length'),1);check(await evaluate('document.querySelector("#gallery-grid a[download]").getAttribute("href")'),'/uploads/product-fixture.png');
             await query('XL');check(calls.at(-1).searchParams.get('search_specification'),'true');check(await evaluate('productTotal'),25);
-            await evaluate('document.querySelector("#product-completeness").value="missing_specification";searchProducts()');await ready();check(await evaluate('productTotal'),0);
-            await fill('#product-keyword','');await evaluate('searchProducts()');await ready();check(await evaluate('productTotal'),16);
-            await evaluate('document.querySelector("#product-completeness").value="missing_image";searchProducts()');await ready();check(await evaluate('productTotal'),10);
+            await fill('#product-keyword','');await evaluate('searchProducts()');await ready();check(await evaluate('productTotal'),initial().length);
             await evaluate('clearProductSearch()');await ready();await query('A&B /?+%_#');
             check(calls.at(-1).searchParams.get('keyword'),'A&B /?+%_#');check(await evaluate('document.querySelectorAll("#gallery-grid [onerror], #gallery-grid b").length'),0);
             await query('不存在');check(await evaluate('document.querySelector("#gallery-grid").textContent.includes("没有匹配")'),true);
@@ -188,9 +188,12 @@ async function main() {
             check(await evaluate('document.querySelector("#product-editor-status").textContent'),'模拟保存失败');
             await fill('#p-sku','REFRESH-FAIL');await evaluate('saveProduct()');check(await evaluate('document.querySelector("#product-editor").open'),false);
             check(await evaluate('document.querySelector("#msg").textContent.includes("已保存")'),true);await evaluate('refreshProducts()');await ready();
-            await evaluate('exportSelectedProducts()');check(exportRequests.at(-1).searchParams.getAll('product_ids'),selection.map(String));
-            await evaluate('exportAllProducts()');check(exportRequests.at(-1).searchParams.getAll('product_ids'),[],'all export ignores selection explicitly');
+            await click('.product-export-menu summary');await click('#product-export-selected');await until(()=>exportRequests.length>0,'selected product export');check(exportRequests.at(-1).searchParams.getAll('product_ids'),selection.map(String));
+            const beforeAllExport=exportRequests.length;
+            await click('.product-export-menu summary');await click('[onclick="exportAllProducts()"]');await until(()=>exportRequests.length>beforeAllExport,'all product export');check(exportRequests.at(-1).searchParams.getAll('product_ids'),[],'all export ignores selection explicitly');
             const exported=exportRequests.length;await evaluate('clearProductSelection();exportSelectedProducts()');check(await evaluate('document.querySelector("#product-export-selected").disabled'),true);check(exportRequests.length,exported);
+            const singleProductId=await evaluate('currentProductList[0].id');await click('#gallery-grid [data-product-select]');
+            await click('.product-export-menu summary');await click('#product-export-selected');await until(()=>exportRequests.length>exported,'single selected product export');check(exportRequests.at(-1).searchParams.getAll('product_ids'),[String(singleProductId)]);
             await query('EXACT');await evaluate('openProductInventory(1)');await until(()=>inventoryCalls.length>0,'inventory link');
             check(inventoryCalls.at(-1).searchParams.get('product_id'),'1');check(await evaluate('document.querySelector("#sec-inventory").classList.contains("active")'),true);
             check(await evaluate('document.querySelectorAll("#iw-tbody tr").length'),1);

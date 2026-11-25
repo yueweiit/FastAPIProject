@@ -6,7 +6,7 @@
 
 待确认分类、筛选/清空/所选及筛选重试、单条商品/组合确认、倍数换算、结果/错误、只读降级等文案集中在[static/sales-pending.js](../../static/sales-pending.js)的局部zh-CN字典，复用ProductSearch的候选状态，按页面lang回退中文。API以reason_code及稳定错误码表达状态，组件按product_id/multiplier传递，前端不解析中文做业务判断；原始名称、文件及原因文本转义展示。分类兼容旧自由文本由[services/sales_pending.py](../../services/sales_pending.py)统一识别，Excel分类中文标签集中于同文件REASON_LABELS，沿用现有中文导出契约；无新增支持语言或依赖。
 
-商品工作台合并后，列表/图册、资料筛选、侧栏、核算设置、明确导出范围及保存状态等新增文本集中在两份首页的productTypeText局部zh-CN字典。界面“跌价计提类型”仍对应product_type，Excel沿用“商品类型”表头及旧别名，不随界面标签修改导入契约；search_specification、completeness与内部筛选编码保持语言中立，无新增语言或依赖。
+商品工作台合并后，列表/图册、搜索、侧栏、核算设置、明确导出范围及保存状态等新增文本集中在两份首页的productTypeText局部zh-CN字典。行内导出及资料完整性下拉移除后，同步删除其专用文本键，空结果提示仅引导调整搜索。界面“跌价计提类型”仍对应product_type，Excel沿用“商品类型”表头及旧别名，不随界面标签修改导入契约；search_specification、兼容保留的后端completeness与内部筛选编码保持语言中立，无新增语言或依赖。
 
 ## 当前能力
 

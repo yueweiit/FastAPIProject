@@ -585,7 +585,6 @@
         .product-workspace .product-search { flex:1; margin:0; flex-wrap:wrap; }
         .product-keyword-picker { flex:1 1 260px; max-width:460px; min-width:0; }
         .product-workspace .product-search input { width:100%; min-width:0; }
-        .product-search select { padding:10px 12px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--ink); font:inherit; max-width:100%; }
         .product-view-switch { display:flex; gap:4px; }
         .product-view-switch [aria-selected="true"] { color:var(--accent); border-color:var(--accent); background:#fff3f6; }
         .product-table td:nth-child(4), .product-table td:nth-child(5) { min-width:180px; overflow-wrap:anywhere; white-space:normal; }
@@ -612,7 +611,6 @@
         .product-export-menu summary { list-style:none; }
         .product-workspace summary.btn { display:inline-block; padding:10px 18px; border:1px solid var(--line); border-radius:7px; cursor:pointer; font-size:13px; font-weight:700; list-style:none; }
         .product-workspace summary.btn::after { content:' ▾'; }
-        .product-row-actions summary.btn { padding:6px 10px; font-size:12px; }
         .product-workspace button:disabled, .product-editor button:disabled { opacity:.5; cursor:not-allowed; }
         .product-export-actions { position:absolute; right:0; top:calc(100% + 6px); z-index:5; display:grid; gap:6px; width:180px; padding:8px; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #17243c1a; }
         .product-editor { position:fixed; inset:0; margin:0 0 0 auto; width:min(560px,100vw); max-width:100vw; height:100%; max-height:100dvh; padding:24px; border:0; border-left:1px solid var(--line); background:var(--surface); color:var(--ink); box-shadow:-12px 0 40px #17243c26; overflow:auto; }
@@ -790,7 +788,6 @@
                             <div id="product-popup" class="inventory-product-popup" hidden><div id="product-options" class="inventory-product-options" role="listbox"></div><p id="product-search-status" class="inventory-product-search-status" role="status" aria-live="polite"></p></div>
                         </div>
                     </div>
-                    <select id="product-completeness" onchange="searchProducts()"><option value="all" data-product-type-text="allProducts"></option><option value="missing_specification" data-product-type-text="missingSpecification"></option><option value="missing_image" data-product-type-text="missingImage"></option></select>
                     <button type="submit" class="btn btn-secondary" data-product-type-text="search"></button>
                     <button type="button" class="btn btn-secondary" onclick="clearProductSearch()" data-product-type-text="clear"></button>
                     <button type="button" class="btn btn-secondary" onclick="refreshProducts()" data-product-type-text="refresh"></button>
@@ -1600,12 +1597,11 @@ function productTypeText(key) {
         accounting: '核算设置', impairmentType: '跌价计提类型', safeStock: '安全库存',
         safeStockHelp: '安全库存仅对稳健商品生效，同时影响库存预警和跌价计提。修改后沿用现有生效历史规则。',
         import: '批量导入', export: '导出', exportSelected: '导出所选商品', exportAll: '导出全部商品',
-        exportOne: '导出此商品', actions: '操作', viewInventory: '查看库存', more: '更多', delete: '删除',
+        actions: '操作', viewInventory: '查看库存', delete: '删除',
         search: '搜索', clear: '清空', refresh: '刷新', searchPlaceholder: '搜索商品名称、SKU 或规格',
-        allProducts: '全部商品', missingSpecification: '缺少规格', missingImage: '缺少图片', completeness: '资料完整性',
         listView: '列表', galleryView: '图册', viewMode: '商品展示方式', searchResults: '商品搜索结果',
         selectProduct: '选择商品', selectPage: '选择当前页商品', selected: '已选商品：', clearSelection: '清空选择',
-        empty: '没有匹配的商品，请调整搜索或筛选条件。', loading: '正在读取商品…', loadFailed: '商品加载失败：',
+        empty: '没有匹配的商品，请调整搜索条件。', loading: '正在读取商品…', loadFailed: '商品加载失败：',
         noImage: '无图', viewImage: '查看产品图片', downloadImage: '下载图片', cancelImage: '取消更换图片',
         identityRequired: '请填写 SKU 和产品名称', saved: '商品保存成功', savedRefreshFailed: '商品已保存，但列表刷新失败，请点击刷新重试。',
         deleteConfirm: '确认删除该商品？有关联记录的商品将由系统阻止删除。', deleted: '商品已删除',
@@ -1878,7 +1874,6 @@ let productPage = 1;
 let productPageSize = 20;
 let productTotal = 0;
 let productKeyword = '';
-let productCompleteness = 'all';
 let productView = 'list';
 let productRequestId = 0;
 let productSessionId = 0;
@@ -1898,10 +1893,8 @@ function productRowActions(product) {
     return `<div class="product-row-actions">
         <button type="button" class="btn btn-secondary" onclick="openEditProduct(${id})">${label('edit')}</button>
         <button type="button" class="btn btn-secondary" onclick="openProductInventory(${id})">${label('viewInventory')}</button>
-        <details><summary class="btn btn-secondary">${label('more')}</summary>
-            <button type="button" class="btn btn-secondary" onclick="exportProduct(${id})">${label('exportOne')}</button>
-            <button type="button" class="btn btn-secondary" onclick="deleteProduct(${id})">${label('delete')}</button>
-        </details></div>`;
+        <button type="button" class="btn btn-secondary" onclick="deleteProduct(${id})">${label('delete')}</button>
+        </div>`;
 }
 
 function renderProductPage() {
@@ -1931,7 +1924,7 @@ async function loadProducts() {
     productSearchControl?.close();
     const request = ++productRequestId, session = productSessionId, user = CURRENT_USER_ID;
     const current = () => request === productRequestId && session === productSessionId && user === CURRENT_USER_ID && !!user;
-    const params = new URLSearchParams({page: productPage, page_size: productPageSize, search_specification: true, completeness: productCompleteness});
+    const params = new URLSearchParams({page: productPage, page_size: productPageSize, search_specification: true});
     if (productKeyword) {params.set('keyword', productKeyword); params.set('prioritize_exact_sku', 'true');}
     const status = document.getElementById('product-list-status');
     status.textContent = productTypeText('loading');
@@ -1956,20 +1949,17 @@ async function loadProducts() {
 function searchProducts() {
     productKeyword = document.getElementById('product-keyword').value.trim();
     document.getElementById('product-keyword').value = productKeyword;
-    productCompleteness = document.getElementById('product-completeness').value;
     productPage = 1;
     return loadProducts().catch(() => {});
 }
 
 function refreshProducts() {
     return document.getElementById('product-keyword').value.trim() === productKeyword
-        && document.getElementById('product-completeness').value === productCompleteness
         ? loadProducts().catch(() => {}) : searchProducts();
 }
 
 function clearProductSearch() {
     document.getElementById('product-keyword').value = '';
-    document.getElementById('product-completeness').value = 'all';
     return searchProducts();
 }
 
@@ -2353,7 +2343,6 @@ async function downloadProductExport(ids) {
     } catch (error) {if (current()) showMsg(escapeHtml(error.message), false);}
 }
 
-function exportProduct(id) { return downloadProductExport([id]); }
 function exportSelectedProducts() { if (selectedProductIds.size) return downloadProductExport([...selectedProductIds]); }
 function exportAllProducts() { return downloadProductExport([]); }
 
@@ -2364,7 +2353,7 @@ function initializeProductSearch() {
     productSearchControl = window.ProductSearch.bind({
         input, popup: document.getElementById('product-popup'), list: document.getElementById('product-options'), status: document.getElementById('product-search-status'),
         messages: {empty: productTypeText('empty')},
-        queryParams: () => ({search_specification: true, completeness: document.getElementById('product-completeness').value}),
+        queryParams: () => ({search_specification: true}),
         enabled: () => !!CURRENT_USER_ID && document.getElementById('sec-products').classList.contains('active'),
         captureContext: () => {const request = productRequestId, session = productSessionId, user = CURRENT_USER_ID; return () => request === productRequestId && session === productSessionId && user === CURRENT_USER_ID && !!user;},
         onSelect: product => {input.value = product.sku; searchProducts();},
@@ -2376,7 +2365,6 @@ function initializeProductWorkspace() {
     input.placeholder = productTypeText('searchPlaceholder');
     input.setAttribute('aria-label', productTypeText('searchPlaceholder'));
     document.getElementById('product-options').setAttribute('aria-label', productTypeText('searchResults'));
-    document.getElementById('product-completeness').setAttribute('aria-label', productTypeText('completeness'));
     document.getElementById('product-view-switch').setAttribute('aria-label', productTypeText('viewMode'));
     document.getElementById('product-select-all').setAttribute('aria-label', productTypeText('selectPage'));
     if (!productWorkspaceInitialized) {
@@ -2398,11 +2386,10 @@ function initializeProductWorkspace() {
 function resetProductSession() {
     productSessionId++; productRequestId++;
     productSearchControl?.close();
-    productKeyword = ''; productCompleteness = 'all'; productPage = 1; productPageSize = 20; productTotal = 0;
+    productKeyword = ''; productPage = 1; productPageSize = 20; productTotal = 0;
     currentProductList = []; selectedProductIds.clear();
     setProductSaving(false); closeEditProduct(true);
     document.getElementById('product-keyword').value = '';
-    document.getElementById('product-completeness').value = 'all';
     for (const id of ['products-tbody', 'gallery-grid', 'products-pagination', 'product-list-status']) document.getElementById(id).replaceChildren();
     document.querySelectorAll('.product-export-menu').forEach(node => {node.open = false;});
     setProductView('list'); updateProductSelectionState();

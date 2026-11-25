@@ -7,11 +7,11 @@
 | 类型/安全库存/旧规则兼容 | productTypeValue、productTypeLabel、productTypeText、toggleSafeStockField | effective_product_type、protected_stock_quantity | services/inventory_impairment.py；商品及规则历史 |
 | 商品批量新增 | openProductImport、previewProductImport、confirmProductImport | preview_products、import_products | services/product_import.py；products、product_impairment_rules |
 | 模板/结果清单 | downloadProductImportTemplate、downloadProductImportResult | product_import_template、export_product_import_result | openpyxl；ProductImportResponse、ProductImportResultRequest |
-| 统一列表/图册、搜索/资料筛选/分页 | loadProducts、searchProducts、refreshProducts、setProductView、renderProductPage | list_products、_product_summary_stmt、_enrich_product | products、inventory_batches |
+| 统一列表/图册、搜索/分页 | loadProducts、searchProducts、refreshProducts、setProductView、renderProductPage | list_products、_product_summary_stmt、_enrich_product | products、inventory_batches |
 | 库存/销售/图册商品联想 | ProductSearch.bind（static/product-search.js） | list_products(prioritize_exact_sku=true) | CASE精确SKU优先在LIMIT/OFFSET之前；默认列表顺序不变 |
 | 下拉选项 | loadProductOptions、loadSkuOptions | list_product_options | products |
 | 图片/联想/会话隔离 | initializeProductSearch、updateProductImagePreview、resetProductSession；共用查询与下载处理 | read_product_image、_save_product_image、ProductImageFiles；list_products | services/product_images.py；uploads 文件、products.image；productTypeText局部字典 |
-| 单条/所选/全部导出 | downloadProductExport、exportProduct、exportSelectedProducts、exportAllProducts | export_products | 商品、批次；openpyxl/Pillow |
+| 顶部所选/全部导出（选一条即单个商品） | downloadProductExport、exportSelectedProducts、exportAllProducts | export_products | 商品、批次；openpyxl/Pillow |
 | 删除 | deleteProduct | delete_product | products、platform_sku_components 等引用 |
 | 平台 SKU 设置 | loadPlatformSkuMappings、savePlatformSkuMapping | 财务主数据路由 | 见[主数据代码映射](../finance-masters/code-map.md) |
 
@@ -27,7 +27,7 @@
 
 同日审查修复：规格使用 textarea 保留录入时的换行，页面/API/Excel写入统一转为空格，原文中的XML非法字符直接拒绝；历史异常规格及结果清单使用可见码点和单元格批注导出，不修改原值。补充创建/编辑拒绝且无写入、CRLF归一后长度边界、Excel预览/确认、异常记录整批导出及源值保留回归。全量702项unittest、两份页面160项商品检查、210项认证检查通过；Chrome再次验证两份页面及390像素宽度，覆盖历史多行规格直接编辑保存和控制字符拦截。无新增迁移、业务库写入或服务重启。
 
-统一商品工作台浏览器回归：[product_workspace_browser_checks.cjs](../../../tests/product_workspace_browser_checks.cjs)，原[gallery_search_browser_checks.cjs](../../../tests/gallery_search_browser_checks.cjs)入口转调同一回归。使用Node内置模块及已安装Chrome（FIFO_TEST_CHROME可指定路径，INVENTORY_QA_DIR可保存截图），无需Playwright依赖。两份真实HTML和模拟API覆盖名称/SKU/规格、候选点击/键盘、资料筛选、分页/刷新/清空、列表/图册共享选择、侧栏新增/编辑、旧类型及空规格、保存失败/重复点击/旧会话草稿保护、图片链接、Excel预览确认与明确导出范围、库存精确定位及窄屏。不会启动main或连接业务库。
+统一商品工作台浏览器回归：[product_workspace_browser_checks.cjs](../../../tests/product_workspace_browser_checks.cjs)，原[gallery_search_browser_checks.cjs](../../../tests/gallery_search_browser_checks.cjs)入口转调同一回归。使用Node内置模块及已安装Chrome（FIFO_TEST_CHROME可指定路径，INVENTORY_QA_DIR可保存截图），无需Playwright依赖。两份真实HTML和模拟API覆盖名称/SKU/规格、候选点击/键盘、分页/刷新/清空、列表/图册共享选择、侧栏新增/编辑、旧类型及空规格、保存失败/重复点击/旧会话草稿保护、图片链接、Excel预览确认与顶部所选（含单个）/全部导出范围、精简行内操作、库存精确定位及窄屏。不会启动main或连接业务库。
 
 联想排序回归：[test_product_search.py](../../../tests/test_product_search.py)用隔离SQLite/ASGI验证超过20个近似SKU时精确项置顶、跨页不丢不重、大小写/空格/特殊字符、默认及内部调用兼容、数组格式、三角色共享权限和仅SELECT。浏览器夹具另验库存选中/导出及销售只填写产品名，真实MySQL排序性能仍需按实际规模验证。
 
