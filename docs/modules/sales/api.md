@@ -14,7 +14,7 @@
 | `POST /sales/pending-confirmations/preview` | preview_pending_confirmations | admin/operator | PendingRetryRequest | 只读扣库计划、preview_token |
 | `POST /sales/import` | [import_sales_file](../../../routers/sales.py) | admin/operator | file、store_id | SalesImportResponse |
 | `POST /sales/import-stream` | import_sales_stream → _import_sales_file | admin/operator | 同上；不接收导入月份 | NDJSON阶段进度与最终结果 |
-| `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit | list[SalesImportBatchResponse] |
+| `GET /sales/imports` | [list_sales_imports](../../../routers/sales.py) | admin/operator/viewer | limit、可选status | list[SalesImportBatchResponse] |
 | `GET /sales/imports/{import_batch_id}/result` | get_sales_import_result | admin/operator/viewer | import_batch_id | SalesImportResultResponse；当前批次信息及原始结果快照 |
 | `GET /sales/imports/{import_batch_id}/export` | export_sales_import → _build_sales_export | admin/operator/viewer | import_batch_id | 本次导入的原始结算对账及拆分明细Excel |
 | `POST /sales/imports/{import_batch_id}/rollback` | [rollback_sales_import](../../../routers/sales.py) | admin/operator | import_batch_id | SalesImportRollbackResponse |
@@ -60,6 +60,12 @@ GET版本组件含product_id/multiplier及当前sku/name/specification，每版l
 两个preview接口复用提交解析/库存分配，返回rows（来源行/订单/商品/数量，status=deduct/pending/settlement、reason、resolution、本地组件所需/可用/预计扣量）、跳过数量或结果及preview_token。只读后回滚释放事务，不保存业务数据，不查外部汇率。格式/重复订单错误沿用400；空待确认筛选返回可确认空计划。
 
 页面必须先预览；原import/import-stream可附multipart preview_token，retry可附JSON preview_token。签名绑定用户、店铺/请求、文件/来源状态和实际计划，有效15分钟；无效400 sales_preview_invalid，变化/过期409 sales_preview_changed。不带token的旧请求兼容，但采用新安全匹配规则。共用静态入口`/sales-deduction-preview.js`，无新依赖。
+
+## 导入历史状态筛选
+
+`GET /sales/imports`可选`status=completed/rolled_back`，对应页面“成功/已撤销”；不传时仍返回全部状态，保持旧调用兼容，非法值返回422。`limit`仍为默认20、范围1～100；查询先按店铺权限和状态筛选，再按`imported_at/id`倒序取最近记录。成功表示导入已提交且未撤销，允许仍有待确认明细；不以`pending_confirmation=0`过滤，也不排除历史无结果快照的批次。
+
+页面默认请求`status=completed&limit=30`，可切换全部或已撤销。响应字段、数组形状、店铺权限及快照延迟加载保持不变；只读查询不触发导入、FIFO或库存写入。无需数据库结构变更。
 
 ## 导入结果回看
 

@@ -34,11 +34,13 @@
 | 四项成本/本行总额 | loadSales，字段资源驱动的台账及本页合计 | sale_cost_context → fifo_cost_components/rounded_cost_components；_build_sale_response | 保存FIFO成本、冻结cost_basis、财务补差；原成本不改写 |
 | 出库商品跌价参考 | loadSales、sales-ledger.js计算明细、销售Excel追加列 | services/sales_costs.py attach_sale_impairment → 商品类型历史、获准销售FIFO明细及引用批次 | 自然日库龄×订单日比例×本批有效成本；不扣安全库存、不设90%上限，与报表准备转销分开 |
 | 待确认筛选/导出/重试 | SalesPending（static/sales-pending.js），两份首页的原函数委托 | list_pending_confirmations、export_pending_confirmations、retry_pending_confirmations → services/sales_pending.py | 原settlement_entries及分配、原导入头；共用_write_candidate_sales/FIFO，不重建结算来源 |
-| 导入历史/对账/撤销 | loadSalesImports、exportSalesRecords(importBatchId)、rollbackSalesImport | list_sales_imports、export_sales_import、rollback_sales_import | 对账只读已保存来源；撤销仍按原FIFO明细恢复 |
+| 导入历史/对账/撤销 | loadSalesImports、sales-import-status、exportSalesRecords(importBatchId)、rollbackSalesImport | list_sales_imports、export_sales_import、rollback_sales_import | 默认成功；状态和店铺条件先于limit，旧请求不传status仍返回全部；对账只读已保存来源；撤销仍按原FIFO明细恢复 |
 | 导入结果回看 | viewSalesImportResult → static/sales-import-results.js；浮层共用sales-import-progress.js | _import_sales_file保存、get_sales_import_result只读查询 | sales_import_batches.result_snapshot；按店铺隔离、历史缺失提示、原结果与当前统计区分 |
 | 汇率 | 单价提示、人民币金额 | get_cny_rates，固定Frankfurter | 结算汇率字段；回归test_exchange_rates.py覆盖取数、旧配置忽略、逐日14天边界、跨月缺失/结构异常的报表待核对及导入失败无写入 |
 
 前端来源：[templates/index.html](../../../templates/index.html)。后端：[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/exchange_rates.py](../../../services/exchange_rates.py)；契约：[schemas.py](../../../schemas.py)。
+
+历史筛选回归：[test_sales_import_history.py](../../../tests/test_sales_import_history.py)使用隔离SQLite验证筛选先于limit、旧请求/旧无快照记录、待确认保留、权限、非法状态、只读与撤销恢复；[sales_import_history_checks.cjs](../../../tests/sales_import_history_checks.cjs)执行两份页面函数及API包装，覆盖默认成功、切换/刷新、撤销后移出、文案资源及过期响应/401/会话隔离。
 
 多列固定回归：[sales_pinned_column_checks.cjs](../../../tests/sales_pinned_column_checks.cjs)执行共享实际模块，遍历所有数据列，验证多列原顺序、累计位置、清空、合计/未知/非合计字段、单行表头与字段ID、账号/刷新隔离、v1兼容/坏JSON/存储失败、宽度限制与恢复、Escape以及失败/退出后不恢复旧数据。现有浏览器脚本另验证两份页面取消上层分组行后的字段名/问号保留、勾选/清空/关闭操作、跨组累计几何、配色、单行吸顶、表头/数据/合计对齐、手机限制提示与保存设置不丢失及刷新持久化。字段分组仍用于设置面板和Excel。均不连接业务库。
 
