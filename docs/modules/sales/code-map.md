@@ -36,7 +36,7 @@
 | 待确认筛选/导出/重试 | SalesPending（static/sales-pending.js），两份首页的原函数委托 | list_pending_confirmations、export_pending_confirmations、retry_pending_confirmations → services/sales_pending.py | 原settlement_entries及分配、原导入头；共用_write_candidate_sales/FIFO，不重建结算来源 |
 | 导入历史/对账/撤销 | loadSalesImports、exportSalesRecords(importBatchId)、rollbackSalesImport | list_sales_imports、export_sales_import、rollback_sales_import | 对账只读已保存来源；撤销仍按原FIFO明细恢复 |
 | 导入结果回看 | viewSalesImportResult → static/sales-import-results.js；浮层共用sales-import-progress.js | _import_sales_file保存、get_sales_import_result只读查询 | sales_import_batches.result_snapshot；按店铺隔离、历史缺失提示、原结果与当前统计区分 |
-| 汇率 | 单价提示、人民币金额 | get_cny_rates | 结算汇率字段 |
+| 汇率 | 单价提示、人民币金额 | get_cny_rates，固定Frankfurter | 结算汇率字段；回归test_exchange_rates.py覆盖取数、旧配置忽略、逐日14天边界、跨月缺失/结构异常的报表待核对及导入失败无写入 |
 
 前端来源：[templates/index.html](../../../templates/index.html)。后端：[routers/sales.py](../../../routers/sales.py)、[services/fifo.py](../../../services/fifo.py)、[services/exchange_rates.py](../../../services/exchange_rates.py)；契约：[schemas.py](../../../schemas.py)。
 

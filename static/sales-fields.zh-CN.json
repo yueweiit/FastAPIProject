@@ -199,7 +199,7 @@
       "kind": "text",
       "formula": "直接读取已保存的汇率来源",
       "source": "结算原始行exchange_rate_source",
-      "note": "显示原保存来源：Frankfurter/ECB或Baidu/DailyClose等，人民币为CNY；切换配置不改旧记录。缺失时留空，不猜测来源。",
+      "note": "显示原保存来源，人民币为CNY。当前新获取汇率来自Frankfurter/ECB；历史来源按原值展示，缺失时留空，不猜测来源。",
       "width": 160
     },
     {

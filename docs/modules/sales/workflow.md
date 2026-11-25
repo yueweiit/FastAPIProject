@@ -193,7 +193,7 @@ flowchart TD
 
 普通记录其他费用 = 净商品销售额−结算总金额；物流/平台/物料赔付收入 = 结算总金额，赔付费用为0，负数结算冲减收入。外币收入和费用乘固化汇率；profit_cny = 收入人民币−FIFO成本−费用人民币。赔付单独计入一次店铺收入，不生成库存出库、成本或跌价。历史已保存原始结算与月度版本不改写，动态查询按现行收入口径计算。导入后的 sales.selling_price/platform_fee 为来源分摊金额，持久化 profit 会与人民币成本相减，报表应使用人民币响应与结算上下文，不能直接把原字段视为人民币。
 
-get_cny_rates 对 CNY 返回1；`FIFO_FX_PROVIDER`默认`frankfurter`保留原来源，也可选`baidu`使用百度历史日线收盘价。百度按精确`币种CNY`货币对、命名`time/close`字段解析，在目标日及此前14天内取最近有效日期；不使用实时价、开盘价、倒数货币对或未来日期，失败不切换其他来源。导入获取失败502；保存汇率、实际日期和`Frankfurter/ECB`或`Baidu/DailyClose`来源。销售台账继续使用保存值，不因配置变更重算旧记录；损益/产品线实时优先采用各店各月手动覆盖，其余按所选自动来源查核算月末，旧固定版本不改；见[手动报表汇率](../reports/workflow.md#手动报表汇率)。缺失率与部署边界见[报表流程](../reports/workflow.md)、[运行说明](../../../PROJECT_RUNBOOK.md#历史汇率来源与原币对账2026-11-19)。
+get_cny_rates 对 CNY 返回1，外币固定使用Frankfurter；2026-11-25移除百度来源及`FIFO_FX_PROVIDER`切换配置，遗留环境变量不再影响取数。查询历史区间起点向前扩展14天，每个目标日独立在该日及此前14天内（含第14天）取最近有效汇率；跨月缺失数据不能沿用过期汇率，不使用未来日期或非有限/非正汇率。响应顶层及`rates`必须为JSON对象，结构异常统一为ExchangeRateError；获取失败不切换其他来源，导入返回502且不写入销售/结算或扣库，报表相关金额待核对。成功时保存汇率、实际日期和`Frankfurter/ECB`来源。销售台账继续使用保存值，历史其他来源标识也按原值展示，不重算旧记录；损益/产品线实时优先采用各店各月手动覆盖，其余按Frankfurter查核算月末，旧固定版本不改；见[手动报表汇率](../reports/workflow.md#手动报表汇率)。缺失率与部署边界见[报表流程](../reports/workflow.md)、[运行说明](../../../PROJECT_RUNBOOK.md#历史汇率来源与原币对账2026-11-19)。
 
 依据：[exchange_rates.py](../../../services/exchange_rates.py)、[sales.py](../../../routers/sales.py) 的 _component_allocation_shares、_build_sale_response、_sale_import_context、_monthly_sales_summary。
 

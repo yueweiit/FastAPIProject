@@ -40,11 +40,11 @@
 
 ## 历史汇率来源与原币对账（2026-11-19）
 
-`FIFO_FX_PROVIDER=frankfurter`为默认兼容值；切换为`baidu`后，新导入及未配置手动覆盖的损益/产品线使用百度历史日线**收盘价**。Compose已透传该变量，更新代码及`.env`后需构建镜像并重建web，使Python与静态字段资源同时生效；只改`.env`或只build不会替换运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率，旧固定报表版本保留原值；当前报表按各店各月手动设置或所选自动来源重新换算，因此与旧台账人民币列可能不同。
+2026-11-25起，新导入及报表自动参考统一使用Frankfurter历史汇率，已移除百度来源及`FIFO_FX_PROVIDER`切换配置。Compose和`.env.example`不再提供该变量；旧环境中遗留的同名变量不再读取，可清理。发布时需按既有流程构建镜像并重建web，使Python与静态字段资源同时生效；仅修改配置或构建镜像不会更新运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率、日期及来源，旧固定报表版本保留原值；当前报表按各店各月手动设置或Frankfurter自动汇率重新换算，因此与旧台账人民币列可能不同。
 
-百度入口为公开行情页使用的`https://finance.pae.baidu.com/async`，参数`srcid=50494&group=huilv_kline_day&tab_id=6&query=MXNCNY`；这是网页数据接口，未确认有独立开放平台的稳定性承诺。解析精确货币对和命名日期/收盘字段，拒绝非有限/非正数、未来日期、同日冲突及目标日之前14天以外的数据。失败会阻止新导入或让报表相关金额待核对，不自动混用其他来源。若停用，可改回`frankfurter`并重建web；已经保存的汇率不随配置回退。
+取数入口为`services/exchange_rates.py::get_cny_rates`，通过Frankfurter v1查询原币→CNY历史区间，查询起点向前扩展14天；每个目标日独立限定在该日及此前14天内（含第14天）取最近有效汇率，跨月请求也不能沿用更早月份的过期数据。CNY直接返回1；拒绝非有限或非正汇率，不用未来汇率填补历史日期。响应顶层及`rates`必须为JSON对象；结构异常、超时、连接/协议异常、响应中断和解码失败统一为`ExchangeRateError`，导入返回502且不写入销售/结算或扣库，报表相关金额待核对，不切换其他来源。历史记录中的其他来源标识仍按原值显示。
 
-原币对账合计`allocated_net_product_sales/allocated_settlement_total`；整行来源字段重复展示，不可合计。两类字段都从已有结算与组件份额读取，不修改库存或销售原金额。损益另将赔付单列“其他收入（赔付）”，人工其他收入保留。验证入口：`tests/test_baidu_exchange_rates.py`、`tests/test_sales_currency_reconciliation.py`、`tests/test_financial_facts.py`；来源、实际汇率日期及月末目标日期可在报表“汇率明细”核对。
+原币对账合计`allocated_net_product_sales/allocated_settlement_total`；整行来源字段重复展示，不可合计。两类字段都从已有结算与组件份额读取，不修改库存或销售原金额。损益另将赔付单列“其他收入（赔付）”，人工其他收入保留。验证入口：`tests/test_exchange_rates.py`、`tests/test_sales_currency_reconciliation.py`、`tests/test_financial_facts.py`；来源、实际汇率日期及月末目标日期可在报表“汇率明细”核对。
 
 ## 非实物结算与初始化分类（2026-11-10）
 

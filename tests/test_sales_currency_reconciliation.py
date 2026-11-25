@@ -66,6 +66,28 @@ class SalesCurrencyReconciliationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cells[headers.index('汇率来源')].value, 'Frankfurter/ECB')
         self.assertTrue(set(self.queries) <= {'SELECT'}, self.queries)
 
+    async def test_historical_source_and_rate_are_preserved_in_list_detail_and_export(self):
+        entry = self.mxn_order()
+        entry.exchange_rate_source = 'Baidu/DailyClose'
+        entry.exchange_rate_to_cny = D('.3711')
+        self.session.commit()
+        self.queries.clear()
+        with patch('routers.sales.get_cny_rates', new=AsyncMock(side_effect=AssertionError('must use saved rate'))):
+            row = next(r for r in await self.listed() if r['id'] == 1)
+            response = await self.client.get('/sales/1')
+            self.assertEqual(response.status_code, 200, response.text)
+            workbook = await self.exported()
+        for item in (row, response.json()):
+            self.assertEqual(item['exchange_rate_source'], 'Baidu/DailyClose')
+            self.assertEqual(D(item['exchange_rate_to_cny']), D('.3711'))
+            self.assertEqual(D(item['sales_revenue_cny']), D('84.9') * D('.3711'))
+        sheet = workbook['销售拆分明细']
+        headers = [cell.value for cell in sheet[1]]
+        cells = next(c for c in sheet.iter_rows(min_row=2, max_row=sheet.max_row-1) if c[11].value == 'SALE')
+        self.assertEqual(cells[headers.index('汇率来源')].value, 'Baidu/DailyClose')
+        self.assertEqual(D(str(cells[headers.index('汇率')].value)), D('.3711'))
+        self.assertTrue(set(self.queries) <= {'SELECT'}, self.queries)
+
     async def test_bundle_repeats_original_row_while_cny_shares_stay_allocated(self):
         self.session.add(Product(id=11, sku='PART-2', name='第二组件'))
         self.session.flush()
