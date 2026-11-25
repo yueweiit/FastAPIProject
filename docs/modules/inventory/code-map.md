@@ -32,10 +32,10 @@
 | 字段显示 | toggleBatchColumn、applyBatchColumnSelection | 无后端写入 | 浏览器列状态 |
 | 编辑 | batchEditBlockedReason、openEditBatch、saveEditBatch | _locked_batch、update_batch | 库存剩余数、成本调整当前读、InventoryBatch.edit_version |
 | 旧删除兼容入口（停用） | 无页面入口 | delete_batch | 角色校验后固定410 batch_delete_retired，不修改批次 |
-| 管理员/运营强制删除（作废） | voidBatch、switchBatchVoidFilter、renderBatchPage | void_batch、list_batches | voided_at/by/reason、BatchChangeLog(action=void)；原销售及快照保留 |
+| 管理员/运营删除（作废） | voidBatch、switchBatchVoidFilter、renderBatchPage | void_batch、list_batches | voided_at/by/reason、BatchChangeLog(action=void)；原销售及快照保留 |
 | 已售数量/成本更正 | openEditBatch、saveEditBatch | [batch_edits.py](../../../services/batch_edits.py)的freeze_cost_basis/restate_costs；base_cost_components、post_cost_adjustment | cost_basis、调整头/分配/财务审计；保留原FIFO单价 |
 | 修改日志 | openBatchLogs、PageInteractions.batchLogs | _batch_change_values、list_batch_change_logs | BatchChangeLog；批次更新与日志同事务 |
-| 选择/导出 | downloadBatchExport、exportBatch、exportAllBatches | export_batches | 批次、商品、uploads 图片 |
+| 选择/导出 | downloadBatchExport、exportAllBatches | export_batches | 批次、商品、uploads 图片 |
 | FIFO 消耗 | 销售页面 | lock_fifo_batches、fifo_sell | sales、sale_cost_details |
 | 撤销恢复 | rollbackSalesImport | rollback_sales_import | 原批次、原成本明细 |
 
@@ -53,7 +53,7 @@
 
 作废回归见[test_batch_void.py](../../../tests/test_batch_void.py)及[batch_edit_page_checks.cjs](../../../tests/batch_edit_page_checks.cjs)：权限、原因、版本、日志、销售外键、FIFO/商品库存、销售利润待核对、已作废导出及两份页面；另验证旧DELETE对所有写角色返回410、不删记录，未出库批次作废同样留日志。页面覆盖作废成功后刷新仍在等待时退出/同账号重登，旧失败回调不得显示提示。销售前及未销售持有月份的费用待核对见[test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)的VoidedHoldingPeriodTests。SQLite验证不替代InnoDB并发/生产DDL验证。
 
-批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、垃圾桶及旧删除函数移除、强制删除及旧接口错误提示、有效金额回填、数量下限、追溯模式、重复提交和错误保留；`node tests/batch_export_page_checks.cjs`覆盖选择/筛选导出、等待/失败提示、下载与会话切换；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
+批次回归：`python -m unittest tests.test_batch_edit tests.test_batch_restatement -v`使用真实路由和隔离SQLite验证版本、权限、已售更正、金额及原子性；不证明InnoDB等待。`node tests/batch_edit_page_checks.cjs`覆盖两份页面的已售编辑入口、垃圾桶及旧删除函数移除、删除及旧接口错误提示、有效金额回填、数量下限、追溯模式、重复提交和错误保留；`node tests/batch_export_page_checks.cjs`覆盖选择/筛选导出、等待/失败提示、下载与会话切换；日期沿用page_interactions_checks.cjs。文案集中在[page-interactions.js](../../../static/page-interactions.js)的zh-CN字典。
 
 test_batch_restatement还覆盖原销售月成本增加、入库数量不重置已售数、入库日后移越过既有销售日后的单号编辑与成本追溯、售完不复活库存、旧月度版本保留/新版、未来FIFO只叠加一次、旧分配数量冲销及财务关闭/旧模式/金额越界拒绝。日志失败回滚数量、依据、所有成本凭证和财务审计。batch_log_page_checks.cjs仍验证日志弹窗分页/转义/过期响应。
 

@@ -40,7 +40,7 @@ function setup(file) {
   });
   vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), context);
   vm.runInContext('let selectedBatchIds = new Set(), batchExportBusy = false, batchExportSessionEpoch = 0, batchSearchProduct = null;', context);
-  for (const name of ['batchFilterParams', 'setBatchExportStatus', 'resetBatchExportSession', 'downloadBatchExport', 'exportBatch', 'exportAllBatches']) {
+  for (const name of ['batchFilterParams', 'setBatchExportStatus', 'resetBatchExportSession', 'downloadBatchExport', 'exportAllBatches']) {
     const source = html.match(new RegExp('^(?:async )?function ' + name + '\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
     ok(source);
     vm.runInContext(source[0], context);
@@ -60,7 +60,7 @@ async function verify(file) {
   vm.runInContext('selectedBatchIds.add(118); selectedBatchIds.add(117)', c);
   const first = c.exportAllBatches();
   equal(e('batch-export-status').textContent, '正在生成所选 2 条批次的文件，请稍候…');
-  c.exportBatch(118);
+  c.exportAllBatches();
   equal(requests.length, 1);
   equal(new URLSearchParams(requests[0].url.split('?')[1]).getAll('batch_ids'), ['118', '117']);
   equal(requests[0].options.credentials, 'same-origin');
@@ -77,7 +77,8 @@ async function verify(file) {
     requests.push({url, options});
     return {ok: true, status: 200, blob: async () => ({size: 100})};
   };
-  await c.exportBatch(118);
+  vm.runInContext('selectedBatchIds.clear(); selectedBatchIds.add(118)', c);
+  await c.exportAllBatches();
   equal(requests.length, 2);
   equal(links.length, 1);
   equal(links[0].clicked, true);
@@ -101,7 +102,8 @@ async function verify(file) {
 
   const stale = deferred();
   c.fetch = () => stale.promise;
-  const previous = c.exportBatch(118);
+  vm.runInContext('selectedBatchIds.add(118)', c);
+  const previous = c.exportAllBatches();
   vm.runInContext('selectedBatchIds.add(117)', c);
   c.handleSessionExpired();
   equal(e('batch-export-button').disabled, false);

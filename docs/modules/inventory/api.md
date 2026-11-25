@@ -1,6 +1,6 @@
 # 入库批次与库存查看 API
 
-前缀 /batches，共8个端点（含1个已停用的兼容入口）。admin/operator可编辑或作废任意创建人的历史批次（含已售），强制留痕。页面统一通过“强制删除”执行软作废，未出库批次也保留原记录；旧物理删除接口返回410。活动批次共享读取，修改日志仅admin可读；页面已移除批次日志按钮，统一从操作日志入口查看。
+前缀 /batches，共8个端点（含1个已停用的兼容入口）。admin/operator可编辑或作废任意创建人的历史批次（含已售），强制留痕。页面统一通过“删除”执行软作废，未出库批次也保留原记录；旧物理删除接口返回410。活动批次共享读取，修改日志仅admin可读；页面已移除批次日志按钮，统一从操作日志入口查看。
 
 兼容GET /batches/{batch_id}/logs与统一日志接口响应设置Cache-Control: private, no-store；旧弹窗请求显式禁用缓存。普通批次读取、写入与导出缓存策略保持，细节见[日志API](../operation-logs/api.md)。
 
@@ -70,7 +70,7 @@ view=overview输出“库存总览”“说明”；daily输出“月度汇总�
 
 ## 旧删除接口（停用）
 
-旧删除接口保留路径并在OpenAPI中标记deprecated，所有通过角色校验的请求均返回410 `batch_delete_retired`，提示刷新页面后使用强制删除。该入口不读取或修改库存、不追加成功日志，也不自动转为作废；调用方须显式提交`POST /batches/{batch_id}/void`及当前`edit_version`、非空`reason`，成功后同事务留痕。
+旧删除接口保留路径并在OpenAPI中标记deprecated，所有通过角色校验的请求均返回410 `batch_delete_retired`，提示刷新页面后使用删除。该入口不读取或修改库存、不追加成功日志，也不自动转为作废；调用方须显式提交`POST /batches/{batch_id}/void`及当前`edit_version`、非空`reason`，成功后同事务留痕。
 
 ## BatchCreate 请求
 

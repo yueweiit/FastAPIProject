@@ -2488,14 +2488,19 @@ function toggleBatchFieldPicker() {
 }
 
 function applyBatchColumnSelection() {
+    const canShowActions = isOperator() && currentBatchList.some(batch => !batch.voided_at);
+    const isColumnVisible = column => visibleBatchColumns.has(column) && (column !== 'actions' || canShowActions);
     document.querySelectorAll('[data-batch-column]').forEach(cell => {
-        cell.classList.toggle('batch-column-hidden', !visibleBatchColumns.has(cell.dataset.batchColumn));
+        cell.classList.toggle('batch-column-hidden', !isColumnVisible(cell.dataset.batchColumn));
     });
     document.querySelectorAll('[data-batch-field-toggle]').forEach(input => {
         input.checked = visibleBatchColumns.has(input.dataset.batchFieldToggle);
+        if (input.dataset.batchFieldToggle === 'actions') {
+            input.closest('label')?.classList.toggle('batch-column-hidden', !canShowActions);
+        }
     });
     const emptyCell = document.querySelector('#batches-tbody .empty');
-    if (emptyCell) emptyCell.colSpan = Math.max(visibleBatchColumns.size, 1);
+    if (emptyCell) emptyCell.colSpan = 1 + BATCH_COLUMNS.filter(isColumnVisible).length;
 }
 
 function toggleBatchColumn(column, visible) {
@@ -2576,7 +2581,6 @@ function renderBatchPage() {
             <td data-batch-column="shipping_date">${b.shipping_date?.slice(0,16) || '-'}</td>
             <td data-batch-column="arrived_at">${b.arrived_at?.slice(0,16) || '-'}</td>
             <td data-batch-column="actions"><div class="batch-row-actions">
-                <button class="btn btn-secondary" onclick="exportBatch(${b.id})" title="${text('batchExport')}">${text('batchExport')}</button>
                 ${isOperator() && !b.voided_at ? `<span title="${escapeHtml(editReason || text('batchEdit'))}" ${editReason ? 'tabindex="0"' : ''}><button class="btn btn-secondary" onclick="openEditBatch(${b.id})" ${editReason ? 'disabled' : ''}>✏️ ${text('batchEdit')}</button></span>` : ''}
                 ${isOperator() && !b.voided_at ? `<button type="button" class="btn btn-secondary" onclick="openBatchImpairmentStores(${b.id})">${text('batchImpairmentEdit')}</button>` : ''}
                 ${canVoid ? `<button class="btn btn-secondary" style="color:#e94560" onclick="voidBatch(${b.id})" title="${text('batchForceDelete')}" aria-label="${text('batchForceDelete')}" ${batchVoidBusy ? 'disabled' : ''}>${text('batchForceDelete')}</button>` : ''}
@@ -2694,6 +2698,7 @@ async function loadBatches() {
     if (!batchList.length) {
         currentBatchList = [];
         tbody.innerHTML = `<tr><td colspan="${Math.max(visibleBatchColumns.size + 1, 1)}" class="empty">暂无批次</td></tr>`;
+        applyBatchColumnSelection();
         renderPagination('batches-pagination', batchPage, Math.max(1, Math.ceil(batchTotal / batchPageSize)), batchTotal, batchPageSize);
         updateBatchSelectionState();
         return;
@@ -2945,8 +2950,6 @@ async function downloadBatchExport(ids, extraParams = new URLSearchParams()) {
         }
     }
 }
-
-function exportBatch(id) { return downloadBatchExport([id]); }
 
 function exportAllBatches() {
     if (selectedBatchIds.size) {

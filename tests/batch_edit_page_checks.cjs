@@ -98,7 +98,7 @@ async function verify(file) {
   ok(!e('batches-tbody').innerHTML.includes('openEditBatch'));
   ok(!e('batches-tbody').innerHTML.includes('openBatchLogs'));
   ok(!e('batches-tbody').innerHTML.includes('voidBatch'));
-  ok(e('batches-tbody').innerHTML.includes('exportBatch'));
+  ok(e('batches-tbody').innerHTML.includes('data-batch-select="12"'));
   await c.openEditBatch(12); equal(vm.runInContext('editingBatchId', c), null);
   c.isOperator = () => true; c.isAdmin = () => false; setBatch(fixture);
   setBatch({...fixture, shipping_cost: '100.0000', edit_values: {shipping_cost:'200.0000',
