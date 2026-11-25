@@ -38,3 +38,5 @@
 缓存回归另见[operation_logs_cache_checks.cjs](../../../tests/operation_logs_cache_checks.cjs)：启动[log_cache_server.py](../../../tests/log_cache_server.py)的临时127.0.0.1服务，使用实际日志路由及隔离SQLite、测试Cookie身份；不启动main生命周期、不连接业务库，不拦截浏览器网络请求。可缓存对照组先复现旧200数据命中，再验证四个真实接口在降权、切换账号及退出后force-cache请求均重新到达服务器并获403/401。其他前端回归检查两份页面cache参数透传及管理员/会话保护；日志策略不改变普通批次列表缓存响应。
 
 2026-11-03缓存修复验证：全量615项Python测试、50项日志/批次针对性回归通过；两份页面179项浏览器检查、真实HTTP缓存53项、认证助手210项及旧日志助手24项检查通过。响应头覆盖成功、权限、参数校验及来源错误，JSON结构和其他业务API缓存保持；复审未发现新增阻塞问题。测试服务已退出，无实际库迁移/写入或业务服务重启。新策略不追溯清除旧浏览器缓存，升级步骤仍需手动清理旧缓存并刷新。
+
+手动报表汇率PUT /reports/store-exchange-rate纳入reports审计策略，沿用StoreProfitLossReport的report_metadata白名单，同事务捕获手动保存/恢复自动前后值；日志写入失败回滚汇率。最新操作人/时间始终存在设置metadata中，完整历史记录仍受FIFO_OPERATION_AUDIT_ENABLED控制。回归见[test_report_fx_overrides.py](../../../tests/test_report_fx_overrides.py)。

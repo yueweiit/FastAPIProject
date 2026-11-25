@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from database import Base
-from models import InventoryBatch, Product, Sale, SaleCostDetail, Store, User
+from models import InventoryBatch, Product, Sale, SaleCostDetail, Store, StoreProfitLossReport, User
 from routers.reports import (
     _build_store_profit_loss_values,
     _fifo_cost_components,
@@ -138,6 +138,8 @@ class _AutoValuesDb:
         self.results = [_Result(sales), _Result(cost_rows), _Result([]), _Result([]), _Result([])]
 
     async def execute(self, _statement):
+        if _statement.column_descriptions[0].get("entity") is StoreProfitLossReport:
+            return _Result([])
         return self.results.pop(0)
 
     async def scalar(self, _statement):
@@ -295,13 +297,13 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
 
     async def _save_manual_report(self, saved, **payload):
         report = SimpleNamespace(manual_values=saved) if saved is not None else None
-        db = SimpleNamespace(scalar=AsyncMock(return_value=report), add=Mock(),
+        db = SimpleNamespace(scalar=AsyncMock(side_effect=[SimpleNamespace(id=7), report]), add=Mock(),
                              commit=AsyncMock(), refresh=AsyncMock())
         data = StoreProfitLossUpdateRequest(store_id=7, report_month=date(2026,9,1), **payload)
         with patch("routers.reports._resolve_report_store", new=AsyncMock(return_value=SimpleNamespace(id=7, name="测试店铺"))), \
              patch("routers.reports._prepare_profit_loss_oa_values", new=AsyncMock(return_value=(2, {}))), \
              patch("routers.reports._store_profit_loss_response", new=AsyncMock(return_value=None)):
-            await update_store_profit_loss(data, db, SimpleNamespace(id=9))
+            await update_store_profit_loss(data, db, SimpleNamespace(id=9, role="admin"))
         self.assertIn("FOR UPDATE", str(db.scalar.await_args.args[0]))
         db.commit.assert_awaited_once()
         return report if report is not None else db.add.call_args.args[0]

@@ -1,6 +1,6 @@
 # 报表模块代码映射
 
-月末汇率与代发： [report_exchange_rates.py](../../../services/report_exchange_rates.py)负责按币种/月解析、请求内缓存、未结束月/缺率留空及原始订单去重（旧CSV按保存编号兼容）；reports.py复用于店铺损益与产品线，`_allocate_monthly_fulfillment_cost`按各店各月收入分摊后累计。回归：[test_monthly_profit_policy.py](../../../tests/test_monthly_profit_policy.py)、[CSV实际导入](../../../tests/test_sales_import_store.py)。
+月末汇率与代发： [report_exchange_rates.py](../../../services/report_exchange_rates.py)负责按店铺/币种/月选择手动覆盖或自动月末值、请求内缓存、未结束月手动暂估/自动缺率留空及原始订单去重（旧CSV按保存编号兼容）；reports.py复用于店铺损益与产品线，`_allocate_monthly_fulfillment_cost`按各店各月收入分摊后累计。回归：[test_monthly_profit_policy.py](../../../tests/test_monthly_profit_policy.py)、[CSV实际导入](../../../tests/test_sales_import_store.py)。
 
 
 | 页面/能力 | 前端函数/入口 | 后端/服务 | 表和来源 |
@@ -41,3 +41,5 @@
 | 非管理员范围 | [test_store_data_isolation.py](../../../tests/test_store_data_isolation.py) |
 
 现有测试多使用模拟会话，不代表本次或生产已验证。07查询不再补建快照，应用启动仍有写入；文档验证不启动服务。
+
+手动汇率入口为reports.py的update_store_exchange_rate/store_exchange_rate_reference；_store_profit_loss_response输出设置与依据。monthly_report_rates的store_id选择店铺设置，monthly_store_report_rates给跨店逐商品汇总返回三元键；自动缓存仅按币种/月复用，手动值按店铺隔离。manual_rate_text统一写入和读取设置的十进制文本；财务Excel的依据由rate_evidence_text统一生成，手动暂估状态持续到当前自然月结束。两份首页的reloadProfitLossPreservingDraft与共享[report-exchange-rates.js](../../../static/report-exchange-rates.js)保留费用草稿并隔离过期请求；共享组件的待完成写入队列不随编辑器清空，loadStoreProfitLoss先等待waitForPendingSaves再查询。main.py提供静态脚本。回归：[test_report_fx_overrides.py](../../../tests/test_report_fx_overrides.py)、[report_fx_page_checks.cjs](../../../tests/report_fx_page_checks.cjs)。

@@ -40,7 +40,7 @@
 
 ## 历史汇率来源与原币对账（2026-11-19）
 
-`FIFO_FX_PROVIDER=frankfurter`为默认兼容值；切换为`baidu`后，新导入及实时重算的损益/产品线使用百度历史日线**收盘价**。Compose已透传该变量，更新代码及`.env`后需构建镜像并重建web，使Python与静态字段资源同时生效；只改`.env`或只build不会替换运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率，旧固定报表版本保留原值；当前报表会按新来源重新换算各核算月，因此与旧台账人民币列可能不同。
+`FIFO_FX_PROVIDER=frankfurter`为默认兼容值；切换为`baidu`后，新导入及未配置手动覆盖的损益/产品线使用百度历史日线**收盘价**。Compose已透传该变量，更新代码及`.env`后需构建镜像并重建web，使Python与静态字段资源同时生效；只改`.env`或只build不会替换运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率，旧固定报表版本保留原值；当前报表按各店各月手动设置或所选自动来源重新换算，因此与旧台账人民币列可能不同。
 
 百度入口为公开行情页使用的`https://finance.pae.baidu.com/async`，参数`srcid=50494&group=huilv_kline_day&tab_id=6&query=MXNCNY`；这是网页数据接口，未确认有独立开放平台的稳定性承诺。解析精确货币对和命名日期/收盘字段，拒绝非有限/非正数、未来日期、同日冲突及目标日之前14天以外的数据。失败会阻止新导入或让报表相关金额待核对，不自动混用其他来源。若停用，可改回`frankfurter`并重建web；已经保存的汇率不随配置回退。
 
@@ -551,3 +551,9 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 产品名输入联想：库存与销售共用新增static/product-search.js，main.py以/product-search.js公开该静态脚本，两份首页在sales-ledger.js和inventory-workspace.js之前加载。更新时需同时包含这些脚本、main.py与两份页面；由用户按原约定手动重启8010并Ctrl+F5刷新。此功能只查已有GET /products候选、选择后填写产品名，不改平台SKU、补录库存规则或数据库结构。
 
 精确SKU联想修复需同步routers/products.py与static/product-search.js：组件传prioritize_exact_sku=true，服务端在分页前置顶精确项；旧服务会忽略新参数，不能只刷新静态文件作为修复生效的依据。默认列表和库存总览查询顺序保持兼容，无DDL/数据回填，仍由用户手动重启8010后刷新。
+
+## 手动报表汇率
+
+店铺损益页可按店铺/月/原币保存手动汇率并重算，或恢复自动；只影响报表原币换算，销售逐日保存值、库存成本和旧版本保持。规则见[报表流程](docs/modules/reports/workflow.md#手动报表汇率)，接口与存储见对应模块文档。复用store_profit_loss_reports.metadata，无新增DDL或配置；部署时需同时更新后端、两份页面及static/report-exchange-rates.js，不能只替换HTML。启动仍有既有迁移/修复副作用，须按原授权流程执行。
+
+本地验证入口为tests.test_report_fx_overrides与node tests/report_fx_page_checks.cjs，外部汇率/OA隔离，使用SQLite和Chromium，不连接业务库。真实MySQL行锁并发、运行服务加载和业务验收需单独验证，不能以离线测试代替。

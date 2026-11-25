@@ -39,6 +39,7 @@ from schemas import (
     StoreProfitLossResponse,
     StoreProfitLossRowResponse,
     StoreProfitLossUpdateRequest,
+    StoreExchangeRateUpdateRequest,
 )
 from auth import RequireAnyRole, RequireOperator
 from services.oa_office_expenses import (
@@ -439,7 +440,7 @@ async def _store_profit_loss_auto_values(
             requirements.add(rate_key(context.get("currency"), sale.sold_at.date()))
     requirements.update(rate_key(event.currency, event.occurred_at.date()) for event in events
                         if event.original_revenue or event.original_expense)
-    rates = await monthly_report_rates(db, requirements)
+    rates = await monthly_report_rates(db, requirements, store_id=store_id)
     auto_values = {key: {period: Decimal(0) for period in STORE_PROFIT_LOSS_PERIODS}
                    for key in STORE_PROFIT_LOSS_AUTO_KEYS | STORE_PROFIT_LOSS_OA_DEFAULT_KEYS}
     warnings = rate_warnings(rates)
@@ -696,6 +697,12 @@ async def _store_profit_loss_response(
         )
         for key, label, kind, source in STORE_PROFIT_LOSS_ROWS
     ]
+    from services.report_exchange_rates import FX_OVERRIDE_KEY, fx_setting
+    settings = (getattr(report, "report_metadata", None) or {}).get(FX_OVERRIDE_KEY, {})
+    settings = settings if isinstance(settings, dict) else {}
+    currencies = set(settings) | {getattr(store, "settlement_currency", None) or "CNY"}
+    currencies.update(item["currency"] for item in auto_values.get("_exchange_rates", [])
+                      if item["report_month"] == report_month.isoformat()[:7])
     return StoreProfitLossResponse(
         store_id=store.id,
         store_name=store.name,
@@ -707,6 +714,8 @@ async def _store_profit_loss_response(
         rows=rows,
         salary_oa_breakdown=auto_values.get("_salary_oa_breakdown"),
         exchange_rates=auto_values.get("_exchange_rates", []),
+        exchange_rate_settings=[fx_setting(currency, settings.get(currency))
+                                for currency in sorted(currencies - {"CNY"})],
         fulfillment_order_counts=auto_values.get("_fulfillment_counts", {}),
         calculation_policy="order_created_fx_mxn8_income_only_v3",
         warnings=values.get("_warnings", []),
@@ -749,8 +758,8 @@ async def update_store_profit_loss(
     store = await _resolve_report_store(db, user, data.store_id)
     from services.finance_config import financial_controls_enabled
     from services.financial_controls import scoped_store
-    if financial_controls_enabled():
-        await scoped_store(db, user, store.id, lock=True)
+    # Serialize creation of the shared store/month row with exchange-rate updates.
+    await scoped_store(db, user, store.id, lock=True)
     manual_values = {}
     for key, cell in data.manual_values.items():
         if key not in STORE_PROFIT_LOSS_MANUAL_KEYS or key in STORE_PROFIT_LOSS_RESERVED_KEYS:
@@ -772,7 +781,7 @@ async def update_store_profit_loss(
         select(StoreProfitLossReport).where(
             StoreProfitLossReport.store_id == store.id,
             StoreProfitLossReport.report_month == data.report_month,
-        ).with_for_update()
+        ).with_for_update().execution_options(populate_existing=True)
     )
     if data.update_scope == "current":
         # 页面仅编辑本月；不能把未提交的上月/年累计人工值清空或固化OA默认值。
@@ -826,6 +835,62 @@ async def update_store_profit_loss(
         db, user, store, data.report_month, report,
         oa_values=oa_values, active_store_count=active_store_count,
     )
+
+
+@router.get("/store-exchange-rate/reference")
+async def store_exchange_rate_reference(
+    store_id: int = Query(..., ge=1), report_month: date = Query(...),
+    currency: str = Query(..., pattern=r"^[A-Z]{3}$"),
+    db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole),
+):
+    from services.report_exchange_rates import monthly_report_rates, rate_key, report_today
+    await _resolve_report_store(db, user, store_id)
+    if report_month.day != 1 or report_month > report_today().replace(day=1):
+        raise HTTPException(400, detail={"code": "report_fx_month_invalid", "message": "请选择当前或历史核算月份的第一天"})
+    # Scope is verified; release the read transaction before external I/O.
+    await db.commit()
+    rates = await monthly_report_rates(db, {(currency, report_month)})
+    return rates[rate_key(currency, report_month)]
+
+
+@router.put("/store-exchange-rate")
+async def update_store_exchange_rate(
+    data: StoreExchangeRateUpdateRequest,
+    db: AsyncSession = Depends(get_db), user: User = Depends(RequireOperator),
+):
+    from services.financial_controls import scoped_store
+    from services.report_exchange_rates import FX_OVERRIDE_KEY, fx_setting, invalidate_report_rates, manual_rate_text, report_today
+    store = await _resolve_report_store(db, user, data.store_id)
+    if data.report_month.day != 1 or data.report_month > report_today().replace(day=1):
+        raise HTTPException(400, detail={"code": "report_fx_month_invalid", "message": "请选择当前或历史核算月份"})
+    await scoped_store(db, user, store.id, lock=True)
+    report = await db.scalar(select(StoreProfitLossReport).where(
+        StoreProfitLossReport.store_id == store.id,
+        StoreProfitLossReport.report_month == data.report_month,
+    ).with_for_update().execution_options(populate_existing=True))
+    metadata = dict(report.report_metadata or {}) if report else {"manual_period_mode": "monthly"}
+    settings = dict(metadata.get(FX_OVERRIDE_KEY) or {})
+    previous = fx_setting(data.currency, settings.get(data.currency))
+    if previous["revision"] != data.expected_revision:
+        raise HTTPException(409, detail={"code": "report_fx_conflict", "message": "汇率已被其他操作修改，请刷新报表后重试"})
+    setting = {
+        "mode": data.mode, "manual_rate": manual_rate_text(data.manual_rate),
+        "revision": previous["revision"] + 1, "note": data.note.strip(),
+        "updated_by_user_id": user.id, "updated_by": user.username,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    settings[data.currency] = setting
+    metadata[FX_OVERRIDE_KEY] = settings
+    if report is None:
+        report = StoreProfitLossReport(store_id=store.id, report_month=data.report_month,
+                                      manual_values={}, remarks={})
+        db.add(report)
+    report.report_metadata = metadata
+    report.updated_by_user_id = user.id
+    await db.commit()
+    invalidate_report_rates(db)
+    return {"store_id": store.id, "report_month": data.report_month.isoformat()[:7],
+            "setting": fx_setting(data.currency, setting)}
 
 
 def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) -> tuple[Workbook, dict]:
@@ -1102,7 +1167,8 @@ def _build_store_profit_loss_sheet(
         ["核算期间", f"{report_month.year}年{report_month.month}月", None, None, None],
         ["数据来源", "与系统中的店铺损益表查询结果一致；人工项目保留已保存值。", None, None, None],
     ]
-    metadata.extend([["月度汇率", f"{item['report_month']} {item['currency']} / CNY：{item['rate_to_cny']}；日期 {item['rate_date']}；{item['source'] or item['status']}", None, None, None]
+    from services.report_exchange_rates import rate_evidence_text
+    metadata.extend([["月度汇率", rate_evidence_text(item), None, None, None]
                      for item in values.get("_exchange_rates", [])])
     counts = values.get("_fulfillment_counts", {})
     if counts:
@@ -1300,7 +1366,7 @@ def _allocate_monthly_fulfillment_cost(
             counts[store_id] += 1
         selected_periods = {period for period, (start, end) in periods.items() if start <= month < end}
         for store_id, count in counts.items():
-            amount = convert_report_amount(Decimal(8) * count, monthly_rates[("MXN", month)])
+            amount = convert_report_amount(Decimal(8) * count, monthly_rates[(store_id, "MXN", month)])
             if amount == 0:
                 continue
             revenues = monthly_revenues[store_id][month]
@@ -1380,15 +1446,15 @@ async def _product_line_profit_data(
 
         import_context_by_sale, _ = await _sale_import_context(db, [sale for sale, _user_store_id in sales])
 
-    from services.report_exchange_rates import monthly_report_rates, rate_key, convert_report_amount, load_fulfillment_orders
+    from services.report_exchange_rates import monthly_store_report_rates, store_rate_key, convert_report_amount, load_fulfillment_orders
     fulfillment = await load_fulfillment_orders(db, store_ids, read_start, ytd_end,
                                      [sale for sale, _ in sales], import_context_by_sale,
                                      {sale.id: sale.store_id or owner for sale, owner in sales})
     income_only_review_ids = set()
     income_only_ids = await income_only_sale_ids(db, [sale.id for sale, _ in sales], review_ids=income_only_review_ids)
-    requirements = {rate_key(import_context_by_sale.get(sale.id, {}).get("currency"), sale.sold_at.date()) for sale, _ in sales}
-    requirements.update(("MXN", month) for month in fulfillment)
-    monthly_rates = await monthly_report_rates(db, requirements)
+    requirements = {store_rate_key(sale.store_id or owner, import_context_by_sale.get(sale.id, {}).get("currency"), sale.sold_at.date()) for sale, owner in sales}
+    requirements.update((owner, "MXN", month) for month, orders in fulfillment.items() for owner, _ in orders)
+    monthly_rates = await monthly_store_report_rates(db, requirements)
     sale_line_by_id: dict[int, int | None] = {}
     for sale, user_store_id in sales:
         sale_store_id = sale.store_id or user_store_id
@@ -1398,7 +1464,7 @@ async def _product_line_profit_data(
             item["current_quantity"] += sale.quantity
         sale_line_by_id[sale.id] = line_id
         context = import_context_by_sale.get(sale.id, {})
-        rate = monthly_rates[rate_key(context.get("currency"), sale.sold_at.date())]
+        rate = monthly_rates[store_rate_key(sale_store_id, context.get("currency"), sale.sold_at.date())]
         revenue = convert_report_amount(context.get("source_net_product_sales", sale.selling_price * sale.quantity), rate)
         other_expense = convert_report_amount(context.get("source_other_expense", sale.platform_fee), rate)
         month = sale.sold_at.date().replace(day=1)
@@ -1495,9 +1561,9 @@ async def _product_line_profit_data(
                     item[period]["cost"] -= amount
 
     events = await unlinked_settlement_events(db, store_ids, read_start, ytd_end) if store_ids else []
-    monthly_rates.update(await monthly_report_rates(db, {rate_key(event.currency, event.occurred_at.date()) for event in events}))
+    monthly_rates.update(await monthly_store_report_rates(db, {store_rate_key(event.store_id, event.currency, event.occurred_at.date()) for event in events}))
     for event in events:
-        rate = monthly_rates[rate_key(event.currency, event.occurred_at.date())]
+        rate = monthly_rates[store_rate_key(event.store_id, event.currency, event.occurred_at.date())]
         event_revenue = convert_report_amount(event.original_revenue, rate)
         event_expense = convert_report_amount(event.original_expense, rate)
         line_id = event.product_id if event.product_id is not None else "unallocated_settlement"

@@ -157,3 +157,5 @@
 财务日志的真实mode、breakdown、version/calculation_version字段及source_selection/receipt/classify/capture_version操作码复用同一局部字典；分类明细按commission/tax/advertising/logistics/other翻译显示，金额保留原值并转义。旧source_mode/version_no等界面标签保留兼容，但不以近似名称读取数据库字段；没有新增语言或依赖。
 
 销售对账导出的页面入口、批次不存在/已撤销及下载反馈集中于PageInteractions的salesExport*/salesImportExport*。工作表名和投影状态集中于services/sales_reconciliation.py的TEXT.zh-CN；原始行字段用services/sales_export.py的SOURCE_FIELDS维护中立字段码与中文表头，明细表复用原HEADERS并追加追溯列。SKU、产品名、订单号、来源文件及行号保留业务原值，Excel按字面量写入；E/S/F关联编号不依赖翻译文案。当前仅中文，无新翻译依赖或语言参数。
+
+手动报表汇率的表单、按钮、来源/暂估、校验和重算状态文案集中在[page-interactions.js](../../static/page-interactions.js)的reportFx*键，由[report-exchange-rates.js](../../static/report-exchange-rates.js)与两份页面复用。mode=auto/manual、currency和revision为中立接口编码，操作时间按页面语言格式化，备注与用户名称转义展示；后端错误沿用code/message及Pydantic校验约定。财务Excel的中文依据标签集中于report_exchange_rates.py的rate_evidence_text，仍仅支持现有中文，不新增语言或翻译依赖。

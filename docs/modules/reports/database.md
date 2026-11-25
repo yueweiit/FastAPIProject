@@ -74,6 +74,12 @@
 (UniqueConstraint('store_id', 'report_month', name='uq_store_profit_loss_reports_store_month'), Index('ix_store_profit_loss_reports_month', 'report_month'))
 ```
 
+## 手动汇率元数据
+
+`StoreProfitLossReport.report_metadata.report_fx_overrides`按三位原币代码保存对象；store_id/report_month沿用现有唯一键，目标币固定CNY。各项为mode（auto/manual）、manual_rate（十进制字符串或null）、revision（整数）、note、updated_by_user_id、updated_by（当时用户名）、updated_at（UTC ISO字符串）。自动恢复保留该对象并增加revision，不能删除后重置为0而允许旧请求覆盖。
+
+写入只合并此命名空间，保留manual_period_mode和其他metadata；不改manual_values/remarks。与费用保存共用Store→当月报表行锁序，以Store锁串行化首次建行；行锁读取使用populate_existing刷新已有ORM对象。每币种expected_revision在锁内核验，成功提交后清除本请求汇率缓存。缺省设置为自动，无DDL/历史回填。最新修改依据始终保留；完整变更历史仅在现有业务审计开关启用时同事务记录。实现：[reports.py](../../../routers/reports.py)、[report_exchange_rates.py](../../../services/report_exchange_rates.py)。
+
 ## 期间与快照
 
 (period_start,period_end) 唯一，快照 (accounting_period_id,batch_id) 唯一；期间按自然月、auto_closed 和 snapshot_version=1 生成。snapshot_version 已有值就不覆盖，自动关闭人为空。兼容字段不等于提供人工结账或期间编辑功能。
@@ -90,6 +96,6 @@ metadata（ORM属性report_metadata）增加内部manual_period_mode：页面cur
 
 store_profit_loss_reports以(store_id,report_month)唯一；人工金额按各科目/期间以字符串或空值放入manual_values，remarks保存备注，report_metadata对应数据库列metadata。该表保存人工输入和扩展信息，不保存全部自动计算结果/结账审计副本。默认保存整体替换JSON；页面使用current范围，在已有报表行锁内仅替换本月人工列、保留已有上月/年累计人工值，remarks仍完整替换。范围字段不是新数据库列，具体见[损益保存契约](api.md#损益保存契约)。
 
-OA ding_approval_instance 是外部 PostgreSQL 表，不在本项目 ORM 或迁移中创建，也没有本地费用复制表。汇率事实保存在 settlement_entries，不在报表表中。依据：[models.py](../../../models.py)、[reports.py](../../../routers/reports.py)、[oa_office_expenses.py](../../../services/oa_office_expenses.py)。
+OA ding_approval_instance 是外部 PostgreSQL 表，不在本项目 ORM 或迁移中创建，也没有本地费用复制表。导入逐日汇率事实保存在settlement_entries；报表手动月度覆盖保存在本表metadata，与导入汇率独立。依据：[models.py](../../../models.py)、[reports.py](../../../routers/reports.py)、[oa_office_expenses.py](../../../services/oa_office_expenses.py)。
 
 兼容迁移的建表/索引是否已在目标库落实待验证，见 [migrate.py](../../../migrate.py)。

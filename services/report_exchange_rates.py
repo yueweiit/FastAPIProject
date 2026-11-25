@@ -1,4 +1,4 @@
-"""损益使用核算月末汇率；仅读取外部数据，不重写销售保存的逐日汇率。"""
+"""损益按店铺/月优先读取手动汇率，否则取自动月末汇率；不重写销售逐日汇率。"""
 import asyncio
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import exists, func, or_, select
 
-from models import Sale, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, User
+from models import Sale, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, StoreProfitLossReport, User
 from services.exchange_rates import ExchangeRateError, get_cny_rates
 from services.financial_facts import settlement_accounting_date_expression
 from services.sales_classification import inventory_sales_condition
@@ -25,8 +25,100 @@ def rate_key(currency, day):
     return str(currency or "CNY").strip().upper(), day.replace(day=1)
 
 
-async def monthly_report_rates(db, requirements):
+def store_rate_key(store_id, currency, day):
+    return store_id, *rate_key(currency, day)
+
+
+async def monthly_store_report_rates(db, requirements):
+    by_store = {}
+    for store_id, currency, month in requirements:
+        by_store.setdefault(store_id, set()).add(rate_key(currency, month))
+    resolved = {}
+    # A session cannot run SQL concurrently; automatic quotes are shared by the request cache.
+    for store_id, keys in by_store.items():
+        rates = await monthly_report_rates(db, keys, store_id=store_id)
+        resolved.update({(store_id, *key): value for key, value in rates.items()})
+    return resolved
+
+
+FX_OVERRIDE_KEY = "report_fx_overrides"
+
+
+def manual_rate_text(value):
+    """Keep the exact rate, without trailing decimal zeros or exponent notation."""
+    if value is None:
+        return None
+    try:
+        text = format(Decimal(str(value)), "f")
+    except (InvalidOperation, ValueError, TypeError):
+        return value  # Corrupt legacy values remain invalid; do not invent a rate.
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def fx_setting(currency, saved=None):
+    saved = saved if isinstance(saved, dict) else {}
+    return {"currency": currency, "mode": saved.get("mode", "auto"),
+            "manual_rate": manual_rate_text(saved.get("manual_rate")), "revision": saved.get("revision", 0),
+            "note": saved.get("note", ""), "updated_at": saved.get("updated_at"),
+            "updated_by": saved.get("updated_by"), "updated_by_user_id": saved.get("updated_by_user_id")}
+
+
+async def load_fx_settings(db, store_id, months):
+    """Cache saved settings per store/month, never share an effective manual rate across stores."""
+    info = getattr(db, "info", None)
+    cache = info.setdefault("report_fx_settings", {}) if isinstance(info, dict) else {}
+    missing = {month for month in months if (store_id, month) not in cache}
+    if missing:
+        rows = (await db.execute(select(StoreProfitLossReport).where(
+            StoreProfitLossReport.store_id == store_id,
+            StoreProfitLossReport.report_month.in_(missing)))).scalars().all()
+        for month in missing:
+            cache[(store_id, month)] = {}
+        for row in rows:
+            settings = (row.report_metadata or {}).get(FX_OVERRIDE_KEY, {})
+            cache[(store_id, row.report_month)] = settings if isinstance(settings, dict) else {}
+    return {month: cache[(store_id, month)] for month in months}
+
+
+def invalidate_report_rates(db):
+    info = getattr(db, "info", None)
+    if isinstance(info, dict):
+        info.pop("report_fx_settings", None)
+        info.pop("monthly_report_rates", None)
+
+
+async def _store_monthly_rates(db, store_id, requirements):
+    keys = {rate_key(currency, day) for currency, day in requirements}
+    settings = await load_fx_settings(db, store_id, {month for _, month in keys})
+    manual, automatic = {}, set()
+    for currency, month in keys:
+        setting = fx_setting(currency, settings[month].get(currency))
+        if currency == "CNY" or setting["mode"] != "manual":
+            automatic.add((currency, month))
+            continue
+        try:
+            rate = Decimal(str(setting["manual_rate"]))
+            if not rate.is_finite() or rate <= 0:
+                rate = None
+        except (ValueError, TypeError, InvalidOperation):
+            rate = None
+        manual[(currency, month)] = {
+            **setting, "store_id": store_id, "report_month": month.isoformat()[:7],
+            "requested_date": month_end(month), "rate_date": None, "rate_to_cny": rate,
+            "source": "manual", "status": "available" if rate is not None else "missing",
+            "is_provisional": month >= report_today().replace(day=1),
+        }
+    rates = await monthly_report_rates(db, automatic)
+    for (currency, month), value in rates.items():
+        manual[(currency, month)] = {**value, **fx_setting(currency, settings[month].get(currency)),
+                                    "mode": "auto", "store_id": store_id, "is_provisional": False}
+    return {key: manual[key] for key in sorted(keys)}
+
+
+async def monthly_report_rates(db, requirements, *, store_id=None):
     """每请求共用币种/月缓存；失败、未到月末均留空，不回退到订单日汇率。"""
+    if store_id is not None:
+        return await _store_monthly_rates(db, store_id, requirements)
     info = getattr(db, "info", None)
     cache = info.setdefault("monthly_report_rates", {}) if isinstance(info, dict) else {}
     keys = {rate_key(currency, day) for currency, day in requirements}
@@ -72,6 +164,18 @@ def convert_report_amount(amount, rate):
     if not amount:
         return Decimal(0)
     return None if rate["rate_to_cny"] is None else amount * rate["rate_to_cny"]
+
+
+def rate_evidence_text(item):
+    """Chinese financial exports share one label for manual/provisional rate evidence."""
+    source = item.get("source") or item["status"]
+    evidence = str(item.get("rate_date") or "—")
+    if item.get("mode") == "manual":
+        source = "手动（暂估）" if item.get("is_provisional") else "手动"
+        evidence = f"{item.get('updated_at') or '—'} · {item.get('updated_by') or '—'}"
+        if item.get("note"):
+            evidence += f" · {item['note']}"
+    return f"{item['report_month']} {item['currency']} / CNY：{item['rate_to_cny']}；{source}；{evidence}"
 
 
 def fulfillment_orders(sales, contexts, store_ids_by_sale=None):

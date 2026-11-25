@@ -2,17 +2,19 @@
 
 2026-11-24：当前 `calculation_policy=order_created_fx_mxn8_income_only_v3`；`fulfillment_order_counts` 改按交易类型为“订单”的原始订单号在同店同创建月去重，包含指定赠品/未出库订单。字段类型、权限和三个期间保持，旧固定版本不重算。指定赠品正常扣库并计实际销量，财务免商品成本和销售参考跌价；独立结算按订单创建日优先归月。完整规则见[流程](workflow.md)。
 
-2026-11-19：当前损益新增只读自动行`compensation_revenue`“其他收入（赔付）”；`product_sales_revenue`排除同笔赔付，`operating_revenue`加回该自动行。已有`other_revenue`继续为人工/台账科目，不改保存接口或旧值。三个期间、金额类型、权限和旧固定版本保持；该阶段响应`calculation_policy=month_end_fx_mxn8_compensation_v2`，当前策略见上文。`exchange_rates[].source`可为`Baidu/DailyClose`，日期/汇率仍通过原字段返回，参见[流程](workflow.md)。
+2026-11-19：当前损益新增只读自动行`compensation_revenue`“其他收入（赔付）”；`product_sales_revenue`排除同笔赔付，`operating_revenue`加回该自动行。已有`other_revenue`继续为人工/台账科目，不改保存接口或旧值。三个期间、金额类型、权限和旧固定版本保持；该阶段响应`calculation_policy=month_end_fx_mxn8_compensation_v2`，当前策略见上文。`exchange_rates[].source`自动取数可为`Baidu/DailyClose`，手动覆盖时为`manual`，日期/汇率仍通过原字段返回，参见[流程](workflow.md)。
 
 2026-11-02：损益响应新增calculation_policy（month_end_fx_mxn8_v1）、exchange_rates及fulfillment_order_counts；每行新增is_reserved。旧字段和三个期间保留，新增字段均有默认值，旧月度版本可读取。查询/保存及Excel使用[现行月度规则](workflow.md)；无需DDL或历史回填。
 
 
-前缀 /reports，共8个端点。读取允许三种角色，但范围不同；保存损益只允许 admin/operator。
+前缀 /reports，共10个端点。读取允许三种角色，但范围不同；保存损益只允许 admin/operator。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `GET /reports/store-profit-loss` | [get_store_profit_loss](../../../routers/reports.py) | admin/operator/viewer | report_month、store_id | StoreProfitLossResponse |
 | `PUT /reports/store-profit-loss` | [update_store_profit_loss](../../../routers/reports.py) | admin/operator | StoreProfitLossUpdateRequest | StoreProfitLossResponse |
+| `GET /reports/store-exchange-rate/reference` | [store_exchange_rate_reference](../../../routers/reports.py) | admin/operator/viewer | store_id、report_month、currency | 自动参考汇率 |
+| `PUT /reports/store-exchange-rate` | [update_store_exchange_rate](../../../routers/reports.py) | admin/operator | StoreExchangeRateUpdateRequest | store_id/report_month/setting |
 | `GET /reports/inventory-impairment` | [inventory_impairment_report](../../../routers/reports.py) | admin/operator/viewer | report_date | 存货明细数组 |
 | `GET /reports/inventory-impairment/summary` | [inventory_impairment_summary](../../../routers/reports.py) | admin/operator/viewer | report_date | 全部截止日批次的 SKU 汇总数组 |
 | `GET /reports/product-line-profit` | [product_line_profit_report](../../../routers/reports.py) | admin/operator/viewer | report_month、report_date、store_id | 名称保留，按本地商品汇总数组 |
@@ -83,3 +85,13 @@ remarks在两种scope下均为完整替换，只接受已定义科目、去空�
 ## 财务来源兼容扩展
 
 损益行增加input_source=manual/ledger（默认manual）；manual_value仍为原人工备选值，value是选定来源的计算结果。保存损益时不会覆盖ledger科目的原人工备选值。实际成本补差通过查询层进入现有存货/损益/产品线/Excel；新凭证、来源选择、版本/比较及冻结导出见[财务增强API](../financial-control/api.md)。
+
+## 手动汇率接口
+
+`GET /reports/store-exchange-rate/reference`接收必填store_id、report_month（月首）、currency（三位大写代码），按报表店铺权限返回自动参考的currency/report_month/requested_date/rate_date/rate_to_cny/source/status。它不读取手动设置；未结束月为month_not_closed，缺率为missing，不写数据库。
+
+`PUT /reports/store-exchange-rate`接收store_id、report_month、currency、mode（auto/manual）、manual_rate、note（可选，最多500字）、expected_revision（首次0）。manual_rate建议传十进制字符串，正数、最多18位有效数字且最多8位小数；manual必须提供，auto必须省略或为null，CNY不可覆盖。成功只返回store_id/report_month/setting，保存与重新查询报表分开，避免外部重算失败被误认为保存失败。
+
+setting含currency/mode/manual_rate/revision/note/updated_at/updated_by/updated_by_user_id；manual_rate以普通十进制字符串保存并去除小数末尾零（例如0.371100000返回0.3711），不舍入有效数字、不返回科学计数法。旧设置读取时采用同一格式，不批量改写历史metadata；updated_at为UTC ISO时间。未保存时mode=auto、revision=0。月首/未来月份不合规返回400与code=report_fx_month_invalid，权限不符403，修订冲突409与code=report_fx_conflict，金额/模式格式不合规422。失败不覆盖原设置。
+
+损益响应新增默认字段supports_manual_fx=true及exchange_rate_settings=[]，设置列表含本月使用币种、店铺结算币种和已配置币种，排除CNY。exchange_rates继续保留原字段，追加mode/store_id/is_provisional和设置依据；手动时source=manual、rate_date=null，不冒充外部报价日期。未知旧字段不影响读取，旧版本仍以保存payload导出。前端旧后端无supports_manual_fx时隐藏写入入口。现有损益保存与汇率保存互相保留对方字段；不改变calculation_policy的原订单/赠品/费用计算规则。

@@ -209,7 +209,7 @@ def policy(path,methods):
     if path=='/sales' and 'POST' in methods: return 'sales',(Sale,),None
     if path=='/sales/pending-confirmations/retry': return 'sales',(SettlementEntry,SettlementEntryAllocation,SalesProductMapping,SalesProductMappingComponent),'process_pending'
     if path=='/sales/product-mappings': return 'sales',(SalesProductMapping,SalesProductMappingComponent),'confirm_mapping'
-    if path=='/reports/store-profit-loss' and 'PUT' in methods: return 'reports',(StoreProfitLossReport,),None
+    if path in {'/reports/store-profit-loss','/reports/store-exchange-rate'} and 'PUT' in methods: return 'reports',(StoreProfitLossReport,),None
     return None
 
 

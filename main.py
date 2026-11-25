@@ -130,6 +130,12 @@ async def operation_logs_script():
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/report-exchange-rates.js", include_in_schema=False)
+async def report_exchange_rates_script():
+    return FileResponse(BASE_DIR / "static" / "report-exchange-rates.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/sales-ledger.js", include_in_schema=False)
 async def sales_ledger_script():
     return FileResponse(BASE_DIR / "static" / "sales-ledger.js", media_type="text/javascript",

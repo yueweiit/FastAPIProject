@@ -718,6 +718,31 @@ class StoreProfitLossUpdateRequest(BaseModel):
     remarks: dict[str, str] = Field(default_factory=dict)
 
 
+class StoreExchangeRateUpdateRequest(BaseModel):
+    store_id: int = Field(ge=1)
+    report_month: date
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    mode: Literal["auto", "manual"]
+    manual_rate: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=8)
+    note: str = Field(default="", max_length=500)
+    expected_revision: int = Field(ge=0)
+
+    @field_validator("manual_rate", mode="before")
+    @classmethod
+    def reject_boolean_rate(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("汇率必须为正数")
+        return value
+
+    @model_validator(mode="after")
+    def validate_rate_mode(self):
+        if self.currency == "CNY":
+            raise ValueError("人民币汇率固定为1")
+        if (self.mode == "manual") != (self.manual_rate is not None):
+            raise ValueError("手动模式必须填写汇率，自动模式不接受手动汇率")
+        return self
+
+
 class StoreProfitLossResponse(BaseModel):
     store_id: int
     store_name: str
@@ -732,6 +757,8 @@ class StoreProfitLossResponse(BaseModel):
     exchange_rates: list[dict] = Field(default_factory=list)
     fulfillment_order_counts: dict[str, int] = Field(default_factory=dict)
     calculation_policy: str | None = None
+    exchange_rate_settings: list[dict] = Field(default_factory=list)
+    supports_manual_fx: bool = True
 
 
 # ========== 财务主数据 ==========
