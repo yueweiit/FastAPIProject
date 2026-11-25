@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
@@ -1291,6 +1291,7 @@ def _sales_import_batch_response(batch, username, store_name, user):
 @router.get("/imports", response_model=list[SalesImportBatchResponse])
 async def list_sales_imports(
     limit: int = Query(default=20, ge=1, le=100),
+    status: Literal["completed", "rolled_back"] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
 ):
@@ -1303,6 +1304,8 @@ async def list_sales_imports(
     )
     if user.role != "admin":
         stmt = stmt.where(SalesImportBatch.store_id == _require_bound_store(user))
+    if status is not None:
+        stmt = stmt.where(SalesImportBatch.status == status)
     rows = (await db.execute(stmt)).all()
     return [_sales_import_batch_response(batch, username, store_name, user) for batch, username, store_name in rows]
 

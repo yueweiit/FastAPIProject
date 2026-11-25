@@ -25,7 +25,7 @@ function setup(file){
     }
     const c=vm.createContext({window:{},document:{documentElement:{lang:'zh-CN'},getElementById:element,querySelectorAll:()=>[]},
         setTimeout:()=>1,clearTimeout(){},authHeaders:()=>({'X-CSRF-Token':'fixture'}),updateSalesImportControls(){},showMsg:()=>{}});
-    vm.runInContext("const API='';let CURRENT_USER_ID=1,salesStoreRequestId=0,salesImportSessionId=0,salesImportBusy=false,salesImportStoresReady=false; const salesImportText=key=>window.PageInteractions.text(key);",c);
+    vm.runInContext("const API='';let CURRENT_USER_ID=1,salesStoreRequestId=0,salesImportSessionId=0,salesImportsRequestId=0,salesImportBusy=false,salesImportStoresReady=false; const salesImportText=key=>window.PageInteractions.text(key);",c);
     for(const module of ['static/page-interactions.js','static/sales-import-progress.js','static/sales-import-results.js'])
         vm.runInContext(fs.readFileSync(module,'utf8'),c);
     const html=fs.readFileSync(file,'utf8');

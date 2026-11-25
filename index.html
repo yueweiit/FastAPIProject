@@ -119,6 +119,9 @@
         .sales-import-result-dialog .result-meta, .sales-import-result-dialog .result-current { color:var(--muted); font-size:var(--font-size-small); }
         @media (max-width:640px) { .sales-import-progress { top:12px; right:12px; width:calc(100vw - 24px); max-height:calc(100dvh - 24px); } }
         .sales-import-controls .form-group { margin:0; min-width:180px; }
+        .sales-import-history-actions { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
+        .sales-import-history-actions .form-group { flex-direction:row; align-items:center; gap:8px; }
+        .sales-import-history-actions select { width:140px; }
         .sales-import-help { font-size:var(--font-size-small); color:var(--muted); }
 
         .sales-toolbar-actions .btn { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:9px 15px; border:1px solid transparent; border-radius:7px; font-size:var(--font-size-ui); font-weight:700; cursor:pointer; }
@@ -1072,8 +1075,18 @@
         </div>
         <div class="card" id="sales-import-history-card">
             <div class="flex-between">
-                <h3>导入历史</h3>
-                <button class="btn btn-secondary" onclick="loadSalesImports()">刷新</button>
+                <h3 data-sales-history-text="salesHistoryTitle"></h3>
+                <div class="sales-import-history-actions">
+                    <div class="form-group">
+                        <label for="sales-import-status" data-sales-history-text="salesHistoryStatus"></label>
+                        <select id="sales-import-status" onchange="loadSalesImports()">
+                            <option value="completed" selected data-sales-history-text="salesHistorySuccess"></option>
+                            <option value="" data-sales-history-text="salesHistoryAll"></option>
+                            <option value="rolled_back" data-sales-history-text="salesHistoryRolledBack"></option>
+                        </select>
+                    </div>
+                    <button class="btn btn-secondary" type="button" onclick="loadSalesImports()" data-sales-history-text="salesHistoryRefresh"></button>
+                </div>
             </div>
             <p id="sales-import-export-status" class="msg" role="status" aria-live="polite" style="display:none"></p>
             <div class="table-scroll">
@@ -2964,6 +2977,7 @@ async function loadSkuOptions() {
 
 let salesStoreRequestId = 0;
 let salesImportSessionId = 0;
+let salesImportsRequestId = 0;
 let salesImportBusy = false;
 let salesImportStoresReady = false;
 const salesImportText = key => window.PageInteractions.text(key);
@@ -2981,6 +2995,9 @@ function resetSalesImportState() {
     window.SalesImportResults?.reset();
     salesStoreRequestId++;
     salesImportSessionId++;
+    salesImportsRequestId++;
+    document.getElementById('sales-import-status').value = 'completed';
+    document.getElementById('sales-imports-tbody').innerHTML = '';
     window.SalesDeductionPreview?.reset();
     salesImportBusy = false;
     salesImportStoresReady = false;
@@ -3185,18 +3202,28 @@ function viewSalesImportResult(id) {
     return window.SalesImportResults.open(id);
 }
 async function loadSalesImports() {
-    const requestOptions = window.SalesLedger?.requestOptions() || {};
+    const requestId = ++salesImportsRequestId;
+    const sessionOptions = window.SalesLedger?.requestOptions() || {};
+    const requestOptions = {...sessionOptions, isCurrent: () => requestId === salesImportsRequestId
+        && (!sessionOptions.isCurrent || sessionOptions.isCurrent())};
+    document.querySelectorAll('[data-sales-history-text]').forEach(node => {
+        node.textContent = window.PageInteractions.text(node.dataset.salesHistoryText);
+    });
+    const params = new URLSearchParams({limit: '30'});
+    const status = document.getElementById('sales-import-status').value;
+    if (status) params.set('status', status);
     const tbody = document.getElementById('sales-imports-tbody');
+    tbody.innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(window.PageInteractions.text('salesHistoryLoading'))}</td></tr>`;
     try {
-        const list = await api('GET', '/sales/imports?limit=30', undefined, requestOptions);
-        if (requestOptions.isCurrent && !requestOptions.isCurrent()) return;
+        const list = await api('GET', `/sales/imports?${params}`, undefined, requestOptions);
+        if (!requestOptions.isCurrent()) return;
         if (!list.length) {
-            tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无导入记录</td></tr>';
+            tbody.innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(window.PageInteractions.text('salesHistoryEmpty'))}</td></tr>`;
             return true;
         }
         tbody.innerHTML = list.map(item => {
             const statusClass = item.status === 'completed' ? 'status-completed' : 'status-rolled-back';
-            const statusText = item.status === 'completed' ? '已完成' : '已撤销';
+            const statusText = window.PageInteractions.text(item.status === 'completed' ? 'salesHistorySuccess' : 'salesHistoryRolledBack');
             const fileType = item.file_type === 'manual_settlement' ? window.PageInteractions.text('salesManualEntry') : item.file_type === 'order_detail' ? '订单详情 Excel' : '销售 CSV';
             return `<tr>
                 <td><div class="file-primary" title="${escapeHtml(item.file_name)}">${escapeHtml(item.file_name)}</div><div class="file-secondary">${fileType}${item.sheet_name ? ` · ${escapeHtml(item.sheet_name)}` : ''}</div></td>
@@ -3212,7 +3239,7 @@ async function loadSalesImports() {
         }).join('');
         return true;
     } catch (e) {
-        if (requestOptions.isCurrent && !requestOptions.isCurrent()) return;
+        if (!requestOptions.isCurrent()) return;
         tbody.innerHTML = `<tr><td colspan="9" class="empty">${escapeHtml(e.message)}</td></tr>`;
         return false;
     }

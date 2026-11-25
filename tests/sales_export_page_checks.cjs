@@ -20,7 +20,7 @@ function setup(file) {
         formatApiError: (detail, fallback) => detail?.message || detail || fallback,
     });
     vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
-    vm.runInContext('let salesExportBusy=false,salesExportSessionEpoch=0,salesExportController=null;', c);
+    vm.runInContext('let salesExportBusy=false,salesExportSessionEpoch=0,salesExportController=null,salesImportsRequestId=0;', c);
     for (const name of ['setSalesExportStatus', 'setSalesExportBusy', 'resetSalesExportSession', 'exportSalesRecords', 'loadSalesImports', 'escapeHtml']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source, name); vm.runInContext(source[0], c);

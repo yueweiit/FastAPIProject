@@ -22,7 +22,7 @@ function setup(file,role='admin') {
     vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
     vm.runInContext(fs.readFileSync('static/sales-import-progress.js','utf8'),c);
     c.window.SalesDeductionPreview={confirm:async()=> 'vm-preview',reset:()=>{}};
-    vm.runInContext(`let salesStoreRequestId=0,salesImportSessionId=0,salesImportBusy=false,salesImportStoresReady=false;
+    vm.runInContext(`let salesStoreRequestId=0,salesImportSessionId=0,salesImportsRequestId=0,salesImportBusy=false,salesImportStoresReady=false;
         let CURRENT_USER_ID=1,CURRENT_ROLE=${JSON.stringify(role)},salesPage=1;
         const salesImportText=key=>window.PageInteractions.text(key);
         function isAdmin(){return CURRENT_ROLE==='admin';}function isOperator(){return ['admin','operator'].includes(CURRENT_ROLE);}
