@@ -5,13 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FIFO库存成本核算系统</title>
     <style>
-        :root { --ink:#152238; --muted:#687386; --line:#e1e6ee; --surface:#fff; --canvas:#f2f4f7; --accent:#e94560; --accent-dark:#c9334d; --teal:#0f766e; }
+        :root { --ink:#152238; --muted:#526074; --line:#e1e6ee; --surface:#fff; --canvas:#f2f4f7; --accent:#e94560; --accent-dark:#c9334d; --teal:#0f766e; --font-size-small:.875rem; --font-size-ui:.9375rem; --font-size-body:1rem; }
         * { margin:0; padding:0; box-sizing:border-box; }
-        body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--canvas); color:var(--ink); line-height:1.45; }
+        body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--canvas); color:var(--ink); font-size:var(--font-size-body); line-height:1.6; }
+        /* 全站阅读层级：正文 16px、常用控件 15px、辅助信息至少 14px。 */
+        button, input, select, textarea { font-family:inherit; font-size:var(--font-size-ui); line-height:1.5; }
+        small { font-size:var(--font-size-small); line-height:1.65; }
+        input::placeholder, textarea::placeholder { color:var(--muted); opacity:1; }
         .header { background:#101b33 !important; color:#fff; padding:18px 36px !important; border-bottom:1px solid #263453; }
         .header h1 { font-size:21px; letter-spacing:.2px; }
         .nav { display:flex; gap:0; background:#fff; padding:0 36px; flex-wrap:wrap; border-bottom:1px solid var(--line); box-shadow:0 2px 8px rgba(21,34,56,.06); }
-        .nav button { background:none; border:0; color:#647084; padding:15px 20px 13px; cursor:pointer; font-size:14px; border-bottom:3px solid transparent; transition:.18s ease; }
+        .nav button { background:none; border:0; color:#647084; padding:15px 20px 13px; cursor:pointer; font-size:var(--font-size-ui); border-bottom:3px solid transparent; transition:background-color .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease,transform .18s ease; }
         .nav button.active { color:var(--ink); border-bottom-color:var(--accent); font-weight:700; }
         .nav button:hover { color:var(--accent); background:#fff7f8; }
         .container { max-width:1680px; margin:24px auto; padding:0 28px; }
@@ -20,14 +24,14 @@
         .form-row { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
         .batch-form-actions { display:flex; justify-content:flex-end; margin-top:16px; }
         .batch-form-actions .btn { min-width:160px; }
-        #sec-batches > .card:first-child .form-row, #edit-batch-modal .form-row { display:grid; grid-template-columns:repeat(7,minmax(120px,1fr)); gap:14px; }
+        #sec-batches > .card:first-child .form-row, #edit-batch-modal .form-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr)); gap:14px; }
         .form-group { display:flex; flex-direction:column; gap:6px; min-width:0; }
-        .form-group label { font-size:12px; color:var(--muted); font-weight:600; }
-        .form-group input, .form-group select, .form-group .product-specification-input { padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; width:170px; background:#fff; color:var(--ink); transition:.18s ease; }
-        .product-specification-input { font-family:inherit; line-height:18px; min-height:40px; resize:vertical; }
+        .form-group label { font-size:var(--font-size-small); color:var(--muted); font-weight:600; }
+        .form-group input, .form-group select, .form-group .product-specification-input { padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:var(--font-size-ui); width:170px; background:#fff; color:var(--ink); transition:background-color .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease,transform .18s ease; }
+        .product-specification-input { font-family:inherit; line-height:1.6; min-height:44px; resize:vertical; }
         #sec-batches > .card:first-child .form-group input, #sec-batches > .card:first-child .form-group select, #edit-batch-modal .form-group input, #edit-batch-modal .form-group select { width:100%; }
         .form-group input:focus, .form-group select:focus, .form-group .product-specification-input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
-        button.btn { padding:10px 18px; border:1px solid transparent; border-radius:7px; cursor:pointer; font-size:13px; font-weight:700; transition:.18s ease; }
+        button.btn { padding:10px 18px; border:1px solid transparent; border-radius:7px; cursor:pointer; font-size:var(--font-size-ui); font-weight:700; transition:background-color .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease,transform .18s ease; }
         .btn-primary { background:var(--accent); color:#fff; box-shadow:0 3px 8px rgba(233,69,96,.2); }
         .btn-primary:hover { background:var(--accent-dark); transform:translateY(-1px); }
         .btn-secondary { background:#f4f6f8; color:#3b4657; border-color:#e0e5ec !important; }
@@ -39,14 +43,14 @@
         #batches-table-scroll thead [data-batch-column="actions"] { background:#f7f9fb; z-index:3; }
         #batches-table-scroll tr:hover [data-batch-column="actions"] { background:#fff8f9; }
         .batch-row-actions { display:flex; gap:4px; align-items:center; }
-        .batch-row-actions .btn { font-size:11px; padding:3px 8px; }
+        .batch-row-actions .btn { font-size:var(--font-size-small); padding:3px 8px; }
         .batch-row-actions button:disabled { opacity:.45; cursor:not-allowed; }
-        #batch-edit-help { color:var(--muted); font-size:12px; margin:0 0 12px; }
+        #batch-edit-help { color:var(--muted); font-size:var(--font-size-small); margin:0 0 12px; }
         #edit-batch-modal .form-row { grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
         #batches-table-scroll::-webkit-scrollbar { width:12px; height:12px; }
         #batches-table-scroll::-webkit-scrollbar-thumb { background:#9da8b7; border:3px solid transparent; border-radius:999px; background-clip:padding-box; }
         #batches-table-scroll::-webkit-scrollbar-thumb:hover { background-color:#718096; }
-        table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
+        table { width:100%; border-collapse:separate; border-spacing:0; font-size:var(--font-size-small); }
         .table-scroll table { width:max-content; min-width:100%; }
         th { background:#f7f9fb; text-align:left; padding:13px 14px; font-weight:700; color:#526074; border-bottom:1px solid #dce2ea; white-space:nowrap; }
         td { padding:13px 14px; border-bottom:1px solid #edf0f4; white-space:nowrap; vertical-align:middle; color:#263449; }
@@ -62,7 +66,7 @@
         .batch-table input[type="checkbox"] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
         .product-table th:first-child, .product-table td:first-child { min-width:54px; width:54px; text-align:center; }
         .product-table input[type="checkbox"] { width:16px; height:16px; accent-color:var(--accent); cursor:pointer; }
-        .tag { display:inline-block; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+        .tag { display:inline-block; padding:3px 8px; border-radius:999px; font-size:var(--font-size-small); font-weight:700; }
         .tag-green { background:#e4f7ef; color:#087f5b; }
         .tag-red { background:#fde8ec; color:#c9334d; }
         .tag-blue { background:#e6f0ff; color:#245db3; }
@@ -70,14 +74,14 @@
         .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:16px; }
         .stat-card { background:#f7f9fb; border:1px solid var(--line); border-radius:9px; padding:16px; text-align:center; }
         .stat-card .value { font-size:22px; font-weight:800; color:var(--ink); }
-        .stat-card .label { font-size:12px; color:#7b8797; margin-top:4px; }
-        .msg { padding:11px 16px; border-radius:8px; margin-bottom:14px; font-size:13px; border:1px solid transparent; }
+        .stat-card .label { font-size:var(--font-size-small); color:var(--muted); margin-top:4px; }
+        .msg { padding:11px 16px; border-radius:8px; margin-bottom:14px; font-size:var(--font-size-small); border:1px solid transparent; }
         .msg-ok { background:#e9f8f0; color:#087f5b; border-color:#c8eddc; }
         .msg-err { background:#fff0f2; color:#c9334d; border-color:#f8cbd3; }
         .section { display:none; }
         .section.active { display:block; }
-        .empty { text-align:center; padding:44px !important; color:#9aa5b4; }
-        .cost-detail { font-size:12px; color:var(--teal); margin-top:6px; font-weight:600; }
+        .empty { text-align:center; padding:44px !important; color:var(--muted); }
+        .cost-detail { font-size:var(--font-size-small); color:var(--teal); margin-top:6px; font-weight:600; }
         .sales-ledger-table { min-width:1220px !important; }
         .sales-ledger-table thead th { background:var(--sales-header-bg,#0f3b5d); color:var(--sales-header-ink,#fff); text-align:center; border-bottom-color:#0a2b45; }
         .sales-ledger-table td[data-sales-value="sold_at"] { text-align:center; }
@@ -92,13 +96,13 @@
         .sales-import-progress { position:fixed; top:80px; right:24px; z-index:1400; width:min(460px,calc(100vw - 32px)); max-height:calc(100dvh - 104px); overflow:auto; box-sizing:border-box; margin:0; box-shadow:0 12px 36px #15223826; padding:18px 22px; border:1px solid #cddfed; border-radius:10px; background:#f3f8fc; color:#133b59; }
         .sales-import-progress[hidden] { display:none; }
         .sales-import-progress-heading { display:flex; flex-wrap:wrap; justify-content:space-between; gap:8px 20px; margin-bottom:6px; }
-        .sales-import-progress-file { color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
+        .sales-import-progress-file { color:var(--muted); font-size:var(--font-size-small); overflow-wrap:anywhere; }
         .sales-import-progress progress { display:block; width:100%; height:10px; margin:12px 0; accent-color:#267099; }
-        .sales-import-progress-result { margin-top:8px; font-size:13px; overflow-wrap:anywhere; }
+        .sales-import-progress-result { margin-top:8px; font-size:var(--font-size-small); overflow-wrap:anywhere; }
         .sales-import-progress-actions { display:flex; flex-wrap:wrap; gap:8px; margin-left:auto; }
         .sales-import-progress-actions[hidden], .sales-import-progress-details[hidden], .sales-import-progress-brief[hidden] { display:none; }
-        .sales-import-progress-actions .btn { padding:4px 10px; font-size:12px; }
-        .sales-import-progress-brief { font-size:13px; overflow-wrap:anywhere; }
+        .sales-import-progress-actions .btn { padding:4px 10px; font-size:var(--font-size-small); }
+        .sales-import-progress-brief { font-size:var(--font-size-small); overflow-wrap:anywhere; }
         .sales-import-progress:not([data-state="running"]) { padding:10px 16px; }
         .sales-import-progress:not([data-state="running"]) .sales-import-progress-heading { align-items:center; }
         .sales-import-progress:not([data-state="running"]) progress { display:none; }
@@ -106,64 +110,65 @@
         .sales-import-progress[data-state="complete"] { border-color:#b9e4d8; background:#effaf5; color:#087c63; }
         .sales-import-progress[data-state="review"] { border-color:#efd6a5; background:#fffbf1; color:#896016; }
         .sales-import-progress[data-state="error"] { border-color:#f2becb; background:#fff2f5; color:#be294d; }
-        .sales-import-progress-messages, .sales-import-result-messages { white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; line-height:1.65; }
+        .sales-import-progress-messages, .sales-import-result-messages { white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--font-size-small); line-height:1.65; }
         .sales-import-progress-messages:not(:empty) { margin-top:12px; padding-top:10px; border-top:1px solid currentColor; }
         .product-import-dialog.sales-import-result-dialog { width:min(720px,calc(100vw - 32px)); }
         .sales-import-result-dialog p { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
         .sales-import-result-dialog h4 { margin:18px 0 8px; }
         .sales-import-result-dialog .result-file { display:block; overflow-wrap:anywhere; }
-        .sales-import-result-dialog .result-meta, .sales-import-result-dialog .result-current { color:var(--muted); font-size:13px; }
+        .sales-import-result-dialog .result-meta, .sales-import-result-dialog .result-current { color:var(--muted); font-size:var(--font-size-small); }
         @media (max-width:640px) { .sales-import-progress { top:12px; right:12px; width:calc(100vw - 24px); max-height:calc(100dvh - 24px); } }
         .sales-import-controls .form-group { margin:0; min-width:180px; }
-        .sales-import-help { font-size:12px; color:var(--muted); }
+        .sales-import-help { font-size:var(--font-size-small); color:var(--muted); }
 
-        .sales-toolbar-actions .btn { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:9px 15px; border:1px solid transparent; border-radius:7px; font-size:13px; font-weight:700; cursor:pointer; }
+        .sales-toolbar-actions .btn { display:inline-flex; align-items:center; justify-content:center; min-height:38px; padding:9px 15px; border:1px solid transparent; border-radius:7px; font-size:var(--font-size-ui); font-weight:700; cursor:pointer; }
         .sales-entry-card { padding:20px 22px; }
         .sales-entry-card .flex-between { align-items:flex-start; }
         .sales-entry-card h3 { margin-bottom:4px; font-size:16px; }
         .sales-entry-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:12px; align-items:end; width:100%; }
         .sales-entry-grid .form-group input, .sales-entry-grid .form-group select { width:100%; }
-        .sales-entry-summary { display:flex; align-items:center; justify-content:space-between; min-height:40px; padding:9px 12px; border:1px solid #dbe3ec; border-radius:7px; background:#f7f9fb; color:var(--muted); font-size:12px; }
-        .sales-entry-summary strong { color:var(--ink); font-size:14px; }
+        .sales-entry-summary { display:flex; align-items:center; justify-content:space-between; min-height:40px; padding:9px 12px; border:1px solid #dbe3ec; border-radius:7px; background:#f7f9fb; color:var(--muted); font-size:var(--font-size-small); }
+        .sales-entry-summary strong { color:var(--ink); font-size:var(--font-size-ui); }
         .sales-kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:10px; margin:2px 0 16px; }
         .sales-kpi { border-left:3px solid #d7dee8; padding:10px 14px; background:#f7f9fb; }
         .sales-kpi:nth-child(2) { border-left-color:var(--teal); }
         .sales-kpi:nth-child(3) { border-left-color:#3b82b4; }
         .sales-kpi:nth-child(4) { border-left-color:var(--accent); }
-        .sales-kpi .label { color:var(--muted); font-size:12px; }
+        .sales-kpi .label { color:var(--muted); font-size:var(--font-size-small); }
         .sales-kpi .value { margin-top:3px; color:var(--ink); font-size:18px; font-weight:800; }
         .sales-filter-toolbar { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
         .sales-filter-toolbar .form-group input { width:180px; }
         .sales-filter-toolbar .form-group input[type="month"] { width:150px; }
         .sales-monthly-summary { margin:2px 0 16px; }
-        .sales-monthly-summary-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; color:var(--muted); font-size:12px; font-weight:700; }
+        .sales-monthly-summary-title { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; color:var(--muted); font-size:var(--font-size-small); font-weight:700; }
         .sales-monthly-scroll, .sales-ledger-scroll { overflow-x:auto; }
         .table-scroll .sales-monthly-table { width:100%; min-width:980px !important; table-layout:fixed; }
         .sales-monthly-table thead th { background:#eef4f8; color:#526074; text-align:center; }
         .sales-monthly-table th:nth-child(n+2), .sales-monthly-table td:nth-child(n+2) { text-align:right; }
         .sales-monthly-table td { text-align:center; }
-        .sales-monthly-table .empty, .sales-ledger-table .empty { padding:34px 20px !important; background:#fbfcfd; color:#8b97a8; }
-        .sales-cost-help { color:#687386; font-size:13px; line-height:1.7; margin:12px 0; }
+        .sales-monthly-table .empty, .sales-ledger-table .empty { padding:34px 20px !important; background:#fbfcfd; color:var(--muted); }
+        .sales-cost-help { color:var(--muted); font-size:var(--font-size-small); line-height:1.7; margin:12px 0; }
         .sales-total-summary { margin-bottom:12px; overflow:hidden; scrollbar-gutter:stable; padding-inline-end:16px; border:1px solid #aac9dd; border-radius:8px; box-shadow:0 2px 6px rgba(15,59,93,.06); }
         .sales-total-summary table { width:100%; min-width:0; table-layout:fixed; background:#d9eaf5; }
         .sales-total-summary td { font-weight:800; color:#152238; border-bottom:0; }
         .sales-view-toolbar { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px 20px; margin:4px 0 10px; }
-        .sales-page-total-title { font-size:13px; font-weight:700; color:var(--ink); }
+        .sales-page-total-title { font-size:var(--font-size-small); font-weight:700; color:var(--ink); }
         .sales-pin-control { display:flex; align-items:center; gap:8px; margin-left:auto; }
-        .sales-pin-control label { white-space:nowrap; font-size:12px; color:var(--muted); }
+        .sales-pin-control label { white-space:nowrap; font-size:var(--font-size-small); color:var(--muted); }
         .sales-pin-picker { position:relative; z-index:8; }
-        .sales-pin-picker summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:180px; max-width:60vw; padding:9px 12px; border:1px solid #d4dce7; border-radius:7px; background:#fff; color:var(--ink); cursor:pointer; font-size:13px; list-style:none; }
+        .sales-pin-picker[open] { z-index:9; }
+        .sales-pin-picker summary { display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:180px; max-width:60vw; padding:9px 12px; border:1px solid #d4dce7; border-radius:7px; background:#fff; color:var(--ink); cursor:pointer; font-size:var(--font-size-small); list-style:none; }
         .sales-pin-picker summary::-webkit-details-marker { display:none; }
         .sales-pin-picker summary:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
         .sales-pin-picker summary[aria-disabled="true"] { opacity:.55; cursor:wait; }
         .sales-pin-panel { position:absolute; right:0; top:calc(100% + 6px); width:320px; max-width:calc(100vw - 64px); max-height:min(360px,50vh); overflow:auto; padding:12px; background:#fff; border:1px solid #d4dce7; border-radius:8px; box-shadow:0 8px 24px rgba(15,59,93,.16); }
         .sales-pin-actions { display:flex; justify-content:flex-end; padding-bottom:8px; }
         .sales-pin-options { border:0; padding:8px 0; margin:0; min-width:0; }
-        .sales-pin-options legend { color:var(--muted); font-size:12px; font-weight:700; }
+        .sales-pin-options legend { color:var(--muted); font-size:var(--font-size-small); font-weight:700; }
         .sales-pin-options label { display:flex; align-items:center; gap:8px; padding:7px 6px; border-radius:5px; cursor:pointer; color:var(--ink); white-space:normal; }
         .sales-pin-options label:hover { background:#f3f7fb; }
         .sales-pin-options input { width:auto; margin:0; flex-shrink:0; accent-color:var(--accent); }
-        .sales-pin-limit { margin:8px 0 0; font-size:12px; line-height:1.6; color:#966514; }
+        .sales-pin-limit { margin:8px 0 0; font-size:var(--font-size-small); line-height:1.6; color:#966514; }
         .table-scroll .sales-ledger-table { width:100%; min-width:0 !important; table-layout:fixed; }
         .sales-ledger-scroll { max-height:min(70vh,720px); overflow:auto; scrollbar-gutter:stable; padding-inline-end:16px; box-shadow:0 2px 8px rgba(21,34,56,.04); }
         .sales-ledger-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -173,7 +178,7 @@
         .sales-ledger-table thead .sales-group-4 { --sales-header-bg:#e8f5ef; --sales-header-ink:#17634e; }
         .sales-ledger-table thead .sales-group-5 { --sales-header-bg:#fff4dd; --sales-header-ink:#875b12; }
         .sales-ledger-table td[data-sales-value="product_name"] { text-align:left; }
-        .sales-ledger-table th[data-sales-field="source_row_net_product_sales"], .sales-ledger-table th[data-sales-field="source_row_settlement_total"], .sales-ledger-table th[data-sales-field="allocated_net_product_sales"], .sales-ledger-table th[data-sales-field="allocated_settlement_total"], .sales-ledger-table th[data-sales-field="exchange_rate_to_cny"] { white-space:normal; overflow-wrap:anywhere; }
+        .sales-ledger-table th[data-sales-field] { white-space:normal; overflow-wrap:anywhere; }
         .sales-ledger-table td[data-sales-value="sku"], .sales-ledger-table td[data-sales-value="product_name"], .sales-ledger-table td[data-sales-value="order_no"], .sales-ledger-table td[data-sales-value="transaction_type"] { white-space:normal; overflow-wrap:anywhere; }
         .sales-ledger-table td.sales-number, .sales-total-summary td.sales-number { text-align:right; font-variant-numeric:tabular-nums; }
         .sales-ledger-table td[data-sales-value="order_total_cost_cny"] { font-weight:700; }
@@ -183,7 +188,7 @@
         .sales-calculation-dialog { width:1100px; max-width:calc(100vw - 32px); max-height:90vh; overflow:auto; }
         .sales-calculation-dialog h3 { margin:0; }.sales-calculation-section { margin-top:22px; }.sales-calculation-section h4 { margin-bottom:10px; color:var(--ink); }
         .sales-calculation-identity { margin:14px 0; overflow-wrap:anywhere; }.sales-calculation-section td, .sales-calculation-section th { padding:10px 12px; }
-        .sales-order-totals { display:flex; flex-wrap:wrap; gap:18px; padding:14px; margin-bottom:12px; background:#edf5f9; border-radius:8px; }.sales-order-totals dt { color:var(--muted); font-size:12px; }.sales-order-totals dd { margin:6px 0 0; font-size:18px; font-weight:700; }
+        .sales-order-totals { display:flex; flex-wrap:wrap; gap:18px; padding:14px; margin-bottom:12px; background:#edf5f9; border-radius:8px; }.sales-order-totals dt { color:var(--muted); font-size:var(--font-size-small); }.sales-order-totals dd { margin:6px 0 0; font-size:18px; font-weight:700; }
         @media(max-width:760px) {
             #sec-sales .sales-entry-grid { grid-template-columns:minmax(0,1fr); }
             #sec-sales .sales-page-header, #sec-sales > .card > .flex-between { flex-wrap:wrap; align-items:flex-start; }
@@ -193,10 +198,10 @@
         @media(max-width:760px) { .sales-calculation-dialog { max-width:calc(100vw - 16px);padding:16px; } }
         .import-history-table { min-width:1120px !important; }
         .file-primary { max-width:320px; overflow:hidden; text-overflow:ellipsis; font-weight:700; }
-        .file-secondary { margin-top:3px; color:var(--muted); font-size:11px; }
-        .status-pill { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+        .file-secondary { margin-top:3px; color:var(--muted); font-size:var(--font-size-small); }
+        .status-pill { display:inline-flex; align-items:center; padding:3px 8px; border-radius:999px; font-size:var(--font-size-small); font-weight:700; }
         .status-completed { color:#087f5b; background:#e4f7ef; }
-        .status-rolled-back { color:#687386; background:#edf0f4; }
+        .status-rolled-back { color:var(--muted); background:#edf0f4; }
         .btn-danger { color:#b4233d; background:#fff; border-color:#edb8c2 !important; }
         .btn-danger:hover { color:#fff; background:#b4233d; border-color:#b4233d !important; }
         .flex-between { display:flex; justify-content:space-between; align-items:center; gap:18px; }
@@ -205,33 +210,34 @@
         .login-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10,18,36,.72); display:flex; align-items:center; justify-content:center; z-index:999; }
         .login-box { background:#fff; border-radius:14px; padding:40px; width:380px; box-shadow:0 16px 42px rgba(0,0,0,.22); }
         .login-box h2 { margin-bottom:24px; text-align:center; color:var(--ink); }
-        .login-box input { width:100%; padding:12px; margin-bottom:12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; }
+        .login-box input { width:100%; padding:12px; margin-bottom:12px; border:1px solid #d6dce5; border-radius:7px; font-size:var(--font-size-ui); }
         .login-box input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
         .login-box .btn { width:100%; padding:12px; }
-        .user-bar { display:flex; align-items:center; gap:8px; color:#d9e1ef; font-size:13px; }
-        .user-bar .tag { font-size:12px; }
+        .user-bar { display:flex; align-items:center; gap:8px; color:#d9e1ef; font-size:var(--font-size-small); }
+        .user-bar .tag { font-size:var(--font-size-small); }
         .hidden { display:none !important; }
         .batch-list-actions { display:flex; align-items:center; gap:8px; position:relative; }
         .product-list-toolbar { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:16px; }
         .product-search { display:flex; align-items:center; gap:8px; margin-left:auto; }
-        .product-search input { width:min(300px, 42vw); min-width:190px; padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:14px; color:var(--ink); background:#fff; }
+        .product-search input { width:min(300px, 42vw); min-width:190px; padding:10px 12px; border:1px solid #d6dce5; border-radius:7px; font-size:var(--font-size-ui); color:var(--ink); background:#fff; }
         .product-search input:focus { outline:0; border-color:var(--accent); box-shadow:0 0 0 3px rgba(233,69,96,.12); }
         .product-search .btn { white-space:nowrap; }
         .field-picker { position:relative; }
         .field-picker-menu { display:none; position:absolute; right:0; top:calc(100% + 8px); width:288px; max-height:320px; overflow:auto; z-index:20; padding:14px; background:#fff; border:1px solid var(--line); border-radius:9px; box-shadow:0 12px 28px rgba(21,34,56,.16); }
         .field-picker-menu.open { display:block; }
         .field-picker-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
-        .field-picker-grid label { display:flex; align-items:center; gap:6px; font-size:12px; color:#465365; cursor:pointer; white-space:nowrap; }
+        .field-picker-grid label { display:flex; align-items:flex-start; gap:6px; min-width:0; font-size:var(--font-size-small); line-height:1.5; color:#465365; cursor:pointer; white-space:normal; overflow-wrap:anywhere; }
+        .field-picker-grid input { flex:none; margin-top:4px; }
         .field-picker-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #edf0f4; }
         .batch-column-hidden { display:none !important; }
-        .pagination { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; padding-top:16px; color:var(--muted); font-size:13px; }
+        .pagination { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; padding-top:16px; color:var(--muted); font-size:var(--font-size-small); }
         .pagination-summary { margin-right:auto; }
-        .pagination button { min-width:34px; padding:6px 9px; border:1px solid var(--line); border-radius:6px; background:#fff; color:#465365; cursor:pointer; font-size:13px; }
+        .pagination button { min-width:34px; padding:6px 9px; border:1px solid var(--line); border-radius:6px; background:#fff; color:#465365; cursor:pointer; font-size:var(--font-size-small); }
         .pagination button:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
         .pagination button.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
         .pagination button:disabled { color:#a8b1bd; background:#f6f7f9; cursor:not-allowed; }
         .pagination select { padding:6px 8px; border:1px solid var(--line); border-radius:6px; color:#465365; background:#fff; }
-        .gallery-download { position:absolute; right:10px; bottom:10px; padding:6px 10px !important; font-size:12px !important; text-decoration:none; background:rgba(255,255,255,.94); }
+        .gallery-download { position:absolute; right:10px; bottom:10px; padding:6px 10px !important; font-size:var(--font-size-small) !important; text-decoration:none; background:rgba(255,255,255,.94); }
         .edit-modal { position:fixed !important; z-index:1000; top:50%; left:50%; transform:translate(-50%,-50%); width:min(1060px, calc(100vw - 72px)); max-height:calc(100vh - 72px); overflow:auto; margin:0 !important; border:1px solid #f3a0ad !important; box-shadow:0 22px 60px rgba(15,27,51,.28), 0 0 0 100vmax rgba(15,27,51,.36); }
         .edit-modal .form-row { margin-bottom:10px; }
         .edit-modal .flex-between { position:sticky; top:0; z-index:1; padding-bottom:12px; margin-bottom:4px; background:var(--surface); }
@@ -270,7 +276,7 @@
         .reports-layout { display:grid; grid-template-columns:210px minmax(0,1fr); gap:18px; align-items:start; }
         .reports-layout > div { min-width:0; }
         .reports-sidebar { position:sticky; top:18px; padding:8px; background:#fff; border:1px solid var(--line); border-radius:9px; }
-        .reports-sidebar button { display:block; width:100%; padding:11px 12px; border:0; border-left:3px solid transparent; background:transparent; color:#526074; text-align:left; font-size:13px; font-weight:700; cursor:pointer; }
+        .reports-sidebar button { display:block; width:100%; padding:11px 12px; border:0; border-left:3px solid transparent; background:transparent; color:#526074; text-align:left; font-size:var(--font-size-ui); font-weight:700; cursor:pointer; }
         .reports-sidebar button:hover { background:#f7f9fb; color:var(--ink); }
         .reports-sidebar button.active { border-left-color:var(--accent); background:#fff3f5; color:var(--accent-dark); }
         .report-pane { display:none; min-width:0; }
@@ -286,15 +292,15 @@
         .inventory-report-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
         .inventory-report-actions select { padding:8px; border:1px solid var(--line); border-radius:6px; font:inherit; }
         @media (max-width:900px) { .reports-layout { grid-template-columns:1fr; } .reports-sidebar { position:static; display:flex; overflow-x:auto; } .reports-sidebar button { width:auto; min-width:max-content; border-left:0; border-bottom:3px solid transparent; } .reports-sidebar button.active { border-bottom-color:var(--accent); } }
-        .profit-loss-updated { min-height:18px; color:var(--muted); font-size:12px; }
-        .profit-loss-warnings { margin:10px 0; padding:10px 12px; border:1px solid #f1cf88; border-radius:6px; background:#fff8e8; color:#854d0e; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
-        .profit-loss-fx-details { margin:10px 0; color:var(--muted); font-size:13px; }
+        .profit-loss-updated { min-height:24px; max-width:100%; overflow-wrap:anywhere; color:var(--muted); font-size:var(--font-size-small); }
+        .profit-loss-warnings { margin:10px 0; padding:10px 12px; border:1px solid #f1cf88; border-radius:6px; background:#fff8e8; color:#854d0e; font-size:var(--font-size-small); line-height:1.6; overflow-wrap:anywhere; }
+        .profit-loss-fx-details { margin:10px 0; color:var(--muted); font-size:var(--font-size-small); }
         .profit-loss-fx-details summary { cursor:pointer; width:fit-content; }
         .report-fx-panel { margin:12px 0; padding:16px; border:1px solid var(--line); border-radius:8px; background:var(--canvas); }
         .report-fx-panel summary { cursor:pointer; font-weight:600; }
-        .report-fx-panel p { margin:10px 0; color:var(--muted); font-size:13px; overflow-wrap:anywhere; }
+        .report-fx-panel p { margin:10px 0; color:var(--muted); font-size:var(--font-size-small); overflow-wrap:anywhere; }
         .report-fx-grid { display:grid; grid-template-columns:minmax(130px,1fr) minmax(190px,1fr) minmax(160px,2fr); gap:12px; }
-        .report-fx-grid label { display:flex; flex-direction:column; gap:6px; font-size:13px; }
+        .report-fx-grid label { display:flex; flex-direction:column; gap:6px; font-size:var(--font-size-small); }
         .report-fx-grid input,.report-fx-grid select { width:100%; min-width:0; }
         .report-fx-actions { display:flex; flex-wrap:wrap; gap:10px; }
         @media(max-width:640px) { .report-fx-grid { grid-template-columns:1fr; } }
@@ -309,38 +315,38 @@
         .sales-review-dialog [hidden] { display:none !important; }
         .sales-review-head { flex:none; padding:22px 24px 18px; border-bottom:1px solid var(--line); }
         .sales-review-head h3 { margin:0; font-size:20px; font-weight:700; line-height:1.4; }
-        .sales-review-head p { margin:7px 0 0; color:var(--muted); font-size:13px; line-height:1.7; }
+        .sales-review-head p { margin:7px 0 0; color:var(--muted); font-size:var(--font-size-small); line-height:1.7; }
         .sales-review-body { min-height:0; padding:20px 24px; overflow:auto; overscroll-behavior:contain; }
         .sales-review-footer { flex:none; display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 24px; border-top:1px solid var(--line); background:#f8fafc; }
-        .sales-review-footer > p { color:var(--muted); font-size:12px; line-height:1.6; }
+        .sales-review-footer > p { color:var(--muted); font-size:var(--font-size-small); line-height:1.6; }
         .sales-review-footer .page-action-buttons { flex:none; margin:0; gap:10px; }
         .sales-review-dialog .btn { min-height:40px; white-space:nowrap; transition:background-color .15s ease,border-color .15s ease,box-shadow .15s ease; }
         .sales-review-dialog :focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
         .sales-review-dialog button:disabled { opacity:.5; cursor:not-allowed; transform:none; }
-        .sales-review-code { display:block; font-family:Consolas,"SFMono-Regular",monospace; font-size:12px; line-height:1.6; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+        .sales-review-code { display:block; font-family:Consolas,"SFMono-Regular",monospace; font-size:var(--font-size-small); line-height:1.6; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
         .sales-review-primary { display:block; font-weight:600; line-height:1.6; }
-        .sales-review-secondary { display:block; margin-top:4px; color:var(--muted); font-size:12px; line-height:1.6; }
+        .sales-review-secondary { display:block; margin-top:4px; color:var(--muted); font-size:var(--font-size-small); line-height:1.6; }
         #sales-deduction-preview .sales-review-body { display:flex; flex-direction:column; gap:16px; }
         .sales-deduction-summary { flex:none; display:flex; align-items:stretch; gap:28px; padding:0 0 16px; border-bottom:1px solid var(--line); }
-        .sales-deduction-metric { min-width:100px; display:flex; align-items:baseline; flex-wrap:wrap; gap:5px 9px; color:var(--muted); font-size:12px; }
+        .sales-deduction-metric { min-width:100px; display:flex; align-items:baseline; flex-wrap:wrap; gap:5px 9px; color:var(--muted); font-size:var(--font-size-small); }
         .sales-deduction-metric strong { font-size:24px; color:var(--ink); font-weight:700; font-variant-numeric:tabular-nums; }
         .sales-deduction-metric:first-child strong { color:var(--teal); }
         .sales-deduction-metric[data-attention="true"] strong { color:#9a6700; }
-        .sales-review-guidance { flex:none; color:var(--muted); font-size:12px; line-height:1.7; }
+        .sales-review-guidance { flex:none; color:var(--muted); font-size:var(--font-size-small); line-height:1.7; }
         .sales-review-guidance summary { cursor:pointer; width:fit-content; }
         .sales-review-guidance p { margin:8px 0 0; max-width:960px; }
-        .sales-review-scroll-hint { display:none; margin:0; color:var(--muted); font-size:12px; }
+        .sales-review-scroll-hint { display:none; margin:0; color:var(--muted); font-size:var(--font-size-small); }
         .sales-deduction-scroll { min-height:0; overflow:auto; overscroll-behavior:contain; border:1px solid var(--line); border-radius:8px; }
         .sales-deduction-table { width:100%; min-width:1300px; table-layout:fixed; border-collapse:separate; border-spacing:0; margin:0; }
-        .sales-deduction-table th { position:sticky; top:0; z-index:1; background:#f3f6fa; padding:12px 10px; font-size:12px; white-space:normal; line-height:1.6; border-bottom:1px solid var(--line); }
-        .sales-deduction-table td { padding:14px 10px; font-size:13px; line-height:1.6; vertical-align:top; white-space:normal; overflow-wrap:anywhere; border-bottom:1px solid var(--line); }
+        .sales-deduction-table th { position:sticky; top:0; z-index:1; background:#f3f6fa; padding:12px 10px; font-size:var(--font-size-small); white-space:normal; line-height:1.6; border-bottom:1px solid var(--line); }
+        .sales-deduction-table td { padding:14px 10px; font-size:var(--font-size-small); line-height:1.6; vertical-align:top; white-space:normal; overflow-wrap:anywhere; border-bottom:1px solid var(--line); }
         .sales-deduction-table tr:last-child td { border-bottom:0; }
         .sales-deduction-table .sales-review-number { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
         .sales-deduction-table .sales-review-deduct { font-size:16px; font-weight:700; color:var(--teal); }
         .sales-deduction-table tr[data-status="pending"] { background:#fffbf1; }
         .sales-deduction-table tr[data-status="settlement"] .sales-review-deduct { color:var(--muted); }
         .sales-deduction-table tr[data-group-start="true"] td { border-top:2px solid var(--line); }
-        .sales-review-badge { display:inline-block; padding:3px 8px; border-radius:5px; font-size:12px; line-height:1.6; font-weight:600; color:var(--teal); background:#edf7f4; }
+        .sales-review-badge { display:inline-block; padding:3px 8px; border-radius:5px; font-size:var(--font-size-small); line-height:1.6; font-weight:600; color:var(--teal); background:#edf7f4; }
         .sales-review-badge[data-status="pending"] { color:#946200; background:#fff0c7; }
         .sales-review-badge[data-status="settlement"] { color:#5c6879; background:#eef1f5; }
         #pending-retry-dialog { width:min(1060px,calc(100vw - 48px)); }
@@ -348,36 +354,36 @@
         .pending-review-layout { display:grid; grid-template-columns:minmax(240px,300px) minmax(0,1fr); gap:24px; align-items:start; }
         #pending-retry-dialog[data-mode="auto"] .pending-review-layout { display:block; }
         .pending-source-panel { padding:16px; border-radius:8px; background:#f5f7fa; min-width:0; }
-        .pending-source-panel h4 { margin:0 0 14px; font-size:14px; }
-        .pending-source-fields { display:grid; gap:12px; margin:0; font-size:13px; }
-        .pending-source-fields dt { color:var(--muted); font-size:12px; margin-bottom:3px; }
+        .pending-source-panel h4 { margin:0 0 14px; font-size:var(--font-size-ui); }
+        .pending-source-fields { display:grid; gap:12px; margin:0; font-size:var(--font-size-small); }
+        .pending-source-fields dt { color:var(--muted); font-size:var(--font-size-small); margin-bottom:3px; }
         .pending-source-fields dd { margin:0; overflow-wrap:anywhere; line-height:1.6; }
-        .pending-source-issue { margin:16px 0 0; border-top:1px solid var(--line); padding-top:12px; color:#946200; font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
+        .pending-source-issue { margin:16px 0 0; border-top:1px solid var(--line); padding-top:12px; color:#946200; font-size:var(--font-size-small); line-height:1.7; overflow-wrap:anywhere; }
         #pending-component-field { min-width:0; border:0; padding:0; margin:0; }
-        #pending-component-field > legend { padding:0; margin-bottom:14px; font-size:14px; font-weight:700; }
+        #pending-component-field > legend { padding:0; margin-bottom:14px; font-size:var(--font-size-ui); font-weight:700; }
         #pending-component-field .form-group input { width:100%; }
         #pending-component-field .inventory-product-picker { width:100%; }
         #pending-components { display:grid; gap:12px; margin-top:16px; }
         .pending-component { border:1px solid var(--line); border-radius:8px; padding:14px 16px; min-width:0; }
         .pending-component-heading { display:flex; justify-content:space-between; align-items:start; gap:12px; }
-        .pending-component-heading strong { font-size:14px; overflow-wrap:anywhere; }
+        .pending-component-heading strong { font-size:var(--font-size-ui); overflow-wrap:anywhere; }
         .pending-component-heading .sales-review-code { color:var(--muted); margin-bottom:3px; }
-        .pending-component-heading button.btn { padding:5px 10px; min-height:32px; font-size:12px; flex:none; }
+        .pending-component-heading button.btn { padding:5px 10px; min-height:32px; font-size:var(--font-size-small); flex:none; }
         .pending-component-controls { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:12px; }
-        .pending-component-controls label { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+        .pending-component-controls label { display:flex; align-items:center; gap:8px; font-size:var(--font-size-small); color:var(--muted); }
         #pending-component-field input[type="number"], #pending-mapping-fields input { padding:8px 10px; min-height:38px; border:1px solid #d6dce5; border-radius:6px; background:white; color:var(--ink); font:inherit; }
         #pending-component-field input[type="number"] { width:90px; font-variant-numeric:tabular-nums; }
-        .pending-component-equation { flex-basis:100%; color:var(--teal); background:#edf7f4; border-radius:5px; padding:8px 10px; font-size:12px; line-height:1.7; }
-        #pending-mapping-settings { border-top:1px solid var(--line); margin-top:20px; padding-top:16px; font-size:13px; }
+        .pending-component-equation { flex-basis:100%; color:var(--teal); background:#edf7f4; border-radius:5px; padding:8px 10px; font-size:var(--font-size-small); line-height:1.7; }
+        #pending-mapping-settings { border-top:1px solid var(--line); margin-top:20px; padding-top:16px; font-size:var(--font-size-small); }
         .pending-mapping-toggle, #pending-name-unique-label { display:flex; align-items:start; gap:8px; line-height:1.7; }
         #pending-mapping-settings input[type="checkbox"] { flex:none; width:16px; height:16px; margin-top:3px; accent-color:var(--accent); }
-        #pending-mapping-settings p { color:var(--muted); font-size:12px; line-height:1.7; margin:6px 0 0; }
+        #pending-mapping-settings p { color:var(--muted); font-size:var(--font-size-small); line-height:1.7; margin:6px 0 0; }
         #pending-mapping-fields { min-width:0; border:0; margin-top:12px; padding:14px; background:#f5f7fa; border-radius:8px; }
         .pending-mapping-inputs { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; margin:12px 0; }
-        .pending-mapping-inputs label { display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--muted); }
+        .pending-mapping-inputs label { display:flex; flex-direction:column; gap:6px; font-size:var(--font-size-small); color:var(--muted); }
         #pending-mapping-fields input { width:100%; min-width:0; }
         #pending-dialog-status, #pending-dialog-error { flex:none; margin:0 24px 16px; max-height:min(160px,25dvh); overflow:auto; overflow-wrap:anywhere; }
-        #pending-dialog-status { padding:10px 12px; border-radius:6px; background:#f0f5fa; color:#405a78; font-size:13px; }
+        #pending-dialog-status { padding:10px 12px; border-radius:6px; background:#f0f5fa; color:#405a78; font-size:var(--font-size-small); }
         @media(max-width:760px) {
             .sales-review-dialog, #pending-retry-dialog { width:calc(100vw - 24px); max-width:calc(100vw - 24px); max-height:calc(100dvh - 24px); border-radius:10px; }
             .sales-review-head { padding:18px 16px 14px; }.sales-review-head h3 { font-size:18px; }
@@ -403,20 +409,20 @@
         .product-import-heading, .product-import-toolbar, .product-import-actions, .product-import-summary { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
         .product-import-heading { justify-content:space-between; margin-bottom:10px; }
         /* 问号说明：原文保留在原节点，使用浏览器顶层浮层避免表格/弹窗裁切。 */
-        button.help-tip-trigger { display:inline-flex; align-items:center; justify-content:center; width:19px; height:19px; padding:0; margin:0 0 0 7px; vertical-align:middle; border:1px solid #cad5e3; border-radius:50%; background:#f4f7fb; color:#526881; font:700 12px/1 Arial,sans-serif; cursor:help; flex:none; }
+        button.help-tip-trigger { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; padding:0; margin:0 0 0 7px; vertical-align:middle; border:1px solid #cad5e3; border-radius:50%; background:#f4f7fb; color:#526881; font:700 var(--font-size-small)/1 Arial,sans-serif; cursor:help; flex:none; }
         button.help-tip-trigger:hover, button.help-tip-trigger[aria-expanded="true"] { border-color:#425e7f; background:#eaf0f8; color:#162e4f; }
         button.help-tip-trigger:focus-visible { outline:2px solid #e94560; outline-offset:3px; }
         button.help-tip-trigger[hidden] { display:none; }
         .help-tip-source[popover] { display:none !important; }
-        .help-tip-source[popover]:popover-open { display:block !important; position:fixed; inset:auto; width:max-content; min-width:0; max-width:min(420px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:0 !important; padding:12px 16px !important; border:1px solid #d8e1ed; border-radius:8px; background:#fff; color:#30435c !important; box-shadow:0 8px 28px rgba(15,27,51,.16); font-size:13px !important; font-weight:400; line-height:1.7 !important; text-align:left; white-space:normal; overflow-wrap:anywhere; box-sizing:border-box; }
+        .help-tip-source[popover]:popover-open { display:block !important; position:fixed; inset:auto; width:max-content; min-width:0; max-width:min(420px,calc(100vw - 24px)); max-height:calc(100dvh - 24px); overflow:auto; margin:0 !important; padding:12px 16px !important; border:1px solid #d8e1ed; border-radius:8px; background:#fff; color:#30435c !important; box-shadow:0 8px 28px rgba(15,27,51,.16); font-size:var(--font-size-small) !important; font-weight:400; line-height:1.7 !important; text-align:left; white-space:normal; overflow-wrap:anywhere; box-sizing:border-box; }
         .help-tip-source > p { margin:0 0 8px; color:inherit; }
         .help-tip-source > p:last-child { margin-bottom:0; }
-        .product-import-hint { color:var(--muted); font-size:13px; margin:0 0 18px; }
+        .product-import-hint { color:var(--muted); font-size:var(--font-size-small); margin:0 0 18px; }
         .product-import-toolbar input { min-width:210px; flex:1; }
-        .product-import-status { margin:16px 0; font-size:13px; overflow-wrap:anywhere; }
+        .product-import-status { margin:16px 0; font-size:var(--font-size-small); overflow-wrap:anywhere; }
         .product-import-status[data-kind="error"] { color:#b4233d; }
         .product-import-status[data-kind="success"] { color:#087f5b; }
-        .product-import-summary { padding:12px 16px; background:#f4f6f8; border-radius:8px; font-size:13px; margin-bottom:12px; }
+        .product-import-summary { padding:12px 16px; background:#f4f6f8; border-radius:8px; font-size:var(--font-size-small); margin-bottom:12px; }
         .product-import-summary[hidden], .product-import-preview[hidden] { display:none; }
         .product-import-preview { max-height:43vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
         .product-import-preview table { margin:0; min-width:800px; }
@@ -429,30 +435,30 @@
         .inventory-heading, .inventory-tabs, .inventory-filters, .inventory-footer { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
         .inventory-heading { justify-content:space-between; margin-bottom:18px; }
         .inventory-heading h3 { margin:0 0 6px; }
-        .inventory-heading p, .inventory-note { color:var(--muted); font-size:13px; line-height:1.7; }
+        .inventory-heading p, .inventory-note { color:var(--muted); font-size:var(--font-size-small); line-height:1.7; }
         .inventory-tabs { margin-bottom:18px; }
         .inventory-tabs [aria-pressed="true"] { background:var(--ink); color:#fff; border-color:var(--ink); }
         .inventory-filters { align-items:flex-end; margin-bottom:16px; }
-        .inventory-filters .form-group span, .inventory-footer .form-group span { font-size:12px; color:var(--muted); }
+        .inventory-filters .form-group span, .inventory-footer .form-group span { font-size:var(--font-size-small); color:var(--muted); }
         .inventory-filters .form-group input, .inventory-filters .form-group select { min-width:160px; }
         #iw-keyword { width:260px; max-width:100%; }
         .inventory-product-picker { width:min(360px,100%); }
         .inventory-keyword-picker { width:260px; max-width:100%; }
         .inventory-product-control { position:relative; }
-        .inventory-product-picker label, .inventory-product-picker small { color:var(--muted); font-size:12px; }
+        .inventory-product-picker label, .inventory-product-picker small { color:var(--muted); font-size:var(--font-size-small); }
         .inventory-product-picker input { width:100%; }
         .inventory-product-popup { position:absolute; top:100%; margin-top:4px; left:0; right:0; z-index:8; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #101d3624; }
         .inventory-product-options { max-height:280px; overflow-y:auto; }
         .inventory-product-options button { display:block; width:100%; border:0; border-bottom:1px solid var(--line); border-radius:0; padding:10px 12px; background:transparent; text-align:left; color:var(--ink); cursor:pointer; overflow-wrap:anywhere; }
         .inventory-product-options button:hover, .inventory-product-options [aria-selected="true"] { background:var(--canvas); outline:2px solid var(--accent); outline-offset:-2px; }
         .inventory-product-options strong, .inventory-product-options span { display:block; }
-        .inventory-product-search-status { margin:0; padding:8px 12px; color:var(--muted); font-size:12px; }
+        .inventory-product-search-status { margin:0; padding:8px 12px; color:var(--muted); font-size:var(--font-size-small); }
         .inventory-product-search-status:empty { display:none; }
         .inventory-workspace [hidden], .inventory-detail [hidden] { display:none !important; }
         .inventory-status { margin:12px 0; color:var(--accent-dark); overflow-wrap:anywhere; }
         .inventory-stats { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; margin:20px 0; }
         .inventory-stats > div { border-left:3px solid var(--line); padding:4px 16px; }
-        .inventory-stats span { display:block; color:var(--muted); font-size:12px; }
+        .inventory-stats span { display:block; color:var(--muted); font-size:var(--font-size-small); }
         .inventory-stats strong { display:block; margin-top:5px; font-size:23px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
         #ia-table { min-width:1800px; }
         #ia-table > thead > tr > th:last-child { right:0; z-index:4; box-shadow:-3px 0 5px rgba(15,59,93,.08); }
@@ -462,7 +468,7 @@
         #ia-edit { width:min(560px,94vw); }
         #ia-edit .form-group { margin-top:12px; }
         #ia-edit textarea { font:inherit; width:100%; min-height:100px; padding:10px; border:1px solid var(--line); border-radius:6px; resize:vertical; }
-        #ia-edit-status { color:#be123c; font-size:13px; margin:10px 0; }
+        #ia-edit-status { color:#be123c; font-size:var(--font-size-small); margin:10px 0; }
         .inventory-table-scroll { max-height:62vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
         .inventory-table { width:100%; margin:0; font-variant-numeric:tabular-nums; }
         .inventory-table td { white-space:nowrap; }
@@ -471,7 +477,7 @@
         .inventory-fixed { position:sticky; left:0; z-index:1; min-width:240px; background:var(--surface); }
         .inventory-product { display:flex; gap:12px; align-items:center; min-width:210px; max-width:290px; white-space:normal; }
         .inventory-product img, .inventory-image-empty { width:40px; height:40px; flex:none; object-fit:contain; }
-        .inventory-image-empty { display:flex; align-items:center; justify-content:center; color:var(--muted); background:var(--canvas); font-size:11px; border-radius:5px; }
+        .inventory-image-empty { display:flex; align-items:center; justify-content:center; color:var(--muted); background:var(--canvas); font-size:var(--font-size-small); border-radius:5px; }
         .inventory-product small { display:block; color:var(--muted); margin-top:4px; }
         .inventory-quantity { color:var(--teal); background:none; border:0; border-bottom:1px dotted currentColor; padding:4px 6px; font:inherit; cursor:pointer; }
         .inventory-quantity:hover { color:var(--accent-dark); }
@@ -480,7 +486,7 @@
         .inventory-matrix-cell { min-width:100px; line-height:1.8; }
         .inventory-matrix-cell > div { display:flex; align-items:center; justify-content:space-between; gap:10px; }
         .inventory-matrix-cell > div:last-child { border-top:1px solid var(--line); }
-        .inventory-footer { justify-content:space-between; margin-top:18px; font-size:13px; color:var(--muted); }
+        .inventory-footer { justify-content:space-between; margin-top:18px; font-size:var(--font-size-small); color:var(--muted); }
         .inventory-footer button + button { margin-left:8px; }
         .inventory-detail { width:min(1000px,94vw); }
         .inventory-detail .inventory-heading h3 { overflow-wrap:anywhere; min-width:0; }
@@ -489,38 +495,38 @@
         .allocation-heading > div { min-width:0; flex:1; }
         .allocation-heading #ial-product { margin:7px 0 0; overflow-wrap:anywhere; }
         .allocation-batches th, .allocation-batches td { padding:13px 14px; }
-        .allocation-batch-no { font-family:ui-monospace,Consolas,monospace; font-size:12px; }
+        .allocation-batch-no { font-family:ui-monospace,Consolas,monospace; font-size:var(--font-size-small); }
         .allocation-batches tr.is-editing td { background:#fff7f8; }
         .allocation-batches tr.is-editing td:first-child { box-shadow:inset 3px 0 var(--accent); }
-        .allocation-store-label { color:var(--muted); font-size:12px; }
+        .allocation-store-label { color:var(--muted); font-size:var(--font-size-small); }
         .allocation-list-footer { margin-top:14px; gap:10px; }
-        .allocation-status { margin:0 0 14px; color:var(--accent-dark); font-size:13px; line-height:1.65; overflow-wrap:anywhere; }
+        .allocation-status { margin:0 0 14px; color:var(--accent-dark); font-size:var(--font-size-small); line-height:1.65; overflow-wrap:anywhere; }
         .allocation-status:empty, .allocation-edit-status:empty { display:none; }
         #ial-retry-refresh { margin-bottom:16px; }
         .allocation-editor { margin-top:24px; padding:22px; border:1px solid var(--line); border-radius:10px; background:#f8fafc; }
         .allocation-editor-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:24px; }
-        .allocation-eyebrow { color:var(--muted); font-size:12px; }
+        .allocation-eyebrow { color:var(--muted); font-size:var(--font-size-small); }
         .allocation-editor-heading h4 { margin:5px 0 0; font:600 16px/1.5 ui-monospace,Consolas,monospace; overflow-wrap:anywhere; }
-        .allocation-split-hint { color:var(--muted); font-size:12px; }
+        .allocation-split-hint { color:var(--muted); font-size:var(--font-size-small); }
         .allocation-editor-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.1fr); gap:28px; }
         .allocation-fieldset { min-width:0; padding:0; margin:0; border:0; }
-        .allocation-fieldset legend { padding:0; margin-bottom:12px; font-size:14px; font-weight:700; color:var(--ink); }
-        .allocation-field-hint { margin:-4px 0 12px; color:var(--muted); font-size:12px; line-height:1.6; }
+        .allocation-fieldset legend { padding:0; margin-bottom:12px; font-size:var(--font-size-ui); font-weight:700; color:var(--ink); }
+        .allocation-field-hint { margin:-4px 0 12px; color:var(--muted); font-size:var(--font-size-small); line-height:1.6; }
         .allocation-store-options { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(160px,100%),1fr)); gap:10px; max-height:260px; overflow:auto; padding:3px; margin:-3px; }
         .allocation-store-option, .allocation-mode-option { display:flex; align-items:flex-start; gap:10px; padding:15px 14px; border:1px solid #d6dce5; border-radius:8px; background:var(--surface); cursor:pointer; }
-        .allocation-store-option { min-height:54px; font-size:13px; line-height:1.7; }
+        .allocation-store-option { min-height:54px; font-size:var(--font-size-small); line-height:1.7; }
         .allocation-store-option span, .allocation-mode-option > span { min-width:0; overflow-wrap:anywhere; }
         .allocation-mode-options { display:grid; gap:10px; }
-        .allocation-mode-option strong { display:block; font-size:13px; line-height:1.6; }
-        .allocation-mode-option small { display:block; margin-top:5px; color:var(--muted); font-size:12px; line-height:1.65; }
+        .allocation-mode-option strong { display:block; font-size:var(--font-size-small); line-height:1.6; }
+        .allocation-mode-option small { display:block; margin-top:5px; color:var(--muted); font-size:var(--font-size-small); line-height:1.65; }
         .allocation-store-option input, .allocation-mode-option input { width:16px; height:16px; margin:3px 0 0; flex:none; accent-color:var(--accent); }
         .allocation-store-option:hover, .allocation-mode-option:hover { border-color:var(--accent); }
         .allocation-store-option:has(input:checked), .allocation-mode-option:has(input:checked) { border-color:var(--accent); background:#fff7f8; }
         .allocation-store-option:has(input:disabled), .allocation-mode-option:has(input:disabled) { opacity:.6; cursor:not-allowed; }
         .allocation-store-option:has(input:focus-visible), .allocation-mode-option:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
-        .allocation-edit-status { margin-top:16px; color:var(--accent-dark); font-size:13px; line-height:1.65; }
+        .allocation-edit-status { margin-top:16px; color:var(--accent-dark); font-size:var(--font-size-small); line-height:1.65; }
         .allocation-actions { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-top:22px; padding-top:18px; border-top:1px solid var(--line); }
-        .allocation-actions p { color:var(--muted); font-size:12px; line-height:1.7; }
+        .allocation-actions p { color:var(--muted); font-size:var(--font-size-small); line-height:1.7; }
         .allocation-actions > div { display:flex; gap:10px; margin-left:auto; }
         .allocation-actions .btn { min-width:100px; }
         @media(max-width:760px) {
@@ -547,33 +553,33 @@
         .ol-filters input, .ol-filters select { width:100%; }
         .ol-keyword { grid-column:span 2; }
         .ol-filter-actions { display:flex; gap:8px; }
-        .ol-status { min-height:22px; margin:14px 0 8px; color:var(--muted); font-size:13px; }
+        .ol-status { min-height:22px; margin:14px 0 8px; color:var(--muted); font-size:var(--font-size-small); }
         .ol-table-scroll { max-height:600px; overflow:auto; border:1px solid #dbe3ec; border-radius:8px; }
         .ol-table-scroll:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
         .ol-table-scroll .ol-table { min-width:1060px; width:100%; table-layout:fixed; }
         .ol-table thead { position:sticky; top:0; z-index:2; }
         .ol-table th:nth-child(1) { width:195px; }.ol-table th:nth-child(2) { width:145px; }
         .ol-table th:nth-child(4) { width:260px; }.ol-table th:last-child { width:80px; }
-        .ol-table td { overflow-wrap:anywhere; }.ol-time { font-size:12px; font-variant-numeric:tabular-nums; }
-        .ol-subject { margin-top:5px; color:var(--muted); font-size:12px; }
-        .ol-badge { display:inline-block; padding:4px 8px; border-radius:5px; font-size:12px; font-weight:700; background:#eef3f8; color:#44566b; }
+        .ol-table td { overflow-wrap:anywhere; }.ol-time { font-size:var(--font-size-small); font-variant-numeric:tabular-nums; }
+        .ol-subject { margin-top:5px; color:var(--muted); font-size:var(--font-size-small); }
+        .ol-badge { display:inline-block; padding:4px 8px; border-radius:5px; font-size:var(--font-size-small); font-weight:700; background:#eef3f8; color:#44566b; }
         .ol-batch { background:#e9f2fb; color:#244a72; }.ol-stock_count { background:#e8f5ef; color:#17634e; }
         .ol-sales_import { background:#fff4dd; color:#875b12; }.ol-sales_rollback { background:#fff0f3; color:#a92e4b; }
         .ol-products { background:#e9f2fb; color:#244a72; }.ol-accounts { background:#f3edfb; color:#66458a; }
         .ol-masters { background:#fff4dd; color:#875b12; }.ol-batch_create { background:#e8f5ef; color:#17634e; }
         .ol-sales_operations { background:#e9f2fb; color:#244a72; }.ol-report_changes, .ol-finance { background:#f3edfb; color:#66458a; }
-        .ol-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:16px; font-size:13px; }
+        .ol-pagination { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:16px; font-size:var(--font-size-small); }
         .ol-pagination>span { margin-right:auto; }.ol-pagination label { display:flex; align-items:center; gap:8px; }
         .ol-pagination select { width:70px; padding:6px; }
         .ol-dialog { width:1100px; max-width:calc(100vw - 32px); max-height:90vh; overflow:auto; margin:auto; padding:24px; border:1px solid #dbe3ec; border-radius:12px; color:var(--ink); }
         .ol-dialog::backdrop { background:rgba(15,27,49,.4); }
-        .ol-detail-meta { margin:18px 0; line-height:1.8; font-size:13px; }.ol-detail-meta p { overflow-wrap:anywhere; }
-        .ol-detail-note { padding:10px 14px; margin:12px 0; background:#f4f7fa; border-left:3px solid #aac9dd; white-space:pre-wrap; font-size:13px; }
+        .ol-detail-meta { margin:18px 0; line-height:1.8; font-size:var(--font-size-small); }.ol-detail-meta p { overflow-wrap:anywhere; }
+        .ol-detail-note { padding:10px 14px; margin:12px 0; background:#f4f7fa; border-left:3px solid #aac9dd; white-space:pre-wrap; font-size:var(--font-size-small); }
         .ol-detail-table { min-width:580px; width:100%; table-layout:fixed; margin:12px 0; }
         .ol-detail-table th, .ol-detail-table td { white-space:pre-wrap; overflow-wrap:anywhere; vertical-align:top; }
         .ol-detail-table tbody th { width:25%; font-weight:600; color:var(--muted); }
         .ol-before { background:#fff8fa; }.ol-after { background:#f3faf6; }
-        .ol-full { margin-top:20px; }.ol-full summary { padding:8px 0; cursor:pointer; font-size:13px; }
+        .ol-full { margin-top:20px; }.ol-full summary { padding:8px 0; cursor:pointer; font-size:var(--font-size-small); }
         @media(max-width:760px) {
             .ol-workspace { padding:16px; }.ol-filters { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
             .ol-pagination { flex-wrap:wrap; }.ol-pagination>span { flex-basis:100%; }
@@ -590,7 +596,7 @@
         .product-table td:nth-child(4), .product-table td:nth-child(5) { min-width:180px; overflow-wrap:anywhere; white-space:normal; }
         .product-table td:nth-child(3) { min-width:120px; overflow-wrap:anywhere; }
         .product-row-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-width:220px; }
-        .product-row-actions .btn { padding:6px 10px; font-size:12px; }
+        .product-row-actions .btn { padding:6px 10px; font-size:var(--font-size-small); }
         .product-thumbnail { width:48px; height:48px; object-fit:contain; display:block; border-radius:6px; }
         .product-no-image { display:grid; place-items:center; color:var(--muted); background:#f6f8fb; }
         .product-gallery-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:16px; }
@@ -604,12 +610,12 @@
         .product-gallery-name { margin:8px 0; overflow-wrap:anywhere; }
         .product-gallery-specification { color:var(--muted); margin-bottom:12px; overflow-wrap:anywhere; }
         .product-workspace-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-top:16px; }
-        .product-selection { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:13px; }
-        .product-selection .btn { padding:5px 8px; font-size:12px; }
+        .product-selection { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:var(--font-size-small); }
+        .product-selection .btn { padding:5px 8px; font-size:var(--font-size-small); }
         .product-workspace-footer .pagination { margin-top:0; }
         .product-export-menu { position:relative; }
         .product-export-menu summary { list-style:none; }
-        .product-workspace summary.btn { display:inline-block; padding:10px 18px; border:1px solid var(--line); border-radius:7px; cursor:pointer; font-size:13px; font-weight:700; list-style:none; }
+        .product-workspace summary.btn { display:inline-block; line-height:1.5; padding:10px 18px; border:1px solid var(--line); border-radius:7px; cursor:pointer; font-size:var(--font-size-ui); font-weight:700; list-style:none; }
         .product-workspace summary.btn::after { content:' ▾'; }
         .product-workspace button:disabled, .product-editor button:disabled { opacity:.5; cursor:not-allowed; }
         .product-export-actions { position:absolute; right:0; top:calc(100% + 6px); z-index:5; display:grid; gap:6px; width:180px; padding:8px; background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:0 8px 24px #17243c1a; }
@@ -626,11 +632,24 @@
         .product-image-preview img { max-width:150px; max-height:100px; object-fit:contain; border-radius:6px; }
         .product-accounting { border-top:1px solid var(--line); padding-top:16px; }
         .product-accounting summary { cursor:pointer; font-weight:600; }
-        #product-accounting-summary { margin-left:12px; font-size:12px; font-weight:400; color:var(--muted); }
+        #product-accounting-summary { margin-left:12px; font-size:var(--font-size-small); font-weight:400; color:var(--muted); }
         .product-accounting-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:16px; }
         .product-editor-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
         #product-editor-status { margin-top:14px; color:#b42339; overflow-wrap:anywhere; }
         @media (max-width:600px) {
+            :root { --font-size-ui:1rem; }
+            .header { flex-wrap:wrap; gap:12px; padding:16px 20px !important; }
+            .header h1 { flex-basis:100%; }
+            .user-bar, .batch-list-actions { flex-wrap:wrap; }
+            .batch-list-actions { width:100%; }
+            .batch-list-actions .field-picker { position:static; }
+            .batch-list-actions .field-picker-menu { left:0; right:auto; max-width:100%; }
+            .container { margin:16px auto; padding:0 16px; }
+            .card { padding:20px; }
+            #sec-reports > .card > .flex-between, #sec-batches > .card > .flex-between { flex-wrap:wrap; gap:12px; }
+            #sec-reports > .card > .flex-between > div:first-child, #batch-list-title { flex-basis:100%; }
+            #batches-table-scroll tbody [data-batch-column="actions"] { position:static; box-shadow:none; }
+            #batches-table-scroll thead [data-batch-column="actions"] { right:auto; box-shadow:none; }
             .product-gallery-grid { grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr)); }
             .product-workspace .product-search { flex-basis:100%; }
             .product-keyword-picker { flex-basis:100%; max-width:none; }
@@ -652,8 +671,8 @@
             <button class="btn btn-primary" onclick="doLogin()">本地登录</button>
         </div>
         <button id="eims-login-button" class="btn btn-secondary" style="margin-top:12px" onclick="startEimsLogin()" disabled>通过 EIMS 登录</button>
-        <p id="eims-login-hint" style="font-size:12px;color:#64748b;margin:12px 0 0"></p>
-        <div id="l-err" style="color:#e94560;font-size:13px;text-align:center;margin-top:12px;display:none"></div>
+        <p id="eims-login-hint" style="font-size:var(--font-size-small);color:var(--muted);margin:12px 0 0"></p>
+        <div id="l-err" style="color:#e94560;font-size:var(--font-size-small);text-align:center;margin-top:12px;display:none"></div>
     </div>
 </div>
 
@@ -662,7 +681,7 @@
     <div class="user-bar" id="user-bar">
         <span id="curr-user">未登录</span>
         <span id="curr-role" class="tag tag-blue"></span>
-        <button class="btn btn-secondary" style="font-size:12px;padding:4px 12px" onclick="doLogout()">退出</button>
+        <button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:4px 12px" onclick="doLogout()">退出</button>
     </div>
 </div>
 
@@ -745,7 +764,7 @@
                 <div class="mapping-form">
                     <div class="mapping-form-title">
                         <h4 id="platform-sku-mapping-form-title">新增平台 SKU ID 映射</h4>
-                        <label id="platform-sku-mapping-active-field" style="display:none;font-size:13px;color:#526074"><input id="platform-sku-mapping-active" type="checkbox" checked> 启用映射</label>
+                        <label id="platform-sku-mapping-active-field" style="display:none;font-size:var(--font-size-small);color:#526074"><input id="platform-sku-mapping-active" type="checkbox" checked> 启用映射</label>
                     </div>
                     <div class="mapping-entry-grid">
                         <div class="form-group">
@@ -812,7 +831,7 @@
             <h3>新批次入库</h3>
             <div class="form-row">
                 <div class="form-group"><label>产品SKU</label>
-                    <select id="b-pid" style="padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:200px"><option value="">选择产品</option></select>
+                    <select id="b-pid" style="padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:var(--font-size-ui);width:200px"><option value="">选择产品</option></select>
                 </div>
                 <div class="form-group"><label>钉钉单号</label><input id="b-dingtalk-order" type="text" maxlength="64" placeholder="可选填写"></div>
                 <div class="form-group"><label>数量</label><input id="b-qty" type="number" placeholder="100"></div>
@@ -833,7 +852,7 @@
         </div>
         <!-- 编辑弹窗 -->
         <div id="edit-batch-modal" class="card edit-modal" style="display:none;border:2px solid #e94560">
-            <div class="flex-between"><h3 id="batch-edit-title">✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:12px" onclick="closeEditBatch()">× 取消</button></div>
+            <div class="flex-between"><h3 id="batch-edit-title">✏️ 编辑批次 <span id="edit-batch-label" style="color:#e94560"></span></h3><button class="btn btn-secondary" style="font-size:var(--font-size-small)" onclick="closeEditBatch()">× 取消</button></div>
             <form id="edit-batch-form" novalidate onsubmit="event.preventDefault(); saveEditBatch()">
             <p id="batch-edit-notice" class="cost-detail" data-help-tip data-help-anchor="#batch-edit-title"></p>
             <div class="form-row">
@@ -885,8 +904,8 @@
                                 <label><input type="checkbox" data-batch-field-toggle="actions" checked onchange="toggleBatchColumn('actions', this.checked)">操作</label>
                             </div>
                             <div class="field-picker-actions">
-                                <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:12px" onclick="selectAllBatchColumns()">全选</button>
-                                <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:12px" onclick="resetBatchColumns()">恢复默认</button>
+                                <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:var(--font-size-small)" onclick="selectAllBatchColumns()">全选</button>
+                                <button type="button" class="btn btn-secondary" style="padding:6px 10px;font-size:var(--font-size-small)" onclick="resetBatchColumns()">恢复默认</button>
                             </div>
                         </div>
                     </div>
@@ -1042,7 +1061,7 @@
                     <button class="btn btn-secondary" onclick="loadPendingConfirmations()">刷新</button>
                 </div>
             </div>
-            <p id="pending-confirmations-summary" style="font-size:13px;color:#687386;margin:10px 0">正在加载待确认记录...</p>
+            <p id="pending-confirmations-summary" style="font-size:var(--font-size-small);color:var(--muted);margin:10px 0">正在加载待确认记录...</p>
             <div class="table-scroll">
             <table>
                 <thead><tr><th>店铺</th><th>导入文件</th><th>行号</th><th>订单 ID</th><th>SKU ID</th><th>交易类型</th><th>商品名称</th><th>SKU 名称</th><th>数量</th><th>其他费用</th><th>待确认原因</th></tr></thead>
@@ -1072,7 +1091,7 @@
             <div class="flex-between">
                 <div>
                     <h3 id="financial-attachments-title">财务附件报表</h3>
-                    <p data-help-tip data-help-anchor="#financial-attachments-title" style="font-size:13px;color:#687386;margin:6px 0 0">导出存货批次明细、SKU汇总、店铺损益和产品线毛利附件；各店铺损益汇总仅管理员可见</p>
+                    <p data-help-tip data-help-anchor="#financial-attachments-title" style="font-size:var(--font-size-small);color:var(--muted);margin:6px 0 0">导出存货批次明细、SKU汇总、店铺损益和产品线毛利附件；各店铺损益汇总仅管理员可见</p>
                 </div>
                 <div class="form-row" style="margin:0;align-items:flex-end">
                     <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
@@ -1089,8 +1108,8 @@
             <div>
                 <div id="report-pane-inventory" class="report-pane active card">
                     <div class="flex-between"><h3 id="inventory-report-title">存货跌价准备明细表</h3><div class="inventory-report-actions"><select id="inventory-report-view" aria-label="存货报表视图" onchange="setInventoryImpairmentView(this.value)"><option value="batch">批次明细</option><option value="sku">按SKU汇总</option></select><button class="btn btn-secondary" onclick="exportInventoryImpairmentReport()">导出当前视图</button><button class="btn btn-secondary" onclick="loadInventoryImpairment()">刷新</button></div></div>
-                    <div data-help-tip data-help-anchor="#inventory-report-title"><p data-provision-text="provisionEquation" style="font-size:12px;color:#64748b;margin:8px 0"></p>
-                    <p id="inventory-report-scope" style="font-size:12px;color:#64748b;margin:8px 0">批次明细展示现存或上月仍有库存的批次；按SKU汇总包含截止日前全部批次，包括已售完旧批次。</p></div>
+                    <div data-help-tip data-help-anchor="#inventory-report-title"><p data-provision-text="provisionEquation" style="font-size:var(--font-size-small);color:var(--muted);margin:8px 0"></p>
+                    <p id="inventory-report-scope" style="font-size:var(--font-size-small);color:var(--muted);margin:8px 0">批次明细展示现存或上月仍有库存的批次；按SKU汇总包含截止日前全部批次，包括已售完旧批次。</p></div>
                     <div id="inventory-impairment-scroll" class="table-scroll"><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>批次号</th><th>入库日期</th><th>已入库天数</th><th>单件到仓成本(元)</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>累计跌价比例</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th>状态</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-impairment-tbody"></tbody><tfoot id="inventory-impairment-tfoot"></tfoot></table></div>
                     <div id="inventory-summary-scroll" class="table-scroll" hidden><table class="report-data-table"><thead><tr><th>店铺</th><th>SKU编码</th><th>商品名称</th><th>入库批次数</th><th>原始入库数量</th><th>原始入库成本金额(元)</th><th>累计销售出库数量</th><th>累计销售出库成本(元)</th><th>现存库存数量</th><th>期末计提数量</th><th>现存库存成本金额(元)</th><th>期末累计跌价准备(元)</th><th>本月计提（现存库存）(元)</th><th>期初跌价准备余额(元)</th><th>本月计提总额(元)</th><th>本月销售转销(元)</th><th>账面价值(元)</th><th>与上月末账面价值差额(元)</th><th data-provision-text="provisionTransferIn"></th><th data-provision-text="provisionTransferOut"></th></tr></thead><tbody id="inventory-summary-tbody"></tbody><tfoot id="inventory-summary-tfoot"></tfoot></table></div>
                 </div>
@@ -1098,7 +1117,7 @@
                     <div class="flex-between"><h3 id="profit-loss-title">店铺损益表</h3><button id="profit-loss-save" class="btn btn-primary" type="button" onclick="saveStoreProfitLoss()">保存</button></div>
                     <div class="profit-loss-controls"><div class="form-row"><div id="profit-loss-store-group" class="form-group"><label for="profit-loss-store">店铺</label><select id="profit-loss-store" onchange="loadStoreProfitLoss()"></select></div><div class="form-group"><label for="profit-loss-month">核算月份</label><input id="profit-loss-month" type="month" onchange="loadStoreProfitLoss()"></div><div class="form-group" style="justify-content:flex-end"><button id="profit-loss-query" class="btn btn-secondary" type="button" onclick="loadStoreProfitLoss()">查询</button></div></div><div id="profit-loss-updated" class="profit-loss-updated"></div></div>
                     <div id="profit-loss-warnings" class="profit-loss-warnings" role="status" hidden></div>
-                    <p id="profit-loss-policy" data-help-tip data-help-anchor="#profit-loss-title" data-profit-loss-text="profitLossPolicy" style="font-size:13px;color:#64748b;margin:8px 0"></p>
+                    <p id="profit-loss-policy" data-help-tip data-help-anchor="#profit-loss-title" data-profit-loss-text="profitLossPolicy" style="font-size:var(--font-size-small);color:var(--muted);margin:8px 0"></p>
                     <details id="profit-loss-fx-details" class="profit-loss-fx-details" hidden><summary data-profit-loss-text="profitLossExchangeDetails"></summary><p id="profit-loss-fx"></p></details>
                     <div id="report-fx-editor" hidden></div>
                     <div class="table-scroll profit-loss-table"><table><thead><tr><th>项目</th><th>本月金额</th><th data-profit-loss-text="profitLossYtd"></th><th>备注</th></tr></thead><tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody></table></div>
@@ -1132,7 +1151,7 @@
                 <div class="form-group"><label>用户名</label><input id="u-name" placeholder="用户名"></div>
                 <div class="form-group"><label>密码</label><input id="u-pass" type="password" placeholder="至少3位"></div>
                 <div class="form-group"><label>角色</label>
-                    <select id="u-role" style="padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:14px;width:160px">
+                    <select id="u-role" style="padding:10px 14px;border:1px solid #ddd;border-radius:6px;font-size:var(--font-size-ui);width:160px">
                         <option value="operator">运营</option>
                         <option value="viewer">查看者</option>
                         <option value="admin">管理员</option>
@@ -1458,7 +1477,7 @@ async function loadUsers() {
     storesTbody.innerHTML = stores.length
         ? stores.map(store => `<tr>
             <td><strong>${escapeHtml(store.name)}</strong></td>
-            <td><button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:#e94560" onclick="deleteStore(${store.id})">删除</button></td>
+            <td><button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:2px 8px;color:#e94560" onclick="deleteStore(${store.id})">删除</button></td>
         </tr>`).join('')
         : '<tr><td colspan="2" class="empty">暂无店铺</td></tr>';
     const tbody = document.getElementById('users-tbody');
@@ -1469,8 +1488,8 @@ async function loadUsers() {
         const isSelf = u.username === CURRENT_USER;
         const storeOptions = stores.map(store => `<option value="${store.id}" ${u.store_id === store.id ? 'selected' : ''} ${!store.is_active && u.store_id !== store.id ? 'disabled' : ''}>${escapeHtml(store.name)}${store.is_active ? '' : '（已停用）'}</option>`).join('');
         const storeControl = u.role === 'admin'
-            ? '<span style="font-size:12px;color:#888">不适用</span>'
-            : `<select onchange="bindUserStore(${u.id}, this.value)" style="font-size:12px;padding:5px 8px;border:1px solid #ddd;border-radius:4px;min-width:150px">
+            ? '<span style="font-size:var(--font-size-small);color:var(--muted)">不适用</span>'
+            : `<select onchange="bindUserStore(${u.id}, this.value)" style="font-size:var(--font-size-small);padding:5px 8px;border:1px solid #ddd;border-radius:4px;min-width:150px">
                 <option value="">未绑定</option>${storeOptions}
             </select>`;
         return `<tr>
@@ -1481,16 +1500,16 @@ async function loadUsers() {
             <td>${u.created_at?.slice(0,16)}</td>
             <td style="display:flex;gap:4px;flex-wrap:wrap">
                 ${!isSelf ? `
-                <select onchange="changeRole(${u.id}, this.value)" style="font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:4px;width:80px">
+                <select onchange="changeRole(${u.id}, this.value)" style="font-size:var(--font-size-small);padding:2px 6px;border:1px solid #ddd;border-radius:4px;width:80px">
                     <option value="">改角色</option>
                     <option value="admin">管理员</option>
                     <option value="operator">运营</option>
                     <option value="viewer">查看者</option>
                 </select>
-                <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="setUserActive(${u.id}, ${!u.is_active})">${u.is_active ? '停用' : '启用'}</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="resetPwd(${u.id})" title="重置密码">🔑</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;color:#e94560" onclick="deleteUser(${u.id})">删除</button>
-                ` : '<span style="font-size:12px;color:#888">当前用户</span>'}
+                <button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:2px 8px" onclick="setUserActive(${u.id}, ${!u.is_active})">${u.is_active ? '停用' : '启用'}</button>
+                <button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:2px 8px" onclick="resetPwd(${u.id})" title="重置密码">🔑</button>
+                <button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:2px 8px;color:#e94560" onclick="deleteUser(${u.id})">删除</button>
+                ` : '<span style="font-size:var(--font-size-small);color:var(--muted)">当前用户</span>'}
             </td>
         </tr>`;
     }).join('');
@@ -2045,7 +2064,7 @@ function renderPlatformSkuMappings() {
             <td><span class="tag ${mapping.is_bundle ? 'tag-orange' : 'tag-blue'}">${mapping.is_bundle ? '组合商品' : '单品'}</span></td>
             <td class="mapping-summary">${components}</td>
             <td><span class="tag ${mapping.is_active ? 'tag-green' : 'tag-red'}">${mapping.is_active ? '启用' : '停用'}</span></td>
-            <td style="display:flex;gap:4px"><button class="btn btn-secondary" style="font-size:11px;padding:3px 8px" onclick="editPlatformSkuMapping(${mapping.id})">编辑</button><button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;color:#e94560" onclick="deletePlatformSkuMapping(${mapping.id})">删除</button></td>
+            <td style="display:flex;gap:4px"><button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:3px 8px" onclick="editPlatformSkuMapping(${mapping.id})">编辑</button><button class="btn btn-secondary" style="font-size:var(--font-size-small);padding:3px 8px;color:#e94560" onclick="deletePlatformSkuMapping(${mapping.id})">删除</button></td>
         </tr>`;
     }).join('') : '<tr><td colspan="5" class="empty">暂无平台 SKU ID 映射</td></tr>';
 }
@@ -3185,7 +3204,7 @@ async function loadSalesImports() {
                 <td>${Number(item.sales_created).toLocaleString('zh-CN')}</td>
                 <td>${Number(item.pending_confirmation).toLocaleString('zh-CN')}</td>
                 <td><span class="status-pill ${statusClass}">${statusText}</span></td>
-                <td><button class="btn btn-secondary" type="button" data-sales-import-result style="padding:6px 10px;font-size:12px" onclick="viewSalesImportResult(${Number(item.id)})">${escapeHtml(window.PageInteractions.text('importResultView'))}</button> ${item.status === 'completed' ? `<button class="btn btn-secondary" data-sales-import-export type="button" style="padding:6px 10px;font-size:12px" onclick="exportSalesRecords(${Number(item.id)})" ${salesExportBusy ? 'disabled' : ''}>${escapeHtml(window.PageInteractions.text('salesImportExport'))}</button>` : ''} ${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:12px" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
+                <td><button class="btn btn-secondary" type="button" data-sales-import-result style="padding:6px 10px;font-size:var(--font-size-small)" onclick="viewSalesImportResult(${Number(item.id)})">${escapeHtml(window.PageInteractions.text('importResultView'))}</button> ${item.status === 'completed' ? `<button class="btn btn-secondary" data-sales-import-export type="button" style="padding:6px 10px;font-size:var(--font-size-small)" onclick="exportSalesRecords(${Number(item.id)})" ${salesExportBusy ? 'disabled' : ''}>${escapeHtml(window.PageInteractions.text('salesImportExport'))}</button>` : ''} ${item.can_rollback ? `<button class="btn btn-danger" style="padding:6px 10px;font-size:var(--font-size-small)" onclick="rollbackSalesImport(${item.id})">撤销导入</button>` : '-'}</td>
             </tr>`;
         }).join('');
         return true;

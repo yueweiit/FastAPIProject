@@ -16,6 +16,14 @@
 
 浏览器回归的开发依赖由根目录[package.json](../../package.json)与[package-lock.json](../../package-lock.json)锁定，只用于测试，不引入前端构建。使用Node.js 22及以上，在项目根目录执行`npm ci`、`npm run test:browser:install`安装Playwright及配套Chromium，随后`npm run test:browser`运行完整库存/跨页面回归；`npm run test:products`运行商品工作台回归（复用本机Chrome，可用FIFO_TEST_CHROME指定路径）。安装会下载测试依赖和浏览器，测试使用本地静态页面及模拟API，不启动main或连接业务库；node_modules和output不入库。已有受支持的浏览器可用INVENTORY_BROWSER_CHANNEL指定，INVENTORY_PLAYWRIGHT_MODULE仍可覆盖模块路径。安装方式依据[Playwright Library文档](https://playwright.dev/docs/library#usage)。
 
+## 页面字号与阅读层级
+
+两份首页的公共样式统一维护字号：`--font-size-body` 为 16px，`--font-size-ui` 为 15px（600px 以下为 16px），`--font-size-small` 为 14px，均使用 rem 定义，跟随浏览器字体设置。说明、表格、状态和动态弹窗不再使用 11–13px；新增内联样式及脚本生成的控件也复用这些变量。辅助文字使用 `--muted`，正文行高为 1.6，多行说明保留足够行距。
+
+窄屏允许标题、按钮和表单换行；宽表使用区域内横向滚动，批次操作列在手机端取消横向固定，避免遮住数据。批次字段菜单在窄屏相对整行操作区左对齐并限制宽度，选项文字可换行，复选框不收缩；销售字段菜单展开时提高层级，避免被换行后的相邻控件遮挡。销售表头统一允许标题及问号在本列内换行，沿用同一列宽定义，保持表头、明细和合计对齐。控件过渡只作用于颜色、边框、阴影和位移，不对字号或尺寸启用全属性过渡，避免响应式换行期间说明浮层定位漂移。保持页面原有业务文案及提示方式，警示不能因字号调整而隐藏。
+
+`node tests/ui_typography_browser_checks.cjs` 使用两份真实 HTML、实际静态模块及本地模拟 API，检查七个工作区、登录、商品弹窗和说明浮层在桌面及手机宽度下的计算字号、按钮裁切、页面溢出与批次数据遮挡；另在 320/390/600/601/1440px 下验证字段菜单展开边界、长选项末字点击及键盘切换、销售表头与问号互不重叠，以及固定列和横向滚动后的表头/明细/合计对齐。不启动主应用、不连接业务数据库。样式入口为 [templates/index.html](../../templates/index.html) 和 [index.html](../../index.html)，已有副本差异需保留。
+
 ## 页面说明与状态提示
 
 商品、入库批次、库存查看/盘点/归属、销售成本、报表及财务工作台的常驻说明采用问号浮层；公共实现在[page-interactions.js](../../static/page-interactions.js)的`HelpTips`，样式在两份首页。原说明节点标记`data-help-tip`，可通过`data-help-anchor`指定问号挂载的字段标签或标题；保留原ID、翻译绑定和文本更新方式，避免复制多份文案。未指定挂载位置时，问号紧邻原说明位置。
