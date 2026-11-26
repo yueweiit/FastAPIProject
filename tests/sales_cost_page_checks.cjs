@@ -26,6 +26,7 @@ async function main(){
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="SKU",salesTotal=0,allProducts=[];',c);
   const source=html.match(/^async function loadSales\(\) \{[\s\S]*?^\}/m);assert(source);vm.runInContext(source[0],c);
   const sale={id:1,product_id:1,order_no:'ORDER-1',display_name:'商品',source_product_name:'Juguete para Perro',quantity:2,total_cost:'20.004',order_total_cost_cny:'20.00',
+   exchange_rate_policy:'store_month_report_v1',exchange_rate_month:'2026-09',exchange_rate_mode:'auto',exchange_rate_status:'available',
    selling_price_cny:'30',sales_revenue_cny:'60',platform_fee_cny:'5',profit_cny:'34.996',
    unit_purchase_cost_cny:'4.0001',unit_head_shipping_cost_cny:'2',unit_last_mile_cost_cny:'1',unit_other_cost_cny:'3',unit_total_cost_cny:'10.002',
    purchase_cost_cny:'8',head_shipping_cost_cny:'4',last_mile_cost_cny:'2',other_cost_cny:'6',impairment_cny:'.9'};
@@ -67,6 +68,12 @@ async function main(){
   check(body('source_row_net_product_sales'),['0.00']);check(body('source_row_settlement_total'),['-0.1234']);
   check(body('exchange_rate_to_cny'),['待核对']);check(body('exchange_rate_date'),['-']);
   check(body('exchange_rate_source'),['&lt;img src=x onerror=unsafe&gt;']);
+  rows=[{...rows[0], exchange_rate_to_cny:'0.3532',exchange_rate_source:'manual',exchange_rate_mode:'manual',exchange_rate_month:'2026-11',exchange_rate_is_provisional:true}];
+  await c.loadSales();
+  check(body('exchange_rate_source'),['手动（暂估）']);check(body('exchange_rate_to_cny'),['0.35320000']);
+  check(element('sales-tbody').innerHTML.includes('核算月份 2026-11'),true);
+  check(resource.fields.find(f=>f.key==='exchange_rate_to_cny').note.includes('手动设置优先'),true);
+  check(JSON.stringify(resource).includes('使用导入时固化汇率'),false);
   rows=[sale];
   await c.loadSales();
   check(body('source_row_net_product_sales'),['后端待更新']);check(body('source_row_settlement_total'),['后端待更新']);
@@ -141,7 +148,7 @@ async function main(){
   rows=[{id:3,quantity:1,total_cost:10}];await c.loadSales();
   check(body('unit_total_cost_cny'),['待核对']);check(body('impairment_cny'),['待核对']);check(body('order_total_cost_cny'),['¥10.00']);
   rows=[{...sale,currency:'MXN',exchange_rate_to_cny:null,sales_revenue_cny:null}];await c.loadSales();
-  check(element('sales-tbody').innerHTML.includes('原币 MXN；汇率 待核对'),true);
+  check(element('sales-tbody').innerHTML.includes('原币 MXN；核算汇率 待核对'),true);
   check(element('sales-tbody').innerHTML.includes('汇率缺失，人民币金额待核对'),true);
   // 附属待确认区域失败不应清空已成功渲染的台账、合计、月度统计和分页。
   rows=[sale];c.loadPendingConfirmations=async()=>{throw new Error('<待确认失败>');};
@@ -172,6 +179,12 @@ async function main(){
   check(element('sales-tbody').innerHTML.includes('&lt;失败&gt;'),true);
   rows=[];await c.loadSales();check(element('sales-tbody').innerHTML.includes(`colspan="${resource.fields.filter(field=>!field.default_hidden).length}"`),true);
   check(total('purchase_cost_cny'),'¥0.00');check(total('unit_total_cost_cny'),'');
+  const rateSaving=deferred();let rateWaits=0,rateRequests=0;
+  c.window.ReportExchangeRates={waitForPendingSaves:()=>{rateWaits++;return rateSaving.promise;}};
+  const oldApi=c.api;c.api=async(...args)=>{rateRequests++;return oldApi(...args);};
+  const delayedLoad=c.loadSales();await Promise.resolve();check(rateWaits,1);check(rateRequests,0);
+  rateSaving.resolve();await delayedLoad;check(rateRequests,2);c.api=oldApi;
+  delete c.window.ReportExchangeRates;
   delete c.window.SalesLedger;await c.loadSales();
   check(element('sales-tbody').innerHTML.includes('销售明细模块尚未加载'),true);
  }

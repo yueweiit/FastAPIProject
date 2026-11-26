@@ -102,7 +102,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(exported[18:22]),exported[8])
         total=list(book['销售拆分明细'].values)[-1]
         self.assertEqual(total[18:23],exported[18:23])
-        self.assertEqual(book['销售拆分明细'].auto_filter.ref,'A1:AR4')
+        self.assertEqual(book['销售拆分明细'].auto_filter.ref,'A1:AS4')
         for event in (r for r in await self.listed() if r['id']<0):
             self.assert_parts(event,(0,0,0,0))
             self.assertEqual(D(event['impairment_cny']),0)
@@ -203,6 +203,7 @@ class SalesCostTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(D(row['profit_cny']),50)
 
     async def test_missing_fx_does_not_hide_known_inventory_cost_or_impairment(self):
+        self.unavailable_monthly_rates = True
         self.costs()
         entry=self.session.get(SettlementEntry,1)
         entry.currency,entry.exchange_rate_to_cny='USD',None

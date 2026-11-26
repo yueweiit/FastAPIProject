@@ -292,9 +292,9 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(8,amounts)
         user=SimpleNamespace(role='operator',store_id=7)
         summary=(await monthly_sales_summary(None,None,'2026-09',self.db,user))[0]
-        self.assertEqual(summary.sales_revenue_cny,Decimal('131.2'))
+        self.assertEqual(summary.sales_revenue_cny,Decimal('142.75'))
         self.assertEqual(summary.platform_fee_cny,Decimal(8))
-        self.assertEqual(summary.gross_profit_cny,Decimal('83.2'))
+        self.assertEqual(summary.gross_profit_cny,Decimal('94.75'))
         values=_build_store_profit_loss_values(await self.auto_values(),{})
         self.assertEqual(values['net_profit']['current'], Decimal('82.75'))
         self.assertEqual(self.session.get(InventoryBatch,1).remaining_quantity,6)

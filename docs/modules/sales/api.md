@@ -1,5 +1,7 @@
 # 销售、导入及待确认 API
 
+销售汇率只读元数据补充：`SaleResponse.exchange_rate_store_id`为有效取率店铺ID，可空，不改写持久化`store_id`；`exchange_rate_policy`为`store_month_report_v1`时才表明采用当前店铺/月报表口径，未经过该投影的响应默认空。`MonthlySalesSummaryResponse`也输出同一口径码，便于前端独立检测旧接口。新增字段不涉及DDL、写入或权限变更；原始导出与有效销售取率归属冲突时按[流程](workflow.md#组合金额与人民币)显式待核对，不能依据缺失元数据推测汇率。
+
 2026-11-24：`SaleResponse` 新增默认 `false` 的只读 `income_only`，表示指定赠品财务免成本。已出库赠品仍返回 `business_kind=inventory_sale`、`record_type=sale`、正 Sale ID 及实际出库数量，商品成本/销售跌价为 0，单件成本和人民币单价留空，原金额及 `original_total_cost` 保留供追溯。未出库的来源沿用负结算 ID、结算记录类型及核算数量 0，来源数量另行保留；完成映射和 FIFO 出库后展示实际数量，不重复计收入。导入和待确认接口照常校验商品映射、库存、订单去重；无新增写入接口或 DDL。列表/月度/对账导出、平台结算核对统一优先订单创建日归月。规则和兼容边界见[流程](workflow.md#指定赠品代发及订单创建月2026-11-24)。
 
 2026-11-10分类兼容：SaleResponse新增`business_kind=inventory_sale/opening_deduction/settlement`。列表、月度、导出及成本解释只取正常销售和原有独立结算；明确的初始化扣减保留单条详情供追溯，不计销量、损益成本或履约费。非实物规则命中后导入/待确认重试以原结算行确认，返回sales_created=0，金额/事件键保留，重复操作不再扣库。无新写入API或权限放宽。分类及规则的管理员维护见[流程](workflow.md#非实物结算与初始化扣减2026-11-10)。
@@ -33,7 +35,9 @@
 
 `SaleResponse`及`SalesOrderCostSummary`追加可空只读`display_order_no`，页面与Excel优先使用该字段，缺少时回退原`order_no`。导入来源明确保留`raw_data["订单ID/调整单ID"]`时返回原编号；手工/旧CSV或缺少来源时返回保存编号，不按连字符拆分。列表、单条、计算明细（含order_lines/order_summary）与导出一致。原`order_no`继续返回内部标识，读写接口、订单+SKU防重、店铺权限和汇总范围不变，不迁移/改写历史数据；不同来源SKU显示同一原订单号时仍是独立分组。
 
-销售只读响应追加可空Decimal字段`source_row_net_product_sales`、`source_row_settlement_total`，直接读取关联原始结算行的原币净商品销售额与结算总金额。组合各组件重复展示完整来源行金额，不得跨组件累加；人民币金额仍按原有组件份额计算。无原始结算行时为null；缺失汇率不影响原币展示。独立退款、赔付及手工结算保留实际来源值；币种、保存汇率、实际汇率日期及来源复用既有字段。GET /sales（数组/分页）、GET /sales/{id}、计算明细及导出一致；无写接口、数据库、权限或汇率获取策略变更。
+销售只读响应追加可空Decimal字段`source_row_net_product_sales`、`source_row_settlement_total`，直接读取关联原始结算行的原币净商品销售额与结算总金额。组合各组件重复展示完整来源行金额，不得跨组件累加；人民币金额仍按原有组件份额计算。无原始结算行时为null；缺失汇率不影响原币展示。独立退款、赔付及手工结算保留实际来源值；币种、报表核算汇率、实际报价日期及来源复用既有字段。GET /sales（数组/分页）、GET /sales/{id}、计算明细及导出一致；无写接口、数据库结构或权限变更；现行核算取率见下文。
+
+2026-11-25汇率语义调整：`exchange_rate_to_cny/exchange_rate_date/exchange_rate_source`类型不变，销售只读响应改为当前有效的本店本月报表汇率，不再输出导入时逐日值。追加`exchange_rate_month`（YYYY-MM）、`exchange_rate_mode`（auto/manual）、`exchange_rate_status`（available/missing/month_not_closed/store_missing）、`exchange_rate_is_provisional`（bool）；手动值日期为空。`MonthlySalesSummaryResponse`追加`fx_provisional_count`，缺失汇率只传播到受影响非零金额及利润，已知零保持0。数组/分页、权限、筛选和来源分摊契约保持，历史无来源人民币销售仍可核算。Excel汇率列改名“核算汇率”，原列位置保持；两张对账表末尾追加核算月份，原始表另追加来源，手动暂估明确标注。原始行跟随已关联销售月份，跨多月关联无法用单一汇率时留空提示；独立/待确认行沿用业务日期优先级。原币金额及库存/FIFO均不修改。实现：[sales_report_currency.py](../../../services/sales_report_currency.py)及`_sale_reporting_context/_sales_financial_events`；回归：[test_sales_report_currency.py](../../../tests/test_sales_report_currency.py)。
 
 原币核对另追加`allocated_net_product_sales`、`allocated_settlement_total`两个可空Decimal字段，分别为来源净商品销售额、结算总金额按完整组件份额分摊的本行值。分页或商品筛选不会把整行金额再次分配给单个组件；独立结算使用原值，赔付的净商品销售额保留原值，不用赔付结算额替换。只对相同币种且所有金额已知的记录合计，混合币种合计留空/页面显示不可合计。旧`source_row_*`字段保留整行参考值，标签标明“整行勿合计”；没有来源时均为null。Excel原32列位置保持，追加分摊两列。实现：`routers/sales.py::_sale_import_context/_build_sale_response/_financial_event_response`、`services/sales_export.py`；回归：`tests/test_sales_currency_reconciliation.py`。
 

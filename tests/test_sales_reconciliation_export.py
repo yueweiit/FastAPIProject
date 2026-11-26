@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from openpyxl import load_workbook
 from sqlalchemy import event, select
@@ -92,7 +92,7 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(detail['分摊净商品销售额（原币）'], net)
                     self.assertEqual(detail['分摊结算总金额（原币）'], total)
                     self.assertEqual((detail['店铺收入（元）'], detail['其他费用（元）']), (revenue, fee))
-                    self.assertEqual((detail['原币'], detail['汇率'], detail['订单号']), (currency, rate, order_no))
+                    self.assertEqual((detail['原币'], detail['核算汇率'], detail['订单号']), (currency, rate, order_no))
                     self.assertEqual(detail['关联编号'], f'E{entry.id}')
                     self.assertEqual(detail['来源 SKU ID'], entry.platform_sku_id)
                     self.assertEqual(detail['来源产品名'], entry.raw_data['产品名'])
@@ -290,6 +290,9 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.request('GET', '/sales/imports/99999/export')).status_code, 404)
 
     async def test_unknown_cost_and_rate_stay_blank_in_originals(self):
+        from services.exchange_rates import ExchangeRateError
+        unavailable = patch('services.report_exchange_rates.get_cny_rates', new=AsyncMock(side_effect=ExchangeRateError('offline')))
+        unavailable.start(); self.addCleanup(unavailable.stop)
         batch_id = await self.import_bundle()
         self.session.get(InventoryBatch, 4).voided_at = datetime(2026, 10, 1)
         entry = self.session.scalar(select(SettlementEntry).order_by(SettlementEntry.id))
@@ -298,7 +301,7 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         book = await self.workbook(f'/sales/imports/{batch_id}/export')
         row = self.records(book)[0]
         self.assertEqual(row['结算总金额（原币）'], 180)
-        for key in ('来源收入（折人民币）', '销售成本（元）', '毛利（元）', '汇率'):
+        for key in ('来源收入（折人民币）', '销售成本（元）', '毛利（元）', '核算汇率'):
             self.assertIsNone(row[key])
         self.assertIn('汇率缺失', row['待核对原因'])
         totals = dict(zip([cell.value for cell in book.active[1]], list(book.active.values)[-1]))

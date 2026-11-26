@@ -1,13 +1,15 @@
 """销售对账导出的来源查询与投影；仅 SELECT，不重算或写入 FIFO。"""
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy import and_, func, or_, select
 
 from models import Product, SalesImportBatch, SettlementEntry, SettlementEntryAllocation, User
-from services.financial_facts import settlement_amounts, valid_rate
+from services.financial_facts import settlement_amounts, settlement_accounting_date
+from services.report_exchange_rates import convert_report_amount, store_rate_key
+from services.sales_report_currency import sales_report_rates
 from services.sales_product_identity import source_local_specification
 
 
@@ -24,6 +26,10 @@ TEXT = {"zh-CN": {
     "no_source": "历史销售未保存可访问的原始结算行，未推测来源数量或金额",
     "legacy_amount": "旧 CSV 未提供原始结算金额",
     "missing_fx": "汇率缺失，折人民币金额待核对",
+    "provisional_fx": "本月手动核算汇率为暂估",
+    "manual_fx": "手动", "manual_provisional_fx": "手动（暂估）",
+    "period_conflict": "来源关联出库跨核算月份，无法采用单一汇率，折人民币金额待核对",
+    "store_conflict": "原始结算店铺与关联销售的核算店铺不一致或销售归属缺失，折人民币金额请核对拆分明细",
     "too_large": "原始结算行或关联明细超过导出上限，请缩小范围。",
 }}
 
@@ -101,7 +107,33 @@ def _source_product_name(entry):
     return raw["产品名"] if "产品名" in raw else entry.product_name
 
 
-def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=()):
+async def reconciliation_rates(db, sources, links, rows):
+    by_id = {row["id"]: row for row in rows}
+    keys, conflicts, source_months = {}, {}, {}
+    for entry, store_id, _file_type in sources:
+        sales = [by_id[sale_id] for sale_id in links.get(entry.id, ()) if sale_id in by_id]
+        months = {row["exchange_rate_month"] for row in sales if row.get("exchange_rate_month")}
+        day = date.fromisoformat(next(iter(months)) + "-01") if len(months) == 1 else settlement_accounting_date(entry).date()
+        keys[entry.id] = store_rate_key(store_id, entry.currency, day)
+        conflicts[entry.id] = []
+        # 只核对已经获准输出的明细；原始店铺是来源凭据，不能随创建人改绑而改写。
+        if any(row.get("exchange_rate_store_id") != store_id for row in sales):
+            conflicts[entry.id].append("store_conflict")
+        if len(months) > 1:
+            conflicts[entry.id].append("period_conflict")
+        source_months[entry.id] = "、".join(sorted(months)) or day.isoformat()[:7]
+    rates = await sales_report_rates(db, keys.values())
+    return {entry_id: {**rates[key], "report_month": source_months[entry_id],
+                      "rate_to_cny": Decimal(1) if key[1] == "CNY" else None,
+                      "rate_date": None, "source": "CNY" if key[1] == "CNY" else None,
+                      "mode": "auto", "is_provisional": False,
+                      "status": "available" if key[1] == "CNY" else conflicts[entry_id][0],
+                      "conflicts": conflicts[entry_id]}
+            if conflicts[entry_id] else rates[key]
+            for entry_id, key in keys.items()}
+
+
+def reconciliation_rows(sources, links, rows, stores, *, limit, rates, shared_sales=()):
     """按结算记录 ID 保留一行；多来源、缺失/无权组件不推测数量和成本。"""
     labels = TEXT["zh-CN"]
     by_id = {row["id"]: row for row in rows}
@@ -147,17 +179,23 @@ def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=())
             status = "review"
             reasons.append(labels["no_sale"])
         original_net, original_total = entry.net_product_sales, entry.settlement_total
-        rate = valid_rate(entry.currency, entry.exchange_rate_to_cny)
+        rate_info = rates[entry.id]
+        rate = rate_info["rate_to_cny"]
+        if rate_info.get("conflicts"):
+            reasons.extend(labels[code] for code in rate_info["conflicts"])
+            status = "review"
         if file_type == "legacy_csv":
             original_net = original_total = None
             reasons.append(labels["legacy_amount"])
-        elif rate is None:
+        elif rate is None and not rate_info.get("conflicts"):
             reasons.append(labels["missing_fx"])
+        if rate_info.get("is_provisional"):
+            reasons.append(labels["provisional_fx"])
         revenue = expense = profit = None
-        if original_net is not None and original_total is not None and rate is not None:
+        if original_net is not None and original_total is not None:
             net, fee = settlement_amounts(original_net, original_total, entry.transaction_type)
-            revenue, expense = net * rate, fee * rate
-            if cost is not None:
+            revenue, expense = convert_report_amount(net, rate_info), convert_report_amount(fee, rate_info)
+            if cost is not None and revenue is not None and expense is not None:
                 profit = revenue - expense - cost
         raw = entry.raw_data or {}
         result.append(dict(
@@ -172,7 +210,10 @@ def reconciliation_rows(sources, links, rows, stores, *, limit, shared_sales=())
             net_product_sales=original_net, settlement_total=original_total, status=labels[status],
             reason="；".join(dict.fromkeys(reasons)), line_count=len(sales) if quantity_known else None,
             actual_quantity=sum(row["quantity"] for row in sales) if quantity_known else None, revenue=revenue, cost=cost,
-            expense=expense, profit=profit, rate=rate, rate_date=entry.exchange_rate_date,
+            expense=expense, profit=profit, rate=rate, rate_date=rate_info["rate_date"],
+            rate_month=rate_info["report_month"],
+            rate_source=labels["manual_provisional_fx" if rate_info.get("is_provisional") else "manual_fx"]
+                if rate_info.get("mode") == "manual" else rate_info["source"],
             detail_ids="\n".join([f"S{row['id']}" for row in sales] + ([f"F{entry.id}"] if event else [])),
             cost_status=labels["cost_exempt"] if income_only else labels["cost_na"] if status == "settlement" else labels["cost_review"] if cost is None
                 else labels["cost_actual"] if all(row["cost_status"] == "actual" for row in sales) else labels["cost_unverified"],

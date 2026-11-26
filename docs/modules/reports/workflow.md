@@ -82,13 +82,13 @@ flowchart TD
 
 ## 店铺损益及期间
 
-独立结算调整由[financial_facts.py](../../../services/financial_facts.py)的unlinked_settlement_events读取：排除直接/组件已关联出库的结算、排除待确认的普通正数量订单，纳入退款、赔付等不出库事件。按订单创建日期→结算日期→导入日期归月；导入日期兜底时提示核对，原销售仍按sold_at。普通记录沿用净商品额及差额费用，物流/平台/物料赔付按结算总金额及固化汇率计入店铺收入，费用为0，负数赔付冲减收入；不恢复库存或冲改原FIFO成本。销售月度/列表、09/10/12及Excel共享同一来源，未确定组合份额归产品线未分配组。原始结算及不可变月度版本保留，不批量改写历史数据。
+独立结算调整由[financial_facts.py](../../../services/financial_facts.py)的unlinked_settlement_events读取：排除直接/组件已关联出库的结算、排除待确认的普通正数量订单，纳入退款、赔付等不出库事件。按订单创建日期→结算日期→导入日期归月；导入日期兜底时提示核对，原销售仍按sold_at。普通记录沿用净商品额及差额费用，物流/平台/物料赔付按结算总金额及核算月报表汇率计入店铺收入，费用为0，负数赔付冲减收入；不恢复库存或冲改原FIFO成本。销售月度/列表、09/10/12及Excel共享同一来源，未确定组合份额归产品线未分配组。原始结算及不可变月度版本保留，不批量改写历史数据。
 
 _month_periods 定义 current（本月）、previous（上月）、ytd（当年1月到本月末），均采用左闭右开区间；report_month 必须该月第一天。自动项与来源：
 
 | 项目 | 实际来源/算法 |
 | --- | --- |
-| 商品销售收入 | 通过 _sale_import_context 还原净商品收入并乘固化汇率；手工销售以CNY处理 |
+| 商品销售收入 | 通过 _sale_import_context 还原净商品收入并乘本店本月报表汇率；手工销售以CNY处理 |
 | 商品采购成本 | 按原批次 purchase_price 计算权重，从该笔已保存FIFO成本中分配 |
 | 头程尾程物流成本 | 按批次 shipping_cost+last_mile_cost 及原始数量计算权重，从该笔已保存FIFO成本中分配 |
 | 入库其他成本 | 按批次 other_cost 及原始数量计算权重，从该笔已保存FIFO成本中分配，按销售日计入期间 |
@@ -168,6 +168,6 @@ FinancialReportVersion保存独立不可变payload，显式保存新版本；它
 - 仅admin/operator可修改，operator限绑定店铺；viewer可读生效依据。保存记录操作人、UTC时间、原因和递增修订号；旧修订号写入返回409，恢复自动也增加修订号。完整前后值日志遵循现有可选业务审计开关。
 - 设置复用报表metadata，不新增表或迁移。与损益费用保存统一先锁Store、再锁当月报表行，分别合并自己的字段，保留原费用、备注及其他metadata。字段见[数据库](database.md#手动汇率元数据)，接口见[API](api.md#手动汇率接口)。
 - 页面独立保存汇率后重算，保留未保存的费用和备注，重算期间暂时禁用提交和费用输入；重算失败提示“汇率已保存、金额待刷新”，保留输入。切换店铺/月或退出后忽略旧请求结果；报表重载等待正在提交的汇率写入完成（包括失败），再读取最新状态，连续重载只应用最后一次请求。
-- 销售导入与台账/销售导出继续采用原保存逐日汇率；修改不重写库存、原结算、旧不可变版本。重新保存月度版本记录新结果与依据，旧版本及其Excel保持原值。
+- 销售导入仍保留原取率凭据；销售台账、月度汇总、单条/计算明细及普通/批次导出共用本服务的店铺/月核算汇率，不向页面或Excel并列输出逐日值。读接口不重写库存、原结算、旧不可变版本；已知零、缺失、手动暂估与报表一致。跨多月原始行的导出边界见[销售流程](../sales/workflow.md#组合金额与人民币)。重新保存月度版本记录新结果与依据，旧版本及其Excel保持原值。
 
 代码：[report_exchange_rates.py](../../../services/report_exchange_rates.py)、[reports.py](../../../routers/reports.py)、[report-exchange-rates.js](../../../static/report-exchange-rates.js)。回归：[test_report_fx_overrides.py](../../../tests/test_report_fx_overrides.py)、[report_fx_page_checks.cjs](../../../tests/report_fx_page_checks.cjs)。隔离SQLite和浏览器用例不等于真实MySQL并发或生产验收。

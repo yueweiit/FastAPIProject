@@ -24,8 +24,8 @@
         giftHelp:'赠品按真实数量扣减库存；收入及原平台费用保留，商品成本和销售跌价不计入核算，不计算单价。',
         giftBatchHelp:'以下为已实际扣减的FIFO批次及数量。原始出库凭据保留，赠品免成本不影响库存扣减或撤销恢复。',
         count:'出库明细数', wholeCost:'整单销售成本（元）', wholeImpairment:'整单出库跌价（元）',
-        originalCurrency:'原币', rate:'汇率', rateDate:'汇率日期', rateSource:'汇率来源', missingRate:'汇率缺失，人民币金额待核对。',
-        sourceRowHelp:'来源整行原币金额，用于对照Excel；组合各组件重复展示，不参与合计。人民币收入和费用仍按已保存的组件份额及汇率计算。',
+        originalCurrency:'原币', rate:'核算汇率', rateDate:'汇率日期', rateSource:'汇率来源', rateMonth:'核算月份', manualRate:'手动', provisionalRate:'手动（暂估）', missingRate:'汇率缺失，人民币金额待核对。',
+        sourceRowHelp:'来源整行原币金额，用于对照Excel；组合各组件重复展示，不参与合计。人民币收入和费用按已保存组件份额及本店本月报表核算汇率计算。',
         allocatedSourceHelp:'本行按完整来源的组件份额分摊；同一币种可合计。部分组件不代表整单，原币净销售额不等于含赔付的店铺收入。',
         mixedCurrencyTotal:'多种币种不能合计，请按币种分别核对。',
         sourceBackendUnavailable:'后端待更新',
@@ -251,6 +251,13 @@
         summary.addEventListener('scroll',()=>sync(summary,detail),{passive:true});
         detail.addEventListener('scroll',()=>sync(detail,summary),{passive:true});
     }
+    const rateSourceText = row => row.exchange_rate_mode === 'manual' ? t(row.exchange_rate_is_provisional ? 'provisionalRate' : 'manualRate') : row.exchange_rate_source || '—';
+    const usesReportRate = row => row.exchange_rate_policy === 'store_month_report_v1';
+    const hasReportRate = row => usesReportRate(row) && /^\d{4}-(0[1-9]|1[0-2])$/.test(row.exchange_rate_month || '')
+        && ['auto','manual'].includes(row.exchange_rate_mode) && typeof row.exchange_rate_status === 'string' && !!row.exchange_rate_status;
+    const reportAmounts = ['selling_price_cny','sales_revenue_cny','platform_fee_cny','profit_cny'];
+    const reportFields = [...reportAmounts,'exchange_rate_to_cny','exchange_rate_date','exchange_rate_source'];
+    const rateBackendMessage = () => window.PageInteractions?.text('salesRateBackendUpdate') || t('unavailable');
     const sourceFields = ['source_row_net_product_sales','source_row_settlement_total','allocated_net_product_sales','allocated_settlement_total'];
     const sourceMoneyText = v => v == null || !Number.isFinite(Number(v)) ? t('pending') : h(Number(v).toLocaleString(document.documentElement.lang,{minimumFractionDigits:2,maximumFractionDigits:4}));
     const hasSourceField = (row,key) => Object.prototype.hasOwnProperty.call(row,key);
@@ -258,8 +265,9 @@
         const status=el('sales-currency-status');
         if(!status)return;
         const missing=rows.some(row=>sourceFields.some(key=>!hasSourceField(row,key)));
-        status.textContent=missing?t('sourceBackendUpdate'):'';
-        status.hidden=!missing;
+        const rateMissing=rows.some(row=>!hasReportRate(row));
+        status.textContent=[missing?t('sourceBackendUpdate'):'',rateMissing?rateBackendMessage():''].filter(Boolean).join(' ');
+        status.hidden=!missing&&!rateMissing;
     }
     function render(rows, products, preservePosition=false) {
         const detail=el('sales-ledger-scroll'),left=detail?.scrollLeft||0,top=detail?.scrollTop||0;
@@ -272,21 +280,27 @@
             const notApplicable = meta.kind === 'unit' && (row.income_only === true || !(row.quantity > 0));
             const sourceMoney = meta.kind === 'source_money';
             const rate = meta.kind === 'rate';
+            const rateUnavailable = !hasReportRate(row);
+            const blocked = rateUnavailable && reportFields.includes(meta.key);
             let text;
-            if (sourceMoney) {
+            if (blocked) {
+                text = t('sourceBackendUnavailable');
+            } else if (meta.key === 'exchange_rate_source') {
+                text = h(rateSourceText(row));
+            } else if (sourceMoney) {
                 text = !hasSourceField(row,meta.key) ? h(t('sourceBackendUnavailable')) : v == null || !Number.isFinite(Number(v)) ? t('na') : sourceMoneyText(v);
             } else if (rate) {
                 text = v == null || !Number.isFinite(Number(v)) ? t('pending') : Number(v).toFixed(8);
             } else {
                 text = notApplicable ? t('na') : numeric ? money(v,meta.kind === 'unit' ? 4 : 2) : ['quantity','source_quantity'].includes(meta.kind) ? v == null ? t('na') : Number(v).toLocaleString(document.documentElement.lang) : h(v);
             }
-            const transaction = ['selling_price_cny','sales_revenue_cny','platform_fee_cny','profit_cny'].includes(meta.key);
-            const fxReason = `${t('originalCurrency')} ${row.currency || 'CNY'}；${t('rate')} ${row.exchange_rate_to_cny ?? t('pending')}；${t('rateDate')} ${row.exchange_rate_date || '—'}；${t('rateSource')} ${row.exchange_rate_source || '—'}`;
-            const reason = sourceMoney ? hasSourceField(row,meta.key) ? t(meta.sum_by_currency ? 'allocatedSourceHelp' : 'sourceRowHelp') : t('sourceBackendUpdate') : rate ? fxReason : meta.key === 'impairment_cny' ? row.impairment_review_reason : transaction ?
+            const transaction = reportAmounts.includes(meta.key);
+            const fxReason = rateUnavailable ? rateBackendMessage() : `${t('originalCurrency')} ${row.currency || 'CNY'}；${t('rate')} ${row.exchange_rate_to_cny ?? t('pending')}；${t('rateDate')} ${row.exchange_rate_date || '—'}；${t('rateSource')} ${rateSourceText(row)}；${t('rateMonth')} ${row.exchange_rate_month}`;
+            const reason = blocked ? rateBackendMessage() : sourceMoney ? hasSourceField(row,meta.key) ? t(meta.sum_by_currency ? 'allocatedSourceHelp' : 'sourceRowHelp') : t('sourceBackendUpdate') : rate ? fxReason : meta.key === 'impairment_cny' ? row.impairment_review_reason : transaction ?
                 [fxReason, row.exchange_rate_to_cny == null && row.currency && row.currency !== 'CNY' ? t('missingRate') : '',meta.key === 'profit_cny' ? row.cost_review_reason : ''].filter(Boolean).join('；') : row.cost_breakdown_review_reason || row.cost_review_reason;
             const content = meta.kind === 'action' ? (row.id > 0 && (row.record_type || 'sale') === 'sale' ? `<button type="button" class="btn btn-secondary" data-sale-calculation="${Number(row.id)}" aria-label="${h(t('detail')+' · '+orderNumber(row))}">${h(t('detail'))}</button>` : t('na')) : text;
             const number=['money','unit','quantity','source_quantity','source_money','rate'].includes(meta.kind);
-            return `<td data-sales-value="${h(meta.key)}" class="${meta.pinned?'sales-pinned ':''}${number?'sales-number ':''}${(numeric || rate) && v == null && !notApplicable ? 'fx-missing' : ''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''} title="${h(reason || '')}">${content}</td>`;
+            return `<td data-sales-value="${h(meta.key)}" class="${meta.pinned?'sales-pinned ':''}${number?'sales-number ':''}${blocked || (numeric || rate) && v == null && !notApplicable ? 'fx-missing' : ''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''} title="${h(reason || '')}">${content}</td>`;
         }).join('')}</tr>`).join('') : `<tr><td colspan="${columns.length}" class="empty">${h(t('empty'))}</td></tr>`;
         el('sales-total-summary-body').innerHTML = `<tr>${columns.map(meta => {
             const attr=`data-sales-total="${h(meta.key)}" class="sales-number${meta.pinned?' sales-pinned':''}"${meta.pinned?` style="left:${meta.pinLeft}px"`:''}`;
@@ -297,6 +311,7 @@
                 return `<td ${attr}>${sourceMoneyText(unknownSum(rows.map(row => value(row,meta,{}))))}</td>`;
             }
             if (!['quantity','money'].includes(meta.kind)) return `<td ${attr}></td>`;
+            if (reportAmounts.includes(meta.key) && rows.some(row=>!hasReportRate(row))) return `<td ${attr} title="${h(rateBackendMessage())}">${t('sourceBackendUnavailable')}</td>`;
             const values = rows.map(row => value(row,meta,{}));
             return `<td ${attr}>${meta.kind === 'quantity' ? values.reduce((sum,v) => sum + Number(v || 0),0).toLocaleString(document.documentElement.lang) : money(unknownSum(values))}</td>`;
         }).join('')}</tr>`;
@@ -357,6 +372,8 @@
         el('sales-calc-body').replaceChildren(); el('sales-calc-status').textContent=t('loading');
         if (!dialog.open) dialog.showModal();
         try {
+            if (window.ReportExchangeRates?.waitForPendingSaves) await window.ReportExchangeRates.waitForPendingSaves();
+            if (!current(token) || request !== detailSerial) return;
             await ready();
             if (!current(token) || request !== detailSerial) return;
             const response = await fetch(`/sales/${Number(saleId)}/cost-breakdown`,{credentials:'same-origin',headers:authHeaders(),signal});
@@ -470,7 +487,7 @@
     initializeScrollSync();
     initializeManualProductSearch();
     updateManualSummary();
-    window.SalesLedger = {ready,render,reset,createManualSettlement,updateManualSummary,
+    window.SalesLedger = {ready,render,reset,createManualSettlement,updateManualSummary,usesReportRate,
         requestOptions:()=>{const token={epoch,user:userId()};return {isCurrent:()=>current(token)};},
         beginLoad:()=>({epoch,user:userId(),load:++loadSerial}),
         currentLoad:token=>current(token)&&token.load===loadSerial,

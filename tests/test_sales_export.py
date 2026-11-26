@@ -133,6 +133,7 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.client.get("/sales/export", params=params)).status_code, status)
 
     async def test_missing_fx_and_voided_cost_preserve_blank_amounts_and_totals(self):
+        self.unavailable_monthly_rates = True
         self.entry(6, net=-5, total=-4, quantity=-1, currency="USD", rate=None)
         self.session.get(InventoryBatch, 1).voided_at = datetime(2026, 10, 1)
         self.session.commit()

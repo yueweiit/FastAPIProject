@@ -122,6 +122,17 @@ async function main() {
         const lateTask = c.exportSalesRecords(17); await Promise.resolve(); await Promise.resolve();
         c.resetSalesExportSession(); late.resolve({size: 100}); await lateTask;
         equal(links.length, downloadCount); equal(e('sales-import-export-status').textContent, '');
+        const waitingFx = setup(file), fxSave = deferred();
+        waitingFx.c.window.ReportExchangeRates = {waitForPendingSaves: () => fxSave.promise};
+        const exportAfterSave = waitingFx.c.exportSalesRecords(17);
+        await Promise.resolve(); equal(waitingFx.requests.length, 0);
+        fxSave.resolve(); await exportAfterSave; equal(waitingFx.requests.length, 1);
+        const staleFx = deferred();
+        waitingFx.c.window.ReportExchangeRates.waitForPendingSaves = () => staleFx.promise;
+        const staleExport = waitingFx.c.exportSalesRecords();
+        waitingFx.c.resetSalesExportSession(); staleFx.resolve(); await staleExport;
+        equal(waitingFx.requests.length, 1); equal(waitingFx.links.length, 1);
+
     }
     console.log(JSON.stringify({checks, pages: 2, scope: 'actual sales export functions in VM'}));
 }

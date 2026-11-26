@@ -1,5 +1,7 @@
 # 销售与结算数据表
 
+销售响应的`exchange_rate_store_id`与`exchange_rate_policy`仅为只读核算元数据，不是数据库列；用于核对原始导入归属与销售有效取率归属、识别旧接口。不会回填或清空已有店铺、汇率、库存和成本，契约见[API](api.md)。
+
 2026-11-24：未新增结构。指定赠品正常写入 Sale、SaleCostDetail 并扣减批次库存，原始 FIFO 成本凭据保留。`settlement_entries.raw_data._financial_classification=income_only_gift` 是应用生成的财务免成本标记，不属于仅结算原因；可信精确清单位于 [income_only_orders.json](../../../services/income_only_orders.json)，不接受导入文件伪造元字段。未写标记的历史匹配来源亦可只读识别，不回写历史已出库数量和成本。旧 `_settlement_only_reason=income_only_gift` 且尚未关联出库的来源可通过待确认接口正常出库，成功后移除旧原因并保存财务分类。`income_only` 是响应字段，不是数据库列。核算日期和兼容范围见[流程](workflow.md#指定赠品代发及订单创建月2026-11-24)。
 
 ## non_inventory_sku_rules
@@ -7,6 +9,8 @@
 来源：`models.NonInventorySkuRule`，基础结构，不依赖财务增强开关。`id` INT主键；`store_id` INT非空/索引/关联stores；`platform_sku_id` VARCHAR(128)非空；两者以`uq_non_inventory_store_sku`唯一。`is_active` BOOL非空/默认1，`reason` VARCHAR(500)非空；`created_by` INT非空关联users，`created_at` DATETIME非空默认当前时间。匹配使用店铺ID和平台SKU ID，不用原因或自然语言名称作业务分类。当前仅授权维护脚本写规则，无新增前端配置接口。有规则的店铺删除返回409 store_has_non_inventory_rules，可停用；被规则引用的创建人沿用用户删除的外键409保护。
 
 离线DDL：`migrations/add_sales_classification.py --write-sql <path>`。已有数据库须先核验并增加`sales.business_metadata JSON NULL`及规则表，再加载新版。生产DDL不能通过事务回滚，不能启动应用替代预检；回退需保留分类并使用兼容代码。
+
+2026-11-25核算统一不新增表/列或迁移：SettlementEntry的原汇率字段保留导入凭据；销售响应的同名汇率字段改为读取报表店铺/月设置的只读投影，新增月份/模式/状态/暂估仅为API字段，见[接口契约](api.md)。历史数据不批量改写。
 
 本模块维护销售、FIFO 明细、文件导入、原始结算和组件分摊。字段类型/默认基于 ORM，实际数据库约束需核验。通用关系见[数据库总览](../../knowledge/database.md)。
 

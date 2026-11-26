@@ -3132,6 +3132,8 @@ async function loadSales() {
     document.getElementById('sales-manual-entry-card').style.display = isOperator() ? '' : 'none';
     document.getElementById('sales-import-controls').style.display = isOperator() ? '' : 'none';
     try {
+        await window.ReportExchangeRates?.waitForPendingSaves?.();
+        if (!window.SalesLedger.currentLoad(token)) return;
         await window.SalesLedger.ready();
         if (!window.SalesLedger.currentLoad(token)) return;
         await loadProductOptions(requestOptions);
@@ -3171,9 +3173,13 @@ async function loadSales() {
 function renderMonthlySalesSummary(summary) {
     const tbody = document.getElementById('sales-monthly-tbody');
     const note = document.getElementById('sales-monthly-summary-note');
+    const compatible = item => window.SalesLedger?.usesReportRate?.(item) === true;
+    const ratePolicy = window.PageInteractions.text(summary.every(compatible) ? 'salesRatePolicy' : 'salesRateBackendUpdate');
+    const unavailable = window.PageInteractions.text('salesRateUnavailable');
+    const provisional = summary.reduce((count, item) => count + Number(item.fx_provisional_count || 0), 0);
     if (!summary.length) {
         tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无符合条件的月度数据</td></tr>';
-        note.textContent = salesMonth ? `${salesMonth} · 金额均为人民币` : '金额均为人民币';
+        note.textContent = salesMonth || '';
         return;
     }
     const money = (value, pending = '汇率缺失') => value == null ? pending : `¥${Number(value).toFixed(2)}`;
@@ -3183,12 +3189,12 @@ function renderMonthlySalesSummary(summary) {
         <td><strong>${escapeHtml(item.month)}</strong></td>
         <td>${Number(Number(item.sales_count || 0) + Number(item.settlement_event_count || 0)).toLocaleString('zh-CN')}</td>
         <td>${Number(item.sold_quantity).toLocaleString('zh-CN')}</td>
-        <td class="${item.sales_revenue_cny == null ? 'fx-missing' : ''}">${money(item.sales_revenue_cny)}</td>
+        <td class="${!compatible(item) || item.sales_revenue_cny == null ? 'fx-missing' : ''}">${compatible(item) ? money(item.sales_revenue_cny) : unavailable}</td>
         <td>¥${Number(item.sales_cost_cny || 0).toFixed(2)}</td>
-        <td class="${item.platform_fee_cny == null ? 'fx-missing' : ''}">${money(item.platform_fee_cny)}</td>
-        <td class="${item.gross_profit_cny == null ? 'fx-missing' : ''}">${money(item.gross_profit_cny, item.cost_review_count ? window.PageInteractions.text('batchVoidProfitPending') : '汇率缺失')}</td>
+        <td class="${!compatible(item) || item.platform_fee_cny == null ? 'fx-missing' : ''}">${compatible(item) ? money(item.platform_fee_cny) : unavailable}</td>
+        <td class="${!compatible(item) || item.gross_profit_cny == null ? 'fx-missing' : ''}">${compatible(item) ? money(item.gross_profit_cny, item.cost_review_count ? window.PageInteractions.text('batchVoidProfitPending') : '汇率缺失') : unavailable}</td>
     </tr>`).join('');
-    note.textContent = `${salesMonth || '全部月份'} · 金额均为人民币${missing ? ` · ${missing} 条记录汇率缺失` : ''}${costReview ? ` · ${costReview} ${window.PageInteractions.text('batchVoidMonthlyPending')}` : ''}`;
+    note.textContent = `${salesMonth || '全部月份'} · ${ratePolicy}${provisional ? ` · ${provisional} ${window.PageInteractions.text('salesRateProvisional')}` : ''}${missing ? ` · ${missing} 条记录汇率缺失` : ''}${costReview ? ` · ${costReview} ${window.PageInteractions.text('batchVoidMonthlyPending')}` : ''}`;
 }
 
 function refreshSalesWorkspace() {
@@ -3303,6 +3309,8 @@ async function exportSalesRecords(importBatchId = null) {
     setSalesExportBusy(true);
     setSalesExportStatus(text('salesExportLoading'));
     try {
+        if (window.ReportExchangeRates?.waitForPendingSaves) await window.ReportExchangeRates.waitForPendingSaves();
+        if (epoch !== salesExportSessionEpoch) return;
         const endpoint = importBatchId === null ? `/sales/export?${params.toString()}` : `/sales/imports/${importBatchId}/export`;
         const response = await fetch(endpoint, {
             headers: authHeaders(), credentials: 'same-origin', signal: controller.signal,

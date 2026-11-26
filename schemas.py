@@ -415,6 +415,12 @@ class SaleResponse(BaseModel):
     exchange_rate_to_cny: Decimal | None = Decimal("1")
     exchange_rate_date: date | None = None
     exchange_rate_source: str | None = None
+    exchange_rate_month: str | None = None
+    exchange_rate_policy: str | None = None
+    exchange_rate_store_id: int | None = None
+    exchange_rate_mode: str | None = None
+    exchange_rate_status: str | None = None
+    exchange_rate_is_provisional: bool = False
     selling_price_cny: Decimal | None = None
     sales_revenue_cny: Decimal | None = None
     platform_fee_cny: Decimal | None = None
@@ -506,6 +512,7 @@ class SalePageResponse(BaseModel):
 
 class MonthlySalesSummaryResponse(BaseModel):
     month: str
+    exchange_rate_policy: str | None = None
     sales_count: int
     sold_quantity: int
     sales_revenue_cny: Decimal | None = None
@@ -513,6 +520,7 @@ class MonthlySalesSummaryResponse(BaseModel):
     platform_fee_cny: Decimal | None = None
     gross_profit_cny: Decimal | None = None
     fx_missing_count: int = 0
+    fx_provisional_count: int = 0
     cost_review_count: int = 0
     settlement_event_count: int = 0
 

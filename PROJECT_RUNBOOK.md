@@ -40,7 +40,7 @@
 
 ## 历史汇率来源与原币对账（2026-11-19）
 
-2026-11-25起，新导入及报表自动参考统一使用Frankfurter历史汇率，已移除百度来源及`FIFO_FX_PROVIDER`切换配置。Compose和`.env.example`不再提供该变量；旧环境中遗留的同名变量不再读取，可清理。发布时需按既有流程构建镜像并重建web，使Python与静态字段资源同时生效；仅修改配置或构建镜像不会更新运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。历史销售台账仍用导入时固化汇率、日期及来源，旧固定报表版本保留原值；当前报表按各店各月手动设置或Frankfurter自动汇率重新换算，因此与旧台账人民币列可能不同。
+2026-11-25起，新导入及报表自动参考统一使用Frankfurter历史汇率，已移除百度来源及`FIFO_FX_PROVIDER`切换配置。Compose和`.env.example`不再提供该变量；旧环境中遗留的同名变量不再读取，可清理。发布时需按既有流程构建镜像并重建web，使Python与静态字段资源同时生效；仅修改配置或构建镜像不会更新运行中的容器。无需新增数据库结构、重导历史Excel或批量改写旧汇率。销售台账、月度汇总、计算明细及普通/批次对账导出与报表共用各店各月手动设置或Frankfurter月末汇率，页面和Excel只展示核算汇率。原始导入凭据与旧固定报表版本保留原值；跨月分别核算，缺失不回退逐日值。无需重新导入销售。
 
 取数入口为`services/exchange_rates.py::get_cny_rates`，通过Frankfurter v1查询原币→CNY历史区间，查询起点向前扩展14天；每个目标日独立限定在该日及此前14天内（含第14天）取最近有效汇率，跨月请求也不能沿用更早月份的过期数据。CNY直接返回1；拒绝非有限或非正汇率，不用未来汇率填补历史日期。响应顶层及`rates`必须为JSON对象；结构异常、超时、连接/协议异常、响应中断和解码失败统一为`ExchangeRateError`，导入返回502且不写入销售/结算或扣库，报表相关金额待核对，不切换其他来源。历史记录中的其他来源标识仍按原值显示。
 
@@ -554,6 +554,6 @@ docker compose exec web python migrations/20260909_transfer_huang_liyao_batches_
 
 ## 手动报表汇率
 
-店铺损益页可按店铺/月/原币保存手动汇率并重算，或恢复自动；只影响报表原币换算，销售逐日保存值、库存成本和旧版本保持。规则见[报表流程](docs/modules/reports/workflow.md#手动报表汇率)，接口与存储见对应模块文档。复用store_profit_loss_reports.metadata，无新增DDL或配置；部署时需同时更新后端、两份页面及static/report-exchange-rates.js，不能只替换HTML。启动仍有既有迁移/修复副作用，须按原授权流程执行。
+店铺损益页可按店铺/月/原币保存手动汇率并重算，或恢复自动；销售读取及导出与报表同步采用当前核算汇率，销售逐日原始凭据、库存成本和旧版本保持。规则见[报表流程](docs/modules/reports/workflow.md#手动报表汇率)，接口与存储见对应模块文档。复用store_profit_loss_reports.metadata，无新增DDL或配置；部署时需同时更新后端、两份页面及static/report-exchange-rates.js，不能只替换HTML。启动仍有既有迁移/修复副作用，须按原授权流程执行。
 
 本地验证入口为tests.test_report_fx_overrides与node tests/report_fx_page_checks.cjs，外部汇率/OA隔离，使用SQLite和Chromium，不连接业务库。真实MySQL行锁并发、运行服务加载和业务验收需单独验证，不能以离线测试代替。

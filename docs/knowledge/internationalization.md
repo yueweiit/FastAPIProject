@@ -117,6 +117,8 @@
 
 ## 销售字段公式资源
 
+销售月度汇率旧接口提示和占位符使用PageInteractions的`salesRateBackendUpdate/salesRateUnavailable`；明细与月度统计共享词条，仍仅支持zh-CN并回退中文。`exchange_rate_policy`与`exchange_rate_store_id`为中立元数据，店铺/月冲突使用`sales_reconciliation.TEXT.zh-CN`的`store_conflict/period_conflict`及Excel集中说明，不按中文文案判断口径。
+
 统一“操作日志”使用operation-logs.js局部zh-CN字典，未知语言回退中文；分类/操作/字段/实体/状态均用中立码映射，筛选标签、加载/空态、详情、原始时间说明与分页使用同一字典及参数占位。PageInteractions的operationLogsTitle/operationLogsUnavailable负责模块未加载时的导航及错误回退。两份页面只同步模块区块，业务值始终转义；原金额字符串保持精度，UTC标识与原记录时间分开，不推定旧记录时区。仅沿用当前中文，无新增语言、依赖或数据库字段。
 
 “产品线毛利”保留菜单/标题/工作表名称。逐商品的新列名、问号、加载/空态和旧后端提示集中于PageInteractions局部字典的productProfitProduct/productProfitQuantity/productProfitHelp/productProfitLoading/productProfitEmpty/productProfitUnavailable，通过data-profit-loss-text初始化两份页面。后端新增商品分组标签及Excel说明集中在reports.py的PRODUCT_PROFIT_TEXT[zh-CN]；内部使用product/unallocated_settlement/unallocated_fulfillment及group_by=product，不按中文标签判断。业务SKU/名称不翻译，HTML转义、Excel按文本写入。仍仅中文，无新语言或依赖。
@@ -141,7 +143,7 @@
 
 图册标题、商品名称/SKU标签、查询/刷新/清空、占位/帮助、空态/加载/失败、图片下载及库存数量文案集中在[page-interactions.js](../../static/page-interactions.js)的gallery*键。两份首页通过data-gallery-text及galleryText读取，按页面lang回退zh-CN，候选名称/SKU和错误文本安全展示，库存数量沿用当前界面语言格式化。
 
-原币核对组的币种、来源净销售额/结算总金额、汇率/日期/来源及问号说明复用sales-fields.zh-CN.json；组合重复展示且不合计的行提示在sales-ledger.js局部字典，页面说明在PageInteractions.salesCostHelp。原币数字按页面语言保留2至4位，不附人民币符号；保存汇率显示8位，币种代码及数据来源保留原值。Excel追加两项原币金额与汇率来源，沿用中文导出标签及纯数字格式，不与人民币合计混算。没有新增支持语言或依赖。
+原币核对组的币种、来源净销售额/结算总金额、汇率/日期/来源及问号说明复用sales-fields.zh-CN.json；组合重复展示且不合计的行提示在sales-ledger.js局部字典，页面说明在PageInteractions.salesCostHelp。原币数字按页面语言保留2至4位，不附人民币符号；核算汇率显示8位，手动/手动（暂估）由局部字典展示，自动来源保留原值。Excel追加两项原币金额与汇率来源，沿用中文导出标签及纯数字格式，不与人民币合计混算。没有新增支持语言或依赖。
 
 原币响应字段缺失的兼容提示集中在sales-ledger.js的sourceBackendUnavailable/sourceBackendUpdate局部zh-CN字典，复用页面语言回退。以中立字段键是否存在识别旧接口，明确null继续显示无来源；不根据中文提示做业务判断，不反推原币。
 
@@ -159,3 +161,5 @@
 销售对账导出的页面入口、批次不存在/已撤销及下载反馈集中于PageInteractions的salesExport*/salesImportExport*。工作表名和投影状态集中于services/sales_reconciliation.py的TEXT.zh-CN；原始行字段用services/sales_export.py的SOURCE_FIELDS维护中立字段码与中文表头，明细表复用原HEADERS并追加追溯列。SKU、产品名、订单号、来源文件及行号保留业务原值，Excel按字面量写入；E/S/F关联编号不依赖翻译文案。当前仅中文，无新翻译依赖或语言参数。
 
 手动报表汇率的表单、按钮、来源/暂估、校验和重算状态文案集中在[page-interactions.js](../../static/page-interactions.js)的reportFx*键，由[report-exchange-rates.js](../../static/report-exchange-rates.js)与两份页面复用。mode=auto/manual、currency和revision为中立接口编码，操作时间按页面语言格式化，备注与用户名称转义展示；后端错误沿用code/message及Pydantic校验约定。财务Excel的中文依据标签集中于report_exchange_rates.py的rate_evidence_text，仍仅支持现有中文，不新增语言或翻译依赖。
+
+销售统一汇率使用sales-fields.zh-CN.json维护“核算汇率”的公式/来源及口径；sales-ledger.js集中月份、手动/暂估标签，PageInteractions集中月度说明与暂估计数。Excel标签沿用sales_export.py/SOURCE_FIELDS及sales_reconciliation.py/TEXT.zh-CN；auto/manual及available/missing/month_not_closed/store_missing为稳定编码，页面不展示导入时汇率。当前仍仅中文，无新依赖。

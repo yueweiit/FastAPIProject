@@ -15,13 +15,13 @@ MAX_EXPORT_ROWS = 20_000
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 HEADERS = ("店铺", "日期", "本地商品 SKU", "本地商品名称", "实际出库数量", "销售单价（元）", "FIFO成本单价（元）",
            "店铺收入（元）", "订单总成本（元，本行）", "其他费用（元）", "毛利（元）", "订单号", "记录类型",
-           "原币", "汇率", "汇率日期", "成本状态", "说明", "采购成本（元）", "头程成本（元）",
+           "原币", "核算汇率", "汇率日期", "成本状态", "说明", "采购成本（元）", "头程成本（元）",
            "尾程成本（元）", "其他入库成本（元）", "出库商品跌价（元，参考）",
            "单件采购（元/件）", "单件头程（元/件）", "单件尾程（元/件）", "单件其他入库成本（元/件）", "交易类型", "来源数量",
            "来源净商品销售额（原币，整行勿合计）", "来源结算总金额（原币，整行勿合计）", "汇率来源",
            "分摊净商品销售额（原币）", "分摊结算总金额（原币）",
            "关联编号", "来源文件", "来源工作表", "原文件行号", "来源 SKU ID", "来源产品名", "销售明细编号",
-           "本地商品规格/型号", "来源规格（SKU 名称）", "导入指定规格/型号")
+           "本地商品规格/型号", "来源规格（SKU 名称）", "导入指定规格/型号", "汇率核算月份")
 SOURCE_FIELDS = (
     ("source_ref", "关联编号"), ("store_name", "店铺"), ("source_file", "来源文件"),
     ("source_sheet", "来源工作表"), ("source_row_number", "原文件行号"), ("order_no", "订单号"),
@@ -30,9 +30,10 @@ SOURCE_FIELDS = (
     ("net_product_sales", "净商品销售额（原币）"), ("settlement_total", "结算总金额（原币）"),
     ("status", "处理状态"), ("reason", "待核对原因"), ("line_count", "出库明细数"), ("actual_quantity", "实际出库件数"),
     ("revenue", "来源收入（折人民币）"), ("cost", "销售成本（元）"), ("expense", "来源费用（折人民币）"),
-    ("profit", "毛利（元）"), ("rate", "汇率"), ("rate_date", "汇率日期"), ("detail_ids", "销售明细编号"),
+    ("profit", "毛利（元）"), ("rate", "核算汇率"), ("rate_date", "汇率日期"), ("detail_ids", "销售明细编号"),
     ("cost_status", "成本状态"),
     ("source_specification", "来源规格（SKU 名称）"), ("requested_local_specification", "导入指定规格/型号"),
+    ("rate_month", "汇率核算月份"), ("rate_source", "汇率来源"),
 )
 RECORD_NAMES = {"sale": "销售", "other_expense": "赔付费用", "compensation_income": "赔付收入", "manual_settlement": "手工结算补录", "settlement_adjustment": "退款/结算调整"}
 COST_NAMES = {"actual": "已核对", "unverified": "未核对", "needs_review": "待核对", "not_applicable": "赠品免成本"}
@@ -63,7 +64,7 @@ def _source_sheet(workbook, originals):
         totals[key] = None if None in parts else sum(parts, Decimal(0))
     _append(sheet, [totals.get(key) for key, _label in SOURCE_FIELDS], len(originals) + 2)
     _style_header(sheet)
-    widths = (16, 22, 36, 24, 14, 30, 24, 40, 18, 14, 20, 20, 12, 26, 26, 20, 64, 16, 18, 26, 24, 26, 22, 18, 16, 26, 30, 32, 32)
+    widths = (16, 22, 36, 24, 14, 30, 24, 40, 18, 14, 20, 20, 12, 26, 26, 20, 64, 16, 18, 26, 24, 26, 22, 18, 16, 26, 30, 32, 32, 18, 24)
     for column, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     for cells in sheet.iter_rows(min_row=2):
@@ -97,6 +98,11 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
         notes = []
         if row["exchange_rate_to_cny"] is None:
             notes.append("汇率缺失，相关人民币金额待核对")
+        if row.get("exchange_rate_is_provisional"):
+            notes.append(TEXT["zh-CN"]["provisional_fx"])
+        rate_source = row.get("exchange_rate_source")
+        if row.get("exchange_rate_mode") == "manual":
+            rate_source = TEXT["zh-CN"]["manual_provisional_fx" if row.get("exchange_rate_is_provisional") else "manual_fx"]
         if row.get("cost_review_reason"):
             notes.append(row["cost_review_reason"])
         for key in ("cost_breakdown_review_reason", "impairment_review_reason"):
@@ -115,11 +121,12 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
             row.get("last_mile_cost_cny"), row.get("other_cost_cny"), row.get("impairment_cny"),
             *(row.get("unit_" + key + "_cost_cny") for key in ("purchase", "head_shipping", "last_mile", "other")),
             row.get("transaction_type"), row.get("source_quantity"),
-            row.get("source_row_net_product_sales"), row.get("source_row_settlement_total"), row.get("exchange_rate_source"),
+            row.get("source_row_net_product_sales"), row.get("source_row_settlement_total"), rate_source,
             row.get("allocated_net_product_sales"), row.get("allocated_settlement_total"),
             row.get("source_ref"), row.get("source_file"), row.get("source_sheet"), row.get("source_row_number"),
             row.get("source_sku_id"), row.get("source_product_name"), row.get("detail_id"),
             row.get("local_specification"), row.get("source_specification"), row.get("requested_local_specification"),
+            row.get("exchange_rate_month"),
         ])
         _append(sheet, values[-1], number)
     totals = [None] * len(HEADERS)
@@ -135,7 +142,7 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
     _append(sheet, totals, len(rows) + 2)
     _style_header(sheet)
     widths = (22, 14, 24, 36, 14, 20, 22, 23, 26, 20, 20, 30, 22, 12, 18, 14, 16, 70, 20, 20, 20, 22, 30, 23, 23, 23, 25, 18, 16, 44, 42, 22, 32, 30,
-              18, 36, 24, 16, 24, 40, 20, 32, 32, 32)
+              18, 36, 24, 16, 24, 40, 20, 32, 32, 32, 18)
     for col, width in enumerate(widths, 1):
         sheet.column_dimensions[get_column_letter(col)].width = width
     for cells in sheet.iter_rows(min_row=2):
@@ -174,13 +181,14 @@ def build_sales_workbook(rows, *, month, keyword, scope, product_id=None, order_
     for number, pair in enumerate((("范围", scope), ("月份", month or "全部月份"), ("商品名称/SKU/订单号", keyword or "全部"),
                  ("商品ID", product_id), ("原始结算行及无来源历史销售行数", len(originals)), ("拆分明细数（含独立结算）", len(rows)),
                  ("口径", "第一张表按原始结算记录保留一行，包含待确认；同订单的多个SKU、退款和调整分别保留。第二张表按本地商品展示出库，独立结算的实际出库数量为0。两表为同一业务的不同层次，金额不可跨表相加。"),
-                 ("范围规则", "按当前筛选匹配来源行后，包含该来源的全部获准组件，可能超出商品或月份筛选；待确认以订单创建日优先归月。按导入批次导出不受页面筛选影响；拆分明细的来源金额、汇率和订单号仅取本次获准来源。要与原文件逐行核对，请使用导入历史中的导出本次对账。"),
+                 ("范围规则", "按当前筛选匹配来源行后，包含该来源的全部获准组件，可能超出商品或月份筛选；待确认以订单创建日优先归月。按导入批次导出不受页面筛选影响；拆分明细的来源金额和订单号仅取本次获准来源，核算汇率按该销售的店铺和销售月份取值。已关联原始行跟随销售核算月份；独立结算及待确认按订单创建日、结算日、导入日依次归月。原始行关联多个销售月份时，折人民币金额待核对，核算月份见各表对应列。要与原文件逐行核对，请使用导入历史中的导出本次对账。"),
                  ("对应关系", "关联编号定位原始结算行，销售明细编号定位拆分行；可点击关联编号跳转。来源产品名与原始表一致，保留原列空值，历史缺列时读取保存的来源名称；多个来源按关联编号顺序换行。来源文件、工作表和原文件行号用于回查原文件，不按订单号或产品名去重。无来源的历史销售单独标记，不猜测来源名称、数量或金额。"),
-                 ("待确认口径", "原始表的来源金额包括待确认行；折人民币仅使用保存汇率，不能直接作为已确认销售报表总额。待确认、成本不完整或关联异常时，成本及毛利留空；多个来源共用销售或关联明细不完整时，原始表的出库明细数、实际出库件数也留空。未知项的合计留空，拆分表仍按每条销售明细统计实际出库数量。"),
-                 ("金额", "收入、费用、成本及毛利为人民币，沿用保存汇率及当前成本追溯结果。来源净商品销售额、来源结算总金额为原币，币种见原币列，汇率表示1原币兑人民币；不修改库存、销售或原始成本。"),
+                 ("待确认口径", "原始表的来源金额包括待确认行；折人民币使用本店对应核算月份的报表汇率，不能直接作为已确认销售报表总额。待确认、成本不完整或关联异常时，成本及毛利留空；多个来源共用销售或关联明细不完整时，原始表的出库明细数、实际出库件数也留空。未知项的合计留空，拆分表仍按每条销售明细统计实际出库数量。"),
+                 ("金额", "收入、费用、成本及毛利为人民币，与财务报表共用店铺及月份汇率：手动优先，否则按月末最近可用值；当前月手动值标记暂估。跨月分别计算，汇率缺失不回退到旧逐日值。成本沿用当前成本追溯结果。来源净商品销售额、来源结算总金额为原币，币种见原币列，汇率表示1原币兑人民币；不修改库存、销售或原始成本。"),
                  ("原币核对", "第一张表的原始金额每来源行只计一次，可按同币种核对原文件；第二张表的来源整行金额在各组件重复展示，不可合计，核对拆分金额应使用分摊净商品销售额、分摊结算总金额。仅同币种且金额完整时显示原币合计；赔付净商品销售额保留原值，收入按赔付结算额计入。无来源时原币值留空。"),
                  ("成本拆分", "采购、头程、尾程、其他入库成本按实际FIFO批次汇总；展示金额按分舍入，尾差按科目金额由大到小分配，合计等于本行订单总成本。组合商品同一订单号各行相加为整单成本。"),
                  ("跌价", impairment_help["formula"] + "；" + impairment_help["note"]),
+                 ("汇率归属", "原始结算店铺与关联销售的有效核算店铺不一致、销售归属缺失或关联多个核算月份时，原始表标记待核对，外币核算汇率及受影响的人民币金额、合计留空。原始店铺、原币及已确认成本保留，具体取率查看拆分明细；人民币固定汇率1及已知零金额仍可计算。"),
                  ("待核对", "未知金额和相应合计留空，不以0代替；未核对成本沿用台账展示，作废批次相关毛利待核对。")), 1):
         _append(notes, pair, number)
     notes.column_dimensions["A"].width = 22

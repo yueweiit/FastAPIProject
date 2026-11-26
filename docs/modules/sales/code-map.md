@@ -24,8 +24,9 @@
 | 原始订单号展示 | sales-ledger.js的orderNumber、计算标题与按钮；sales_export.py | _sale_import_context → _build_sale_response.display_order_no；_order_cost_data汇总展示字段 | 来源订单ID优先，无明确来源保留原编号；内部order_no/order_claim、同SKU组件分组与幂等不变 |
 | 库存预检/扣库 | 上传结果提示 | _allocate_available_stock、lock_fifo_batches、fifo_sell | inventory_batches、sale_cost_details |
 | 组合金额 | 销售表人民币单价/毛利 | _component_allocation_shares、_sale_import_context、_build_sale_response | allocations、结算金额/汇率 |
+| 店铺/月统一核算汇率 | sales-ledger.js、PageInteractions、sales-fields.zh-CN.json | _sale_reporting_context/_sales_financial_events → sales_report_currency → report_exchange_rates；sales_reconciliation.reconciliation_rates | 只读投影，不改SettlementEntry/FIFO；手动优先、暂估/缺失及旧记录兼容；test_sales_report_currency.py |
 | 查询/月度汇总 | loadSales、renderMonthlySalesSummary | list_sales、monthly_sales_summary、_sale_filter_values、_monthly_sales_summary | sales、结算、商品、店铺 |
-| 原币金额与汇率核对 | sales-ledger.js、sales-fields.zh-CN.json；sales_export.py | _sale_import_context/_financial_event_response → SaleResponse.source_row_net_product_sales/source_row_settlement_total | 来源整行原币值、组合重复但不合计；保存汇率/日期/来源；未知保留空白；回归test_sales_currency_reconciliation.py |
+| 原币金额与汇率核对 | sales-ledger.js、sales-fields.zh-CN.json；sales_export.py | _sale_import_context/_financial_event_response → SaleResponse.source_row_net_product_sales/source_row_settlement_total | 来源整行原币值、组合重复但不合计；共用报表核算汇率/日期/来源；未知保留空白；回归test_sales_currency_reconciliation.py |
 | 多列固定/账号偏好 | sales-ledger.js initializePin/displayColumns/changePin/updatePinControls/headers/render；两份页面sales-pin-picker | 无新增接口 | 全部数据字段多选，按原顺序前置；累计位置固定，窗口限宽有明确反馈，v2数组偏好兼容v1 |
 | 显示/隐藏字段 | sales-ledger.js changeVisibility/saveVisibility/refreshColumns/displayColumns；两份页面sales-visible-picker | 无新增接口 | 同步隐藏表头/明细/合计/列宽，至少保留一列；独立账号偏好，保留隐藏列的固定选择，全部显示恢复；导出不变 |
 | 商品/SKU/订单号统一搜索 | searchSales、同一keyword与回车事件；两份页面 | _sale_filter_values；financial_facts._unlinked_settlement_stmt及共用计数 | 来源原始订单、内部历史编号、独立结算；month/product_id及店铺权限同时保留 |
