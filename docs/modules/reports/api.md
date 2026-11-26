@@ -1,6 +1,8 @@
 # 报表 API
 
-2026-11-24：当前 `calculation_policy=order_created_fx_mxn8_income_only_v3`；`fulfillment_order_counts` 改按交易类型为“订单”的原始订单号在同店同创建月去重，包含指定赠品/未出库订单。字段类型、权限和三个期间保持，旧固定版本不重算。指定赠品正常扣库并计实际销量，财务免商品成本和销售参考跌价；独立结算按订单创建日优先归月。完整规则见[流程](workflow.md)。
+2026-11-26：当前`calculation_policy=order_created_fx_mxn8_net_impairment_v4`。店铺损益采用内部管理净列报：`operating_cost`不再抵减转销，`asset_impairment_loss=inventory_impairment-inventory_writeoff`。两个自动源字段仍分别是期间总计提、正数转销，转销行移到跌价区；行键、类型、人工保存和权限不变。本月/上月/本年累计均适用，任一跌价源未知则净影响及营业/净利润为null，已知成本/毛利可保留。新旧策略及行标签随响应保存，旧固定版本不重算或改名；09/10实时导出与页面同源，详见[跌价公式](calculation-formulas.md#损益的存货跌价准备)。
+
+2026-11-24：该阶段`calculation_policy=order_created_fx_mxn8_income_only_v3`；`fulfillment_order_counts`改按交易类型为“订单”的原始订单号在同店同创建月去重，包含指定赠品/未出库订单。字段类型、权限和三个期间保持，旧固定版本不重算。指定赠品正常扣库并计实际销量，财务免商品成本和销售参考跌价；独立结算按订单创建日优先归月。以上订单/费用规则在当前策略继续沿用，完整规则见[流程](workflow.md)。
 
 2026-11-19：当前损益新增只读自动行`compensation_revenue`“其他收入（赔付）”；`product_sales_revenue`排除同笔赔付，`operating_revenue`加回该自动行。已有`other_revenue`继续为人工/台账科目，不改保存接口或旧值。三个期间、金额类型、权限和旧固定版本保持；该阶段响应`calculation_policy=month_end_fx_mxn8_compensation_v2`，当前策略见上文。2026-11-25起自动获取的`exchange_rates[].source`为`Frankfurter/ECB`（人民币为`CNY`），手动报表覆盖为`manual`，日期/汇率仍通过原字段返回；旧固定版本保留原来源，参见[流程](workflow.md)。
 

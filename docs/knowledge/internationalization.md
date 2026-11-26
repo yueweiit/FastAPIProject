@@ -73,6 +73,8 @@
 
 ## 财务工作台增量
 
+店铺跌价净列报的新增说明集中在`PageInteractions`的`profitLossNetImpairmentPolicy/profitLossLegacyImpairmentPolicy`，两份页面根据中立`calculation_policy`选取；科目标签和Excel口径说明集中在`routers/reports.py`的`STORE_PROFIT_LOSS_ROWS/STORE_PROFIT_LOSS_IMPAIRMENT_NOTE`。自动源字段及公式行键保持原英文编码，旧版本标签不重译或覆盖。沿用现有zh-CN、金额格式和导出契约，没有新增语言、依赖或结构迁移。
+
 盘点逐批数量不一致的警示使用稳定码`inventory_assessment_quantity_mismatch`，在inventory-assessment.js与inventory_export.py集中映射中文，页面/导出空值均显示或说明待核对；没有新增语言或依赖。保存锁定复用现有加载和错误文案。
 
 库存盘点与跌价的新页签、字段、录入校验、记录/版本/冲突/日期限制、状态及帮助集中于[static/inventory-assessment.js](../../static/inventory-assessment.js)的zh-CN字典，缺语言回退中文；主库存字典仅追加页签名，旧提示复用其text入口。API以inventory_count_*等稳定错误码映射；用户SKU/名称/备注/店铺名全部转义。Excel文案集中于inventory_export.py；界面金额按语言格式化，盘点日为自然日日末，保存时间明确UTC。无新语言、翻译依赖或业务名称迁移。

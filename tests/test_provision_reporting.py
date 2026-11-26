@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from openpyxl import Workbook, load_workbook
+from models import StoreProfitLossReport
 
 from routers.reports import (
     _build_inventory_impairment_workbook, _build_product_line_profit_sheet,
@@ -106,15 +107,16 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["impairment_amount"], Decimal(110))
         self.assertNotIn("他店名称", str(rows))
 
-    async def test_financial_accrual_and_cost_writeoff_do_not_double_charge_profit(self):
+    async def test_financial_net_impairment_does_not_double_charge_profit(self):
         values = await _store_provision_financial_values(fixture(), 7, _month_periods(date(2026,9,1)))
         self.assertEqual(values["inventory_impairment"]["current"], Decimal(125))
         self.assertEqual(values["inventory_writeoff"]["current"], Decimal(35))
         values.update({"product_sales_revenue": {"current": Decimal(600)},
                        "product_purchase_cost": {"current": Decimal(400)}})
         report = _build_store_profit_loss_values(values, {})
-        self.assertEqual(report["operating_cost"]["current"], Decimal(365))
-        self.assertEqual(report["gross_profit"]["current"], Decimal(235))
+        self.assertEqual(report["operating_cost"]["current"], Decimal(400))
+        self.assertEqual(report["gross_profit"]["current"], Decimal(200))
+        self.assertEqual(report["asset_impairment_loss"]["current"], Decimal(90))
         self.assertEqual(report["net_profit"]["current"], Decimal(110))
 
     async def test_cross_store_and_missing_owner_do_not_guess_store_profit(self):
@@ -125,7 +127,8 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(auto["_warnings"])
             values = _build_store_profit_loss_values(auto, {})
             self.assertIsNone(values["net_profit"]["current"])
-            self.assertIsNone(values["gross_profit"]["current"])
+            self.assertEqual(values["gross_profit"]["current"], Decimal(0))
+            self.assertIsNone(values["asset_impairment_loss"]["current"])
             workbook = Workbook()
             _build_store_profit_loss_summary_sheet(workbook, [(SimpleNamespace(name="店铺"), values)], date(2026,9,1))
             sheet = workbook.worksheets[-1]
@@ -191,9 +194,15 @@ class ProvisionReportingTests(unittest.IsolatedAsyncioTestCase):
         batch = SimpleNamespace(id=1, quantity=100, purchase_price=Decimal(10), shipping_cost=Decimal(0), last_mile_cost=Decimal(0), other_cost=Decimal(1000))
         detail = SimpleNamespace(id=1, quantity=10, unit_cost=Decimal("20.0001"))
         for adjustment in (Decimal(5), None):
-            db = SimpleNamespace(execute=AsyncMock(side_effect=[result([(sale,7)]), result([]), result([]),
+            results = iter([result([(sale,7)]), result([]), result([]),
                 result([(detail,batch,sale)]), result([]), result([]),
-                result([SimpleNamespace(id=10, sku="P10", name="测试商品")])]))
+                result([SimpleNamespace(id=10, sku="P10", name="测试商品")])])
+            def execute(statement):
+                # 月度汇率新增了配置读取；不消耗本例的FIFO/商品查询结果。
+                if statement.column_descriptions[0].get("entity") is StoreProfitLossReport:
+                    return result([])
+                return next(results)
+            db = SimpleNamespace(execute=AsyncMock(side_effect=execute))
             with patch("routers.sales._sale_import_context", new_callable=AsyncMock, return_value=({},{})), \
                  patch("routers.reports._sale_provision_adjustments", new_callable=AsyncMock,
                        return_value={1:(adjustment,"转销归属待核对" if adjustment is None else "")}), \

@@ -3564,7 +3564,7 @@ function profitLossSelectionMatches(report) {
 }
 
 function profitLossPolicyReady(report) {
-    return ['month_end_fx_mxn8_v1', 'month_end_fx_mxn8_compensation_v2', 'order_created_fx_mxn8_income_only_v3'].includes(report?.calculation_policy);
+    return ['month_end_fx_mxn8_v1', 'month_end_fx_mxn8_compensation_v2', 'order_created_fx_mxn8_income_only_v3', 'order_created_fx_mxn8_net_impairment_v4'].includes(report?.calculation_policy);
 }
 
 function updateProfitLossSaveState() {
@@ -3666,6 +3666,11 @@ function renderStoreProfitLoss(report) {
     if (policy) {
         const ready = profitLossPolicyReady(report);
         policy.textContent = window.PageInteractions?.text(ready ? 'profitLossPolicy' : 'profitLossBackendUpdate') || '';
+        if (ready) {
+            const impairmentKey = report.calculation_policy === 'order_created_fx_mxn8_net_impairment_v4'
+                ? 'profitLossNetImpairmentPolicy' : 'profitLossLegacyImpairmentPolicy';
+            policy.textContent += '\n' + (window.PageInteractions?.text(impairmentKey) || '');
+        }
         policy.classList.toggle('msg', !ready);
         policy.classList.toggle('msg-err', !ready);
         if (!ready) policy.setAttribute('role', 'alert');

@@ -6,7 +6,7 @@ let checks = 0;
 const equal = (actual, expected) => { assert.equal(actual, expected); checks++; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const report = (month = '2026-09', store = 7, editable = true) => ({
-    report_month: month, store_id: store, can_edit: editable, calculation_policy: "order_created_fx_mxn8_income_only_v3", rows: [], warnings: [],
+    report_month: month, store_id: store, can_edit: editable, calculation_policy: "order_created_fx_mxn8_net_impairment_v4", rows: [], warnings: [],
 });
 
 function setup(file, {admin = false, deferStores = false, manualInput = '123', manualKey = 'salary'} = {}) {
@@ -49,7 +49,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123', m
     return {element, calls, rendered, notices, run, queries, writes, load, save};
 }
 
-function renderManualCell(file, manualValue, inputSource = 'manual', key = 'salary', kind = 'manual', policy = 'month_end_fx_mxn8_v1', breakdown = null) {
+function renderManualCell(file, manualValue, inputSource = 'manual', key = 'salary', kind = 'manual', policy = 'month_end_fx_mxn8_v1', breakdown = null, inspect = false) {
     const source = fs.readFileSync(file, 'utf8');
     const elements = new Map();
     const element = id => {
@@ -60,6 +60,7 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
     const context = vm.createContext({
         window: {PageInteractions: {text: key => {
             const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新',
+                profitLossNetImpairmentPolicy:'内部管理：计提减转销',profitLossLegacyImpairmentPolicy:'旧口径：转销抵成本',
                 profitLossPeriodCurrent:'本月',profitLossPeriodPrevious:'上月',profitLossPeriodYtd:'本年累计',profitLossPeriodSeparator:'、',
                 profitLossSalaryHelp:'本月薪资合计覆盖OA',profitLossSharedAdminHelp:'本店本月管理费覆盖OA',
                 profitLossSalaryBase:'工资',profitLossSalaryTax:'个税',profitLossSalaryFund:'公积金',profitLossSalaryOaTotal:'OA合计',
@@ -80,10 +81,21 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
             value: {current: 100,ytd:321}, manual_value: manualValue, remark: ''}],
     };
     vm.runInContext('renderStoreProfitLoss(report)', context);
-    return element('store-profit-loss-tbody').innerHTML;
+    const html = element('store-profit-loss-tbody').innerHTML;
+    return inspect ? {html, policy: element('profit-loss-policy').textContent} : html;
 }
 
 async function verify(file) {
+    {
+        for (const policy of ['order_created_fx_mxn8_net_impairment_v4', 'order_created_fx_mxn8_income_only_v3',
+            'month_end_fx_mxn8_compensation_v2', 'month_end_fx_mxn8_v1', 'unrecognized']) {
+            const result = renderManualCell(file, null, 'manual', 'salary', 'manual', policy, null, true);
+            equal(result.policy.includes('内部管理：计提减转销'), policy === 'order_created_fx_mxn8_net_impairment_v4');
+            equal(result.policy.includes('旧口径：转销抵成本'), !['order_created_fx_mxn8_net_impairment_v4', 'unrecognized'].includes(policy));
+            equal(result.policy.includes('后端待更新'), policy === 'unrecognized');
+            equal(result.html.includes('disabled'), policy === 'unrecognized');
+        }
+    }
     {
         const ui = setup(file);
         ui.element('profit-loss-updated').textContent = '旧店铺';

@@ -65,6 +65,37 @@ class VoidedHoldingPeriodTests(unittest.IsolatedAsyncioTestCase):
         self.session.get(InventoryBatch, 20).voided_at = when
         self.session.commit()
 
+    async def test_net_impairment_query_preserves_stock_fifo_and_preparation_sources(self):
+        batch = self.session.get(InventoryBatch, 20)
+        sale = self.session.get(Sale, 30)
+        detail = self.session.get(SaleCostDetail, 40)
+
+        def saved_values():
+            return (batch.quantity, batch.remaining_quantity, batch.unit_cost, batch.total_amount,
+                    sale.quantity, sale.total_cost, sale.profit, detail.quantity, detail.unit_cost)
+
+        before = saved_values()
+        auto = await self.values(date(2026, 9, 1))
+        db = AsyncFacade(self.session)
+        db.commit = AsyncMock(wraps=db.commit)
+        response = await _store_profit_loss_response(
+            db, SimpleNamespace(role="admin"), self.session.get(Store, 7), date(2026, 9, 1), None,
+            oa_values={"office": {}, "shared_admin": {}, "salaries": {}}, active_store_count=2,
+        )
+        rows = {row.key: row.value for row in response.rows}
+        for period in ("current", "previous", "ytd"):
+            accrual, writeoff = auto["inventory_impairment"][period], auto["inventory_writeoff"][period]
+            self.assertEqual(getattr(rows["inventory_impairment"], period), accrual)
+            self.assertEqual(getattr(rows["inventory_writeoff"], period), writeoff)
+            self.assertEqual(getattr(rows["asset_impairment_loss"], period), accrual - writeoff)
+            old_profit = (getattr(rows["operating_revenue"], period)
+                          - (getattr(rows["operating_cost"], period) - writeoff) - accrual)
+            self.assertEqual(getattr(rows["net_profit"], period), old_profit)
+        db.commit.assert_not_awaited()
+        self.assertFalse(self.session.dirty or self.session.new or self.session.deleted)
+        self.session.expire_all()
+        self.assertEqual(saved_values(), before)
+
     async def test_voided_batch_keeps_presale_holding_month_pending_in_all_periods(self):
         before = await self.values(date(2026, 8, 1))
         self.assertEqual(before["inventory_impairment"]["current"], Decimal("6"))

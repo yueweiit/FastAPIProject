@@ -127,6 +127,12 @@ INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
     ("monthly_transfer_out_amount", "本月准备转出(元)"),
 )
 
+STORE_PROFIT_LOSS_POLICY = "order_created_fx_mxn8_net_impairment_v4"
+STORE_PROFIT_LOSS_IMPAIRMENT_NOTE = (
+    "内部管理口径：存货跌价净影响＝本期计提－本期销售转销；销售转销不再抵减营业成本。"
+    "净影响可为负数，不等同期末准备余额；仅调整列报，营业利润不变。"
+)
+
 STORE_PROFIT_LOSS_ROWS = (
     ("operating_revenue", "一、营业收入", "formula", None),
     ("product_sales_revenue", "  商品销售收入", "auto", "销售记录中的净商品收入，不含物流、平台及物料赔付"),
@@ -141,7 +147,6 @@ STORE_PROFIT_LOSS_ROWS = (
     ("local_logistics_cost", "  本地物流配送成本", "manual", None),
     ("fulfillment_cost", "  代发成本", "auto", "交易类型为订单的原始订单号按店铺去重，含赠品；按订单创建月每单8 MXN及月末汇率折算人民币"),
     ("other_direct_cost", "  其他直接成本", "auto", "销售记录中的其他费用"),
-    ("inventory_writeoff", "  减：销售转销跌价准备", "auto", "已售商品对应准备抵减营业成本；不修改保存的FIFO成本"),
     ("gross_profit", "毛利", "formula", None),
     ("gross_margin", "毛利率", "formula", None),
     ("tax_surcharge", "减：税金及附加", "manual", None),
@@ -158,8 +163,9 @@ STORE_PROFIT_LOSS_ROWS = (
     ("shared_admin", "  平摊人事+财务管理费用", "manual", "按费用所属月份，审批明细中列出的店铺各取一份 OA 原金额；可人工填写本店本月总额，覆盖 OA 默认值"),
     ("research_development", "减：研发费用", "manual", None),
     ("finance_expenses", "减：财务费用", "manual", None),
-    ("asset_impairment_loss", "减：资产减值损失", "formula", None),
-    ("inventory_impairment", "    存货跌价准备", "auto", "期间每天实际持有库存的新增准备，含期间已售商品售出前增提"),
+    ("asset_impairment_loss", "减：存货跌价净影响", "formula", STORE_PROFIT_LOSS_IMPAIRMENT_NOTE),
+    ("inventory_impairment", "  本期存货跌价计提", "auto", "期间每天实际持有库存的新增准备，含期间已售商品售出前增提"),
+    ("inventory_writeoff", "  减：本期销售转销", "auto", "已售商品对应已形成准备，按正数列示并抵减本期跌价计提；可包含以前期间准备，不修改保存的FIFO成本"),
     ("credit_impairment_loss", "减：信用减值损失", "manual", None),
     ("operating_profit", "二、营业利润", "formula", None),
     ("non_operating_income", "加：营业外收入", "manual", None),
@@ -288,7 +294,7 @@ def _build_store_profit_loss_values(
                 "local_logistics_cost", "fulfillment_cost", "other_direct_cost",
             )),
             Decimal("0"),
-        ) - get("inventory_writeoff")
+        )
         values["gross_profit"][period] = (
             get("operating_revenue") - get("operating_cost")
         )
@@ -304,7 +310,9 @@ def _build_store_profit_loss_values(
             Decimal("0"),
         )
         values["admin_expenses"][period] = get("rent_utilities") + get("shared_admin")
-        values["asset_impairment_loss"][period] = get("inventory_impairment")
+        values["asset_impairment_loss"][period] = _subtract_known(
+            values["inventory_impairment"][period], values["inventory_writeoff"][period],
+        )
         values["operating_profit"][period] = (
             get("gross_profit")
             - get("tax_surcharge")
@@ -321,7 +329,7 @@ def _build_store_profit_loss_values(
         revenue_keys = ("product_sales_revenue", "shipping_revenue", "compensation_revenue", "other_revenue")
         cost_keys = ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
                      "customs_import_tax", "local_logistics_cost", "fulfillment_cost",
-                     "other_direct_cost", "inventory_writeoff")
+                     "other_direct_cost")
         # 人工空白沿用未填按0；自动项未知必须贯穿所有衍生金额及Excel汇总。
         unknown = lambda keys: any((key in STORE_PROFIT_LOSS_AUTO_KEYS or key in manual_values.get("_unknown", {}).get(period, []))
                                    and values[key][period] is None for key in keys)
@@ -335,8 +343,6 @@ def _build_store_profit_loss_values(
             values["admin_expenses"][period] = None
         if unknown(("salary", "advertising", "sample_expenses", "platform_subscription", "warehousing", "delivery", "platform_fines")):
             values["selling_expenses"][period] = None
-        if values["inventory_impairment"][period] is None:
-            values["asset_impairment_loss"][period] = None
         if any(values[key][period] is None for key in
                ("gross_profit", "admin_expenses", "selling_expenses", "asset_impairment_loss")) or unknown((
                    "tax_surcharge", "research_development", "finance_expenses", "credit_impairment_loss")):
@@ -344,6 +350,7 @@ def _build_store_profit_loss_values(
     values["_warnings"] = [*auto_values.get("_warnings", []), *manual_values.get("_warnings", [])]
     values["_exchange_rates"] = auto_values.get("_exchange_rates", [])
     values["_fulfillment_counts"] = auto_values.get("_fulfillment_counts", {})
+    values["_calculation_policy"] = STORE_PROFIT_LOSS_POLICY
     if any(_decimal_or_zero(manual_values.get(key, {}).get(period))
            for key in STORE_PROFIT_LOSS_RESERVED_KEYS for period in STORE_PROFIT_LOSS_PERIODS):
         values["_warnings"].append("营业外收支、所得税暂未接入；历史保存金额保留，本轮净利润按营业利润计算。")
@@ -717,7 +724,7 @@ async def _store_profit_loss_response(
         exchange_rate_settings=[fx_setting(currency, settings.get(currency))
                                 for currency in sorted(currencies - {"CNY"})],
         fulfillment_order_counts=auto_values.get("_fulfillment_counts", {}),
-        calculation_policy="order_created_fx_mxn8_income_only_v3",
+        calculation_policy=STORE_PROFIT_LOSS_POLICY,
         warnings=values.get("_warnings", []),
     )
 
@@ -1167,6 +1174,8 @@ def _build_store_profit_loss_sheet(
         ["核算期间", f"{report_month.year}年{report_month.month}月", None, None, None],
         ["数据来源", "与系统中的店铺损益表查询结果一致；人工项目保留已保存值。", None, None, None],
     ]
+    if values.get("_calculation_policy") == STORE_PROFIT_LOSS_POLICY:
+        metadata.append(["跌价列报口径", STORE_PROFIT_LOSS_IMPAIRMENT_NOTE, None, None, None])
     from services.report_exchange_rates import rate_evidence_text
     metadata.extend([["月度汇率", rate_evidence_text(item), None, None, None]
                      for item in values.get("_exchange_rates", [])])
@@ -1177,9 +1186,9 @@ def _build_store_profit_loss_sheet(
     for row in metadata:
         sheet.append(row)
     for row_number in range(last_data_row + 1, sheet.max_row + 1):
-        if sheet.cell(row_number, 1).value in ("月度汇率", "履约订单数"):
+        if sheet.cell(row_number, 1).value in ("月度汇率", "履约订单数", "跌价列报口径"):
             sheet.merge_cells(start_row=row_number, start_column=2, end_row=row_number, end_column=5)
-            sheet.row_dimensions[row_number].height = 30
+            sheet.row_dimensions[row_number].height = 45 if sheet.cell(row_number, 1).value == "跌价列报口径" else 30
         sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == last_data_row + 1)
         sheet.cell(row_number, 2).font = Font(name="等线", size=10, color="666666")
         for column in range(1, 6):
@@ -1239,10 +1248,15 @@ def _build_store_profit_loss_summary_sheet(
     sheet.append(["店铺数量", len(store_reports)] + [None] * (len(headers) - 2))
     sheet.append(["核算期间", f"{report_month.year}年{report_month.month}月"] + [None] * (len(headers) - 2))
     sheet.append(["占比口径", "各项目合计 ÷ 合计营业收入；毛利率按合计毛利 ÷ 合计营业收入计算。", *([None] * (len(headers) - 2))])
+    if store_reports and all(values.get("_calculation_policy") == STORE_PROFIT_LOSS_POLICY for _store, values in store_reports):
+        sheet.append(["跌价列报口径", STORE_PROFIT_LOSS_IMPAIRMENT_NOTE, *([None] * (len(headers) - 2))])
     for store, values in store_reports:
         for note in values.get("_warnings", []):
             sheet.append(["待核对", f"{store.name}：{note}"] + [None] * (len(headers) - 2))
     for row_number in range(last_data_row + 1, sheet.max_row + 1):
+        if sheet.cell(row_number, 1).value == "跌价列报口径":
+            sheet.merge_cells(start_row=row_number, start_column=2, end_row=row_number, end_column=len(headers))
+            sheet.row_dimensions[row_number].height = 75
         for column in range(1, len(headers) + 1):
             sheet.cell(row_number, column).alignment = Alignment(vertical="center", wrap_text=True)
     sheet.column_dimensions["A"].width = 28
