@@ -25,6 +25,7 @@ async function verify(file) {
     }
     vm.runInContext(`const API=''; let AUTH_CSRF='fixture-csrf'; let AUTH_CONFIG={local_enabled:true,sso_available:true};
         let CURRENT_ROLE='',CURRENT_USER='',CURRENT_USER_ID=0;
+        let inventoryImpairmentRequestId=0,productLineProfitRequestId=0;
         let productPage=1,productPageSize=20,productKeyword='',currentProductList=[],productTotal=0;
         let productRequestId=0,productSessionId=0,productCompleteness='all',productSearchControl=null;
         let expired=0; let portalLogout=0;

@@ -1400,6 +1400,9 @@ async function doLogout() {
 }
 
 function handleSessionExpired() {
+    inventoryImpairmentRequestId++;
+    productLineProfitRequestId++;
+    window.ProfitLossEvidence?.clearRows?.();
     if (typeof resetProductSession === 'function') resetProductSession();
     if (typeof resetBatchSearchSession === 'function') resetBatchSearchSession();
     resetSalesImportState();
@@ -3865,7 +3868,7 @@ function reportMoney(value) {
 }
 
 function reportPercent(value) {
-    return value === null || value === undefined ? '-' : `${(Number(value) * 100).toFixed(2)}%`;
+    return value === null || value === undefined ? '-' : new Intl.NumberFormat('zh-CN', {style:'percent', minimumFractionDigits:2, maximumFractionDigits:2}).format(Number(value));
 }
 
 function openReportView(name, button) {
@@ -3879,6 +3882,7 @@ function openReportView(name, button) {
 }
 
 let inventoryImpairmentRequestId = 0;
+let productLineProfitRequestId = 0;
 
 function setInventoryImpairmentView(view) {
     document.getElementById('inventory-report-view').value = view === 'sku' ? 'sku' : 'batch';
@@ -3919,6 +3923,11 @@ async function loadInventoryImpairment() {
     const columnCount = isSummary ? 20 : 25;
     const reportDate = document.getElementById('inventory-impairment-date').value;
     const requestId = ++inventoryImpairmentRequestId;
+    const userId = CURRENT_USER_ID;
+    const isCurrent = () => requestId === inventoryImpairmentRequestId && userId === CURRENT_USER_ID
+        && reportDate === document.getElementById('inventory-impairment-date').value
+        && view === document.getElementById('inventory-report-view').value;
+    window.ProfitLossEvidence?.clearRows?.('inventory');
     document.getElementById('inventory-impairment-scroll').hidden = isSummary;
     document.getElementById('inventory-summary-scroll').hidden = !isSummary;
     document.getElementById('inventory-report-title').textContent = isSummary ? '存货SKU汇总表' : '存货跌价准备明细表';
@@ -3933,8 +3942,8 @@ async function loadInventoryImpairment() {
     }
     try {
         const endpoint = isSummary ? '/reports/inventory-impairment/summary' : '/reports/inventory-impairment';
-        const rows = await api('GET', `${endpoint}?report_date=${encodeURIComponent(reportDate)}`);
-        if (requestId !== inventoryImpairmentRequestId) return;
+        const rows = await api('GET', `${endpoint}?report_date=${encodeURIComponent(reportDate)}&include_evidence=true`, undefined, {cache:'no-store', isCurrent});
+        if (!isCurrent()) return;
         tbody.innerHTML = rows.length ? rows.map(row => isSummary ? `<tr>
             <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td>${row.batch_count}</td>
             <td>${row.original_quantity}</td><td>${reportMoney(row.original_inventory_amount)}</td><td>${row.sold_quantity}</td><td>${reportMoney(row.sold_cost_amount)}</td><td>${row.quantity}</td><td>${row.provision_quantity ?? '-'}</td>
@@ -3946,8 +3955,10 @@ async function loadInventoryImpairment() {
             ${inventoryComparisonCell(row)}<td class="text-left">${escapeHtml(row.status)}</td><td>${reportMoney(row.monthly_transfer_in_amount)}</td><td>${reportMoney(row.monthly_transfer_out_amount)}</td>
         </tr>`).join('') : `<tr><td colspan="${columnCount}" class="empty">当前截止日无${isSummary ? '入库批次' : '库存'}记录</td></tr>`;
         tfoot.innerHTML = inventoryReportTotals(rows, view);
+        window.ProfitLossEvidence?.renderRows?.('inventory', rows, {api, isCurrent, context:reportDate,
+            tbody:`#${prefix}-tbody`, tfoot:`#${prefix}-tfoot`, labelColumn:1});
     } catch (e) {
-        if (requestId === inventoryImpairmentRequestId) tbody.innerHTML = `<tr><td colspan="${columnCount}" class="empty">${escapeHtml(e.message)}</td></tr>`;
+        if (isCurrent()) tbody.innerHTML = `<tr><td colspan="${columnCount}" class="empty">${escapeHtml(e.message)}</td></tr>`;
     }
 }
 
@@ -3955,20 +3966,28 @@ async function loadProductLineProfit() {
     const tbody = document.getElementById('product-line-profit-tbody');
     const text = key => window.PageInteractions?.text(key) || key;
     const month = defaultProfitLossMonth();
-    const params = new URLSearchParams({report_month: `${month}-01`, report_date: document.getElementById('inventory-impairment-date').value});
+    const requestId = ++productLineProfitRequestId, userId = CURRENT_USER_ID;
+    const storeId = document.getElementById('profit-loss-store').value, admin = isAdmin();
+    const isCurrent = () => requestId === productLineProfitRequestId && userId === CURRENT_USER_ID
+        && month === defaultProfitLossMonth() && admin === isAdmin()
+        && (!admin || storeId === document.getElementById('profit-loss-store').value);
+    window.ProfitLossEvidence?.clearRows?.('product');
+    const params = new URLSearchParams({report_month: `${month}-01`, report_date: document.getElementById('inventory-impairment-date').value, include_evidence:'true'});
     if (isAdmin()) {
         const storeId = document.getElementById('profit-loss-store').value;
         if (storeId) params.set('store_id', storeId);
     }
     tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(text('productProfitLoading'))}</td></tr>`;
     try {
-        const rows = await api('GET', `/reports/product-line-profit?${params.toString()}`);
+        const rows = await api('GET', `/reports/product-line-profit?${params.toString()}`, undefined, {cache:'no-store', isCurrent});
+        if (!isCurrent()) return;
         if (rows.some(row => row.group_by !== 'product')) throw new Error(text('productProfitUnavailable'));
         tbody.innerHTML = rows.length ? rows.map(row => `<tr>
             <td class="text-left"><strong>${escapeHtml(row.name)}</strong></td><td>${Number(row.current_quantity).toLocaleString(document.documentElement.lang)}</td><td>${reportMoney(row.current_revenue)}</td><td>${reportMoney(row.current_cost)}</td><td>${reportMoney(row.current_gross)}</td>
             <td>${reportPercent(row.current_margin)}</td><td>${reportPercent(row.previous_margin)}</td><td>${reportPercent(row.margin_change)}</td><td>${reportMoney(row.ytd_revenue)}</td><td>${reportMoney(row.ytd_gross)}</td><td>${reportPercent(row.ytd_margin)}</td><td class="text-left">${escapeHtml(row.note || '')}</td>
         </tr>`).join('') : `<tr><td colspan="12" class="empty">${escapeHtml(text('productProfitEmpty'))}</td></tr>`;
-    } catch (e) { tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(e.message)}</td></tr>`; }
+        window.ProfitLossEvidence?.renderRows?.('product', rows, {api, isCurrent, context:month, tbody:'#product-line-profit-tbody'});
+    } catch (e) { if (isCurrent()) tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(e.message)}</td></tr>`; }
 }
 
 // 初始加载

@@ -1,5 +1,7 @@
 # 国际化现状与渐进扩展约定
 
+07/12新增“口径与依据”复用`static/profit-loss-evidence.js`局部zh-CN字典；后端字段键/来源状态保持语言中立，标签由`services/report_row_evidence.py`的LABELS集中映射，字段说明和Excel中文输出沿用当前语言范围。日期、数量、金额和比例仍按原中文报表格式展示，未新增翻译依赖、语言或业务数据字段。
+
 销售映射和扣库预览文本使用sales-pending.js及sales-deduction-preview.js的局部zh-CN字典，按页面lang回退；导入帮助复用PageInteractions.importDateHelp，审计标签复用operation-logs.js。key_kind、method、status为中立编码；API冲突使用稳定code及现有message。来源名称、规格、编码、单位按原业务文本安全显示，不自动翻译。当前仅中文，无新翻译依赖；Excel原列与语言契约保持。
 
 初始化扣减的来源编码opening_deduction在inventory-workspace.js的zh-CN字典集中展示；API business_kind使用inventory_sale/opening_deduction/settlement，规则匹配使用店铺ID和平台SKU，不判断中文名称。准备回放说明及维护原因沿用既有后端中文备注契约；无新语言/依赖。分类数量冲突返回稳定码opening_deduction_quantity_invalid。

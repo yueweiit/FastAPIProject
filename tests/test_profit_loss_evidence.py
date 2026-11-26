@@ -298,7 +298,7 @@ class ProfitLossEvidenceTests(unittest.IsolatedAsyncioTestCase):
         result = await self.request(path + '&store_id=8')
         self.assertEqual(result.status_code, 200)
         book = load_workbook(BytesIO(result.content), data_only=True)
-        self.assertEqual(book.sheetnames[-3:], [GUIDE, CALC, DETAIL])
+        self.assertEqual(book.sheetnames[-6:-3], [GUIDE, CALC, DETAIL])
         summary = book['10-各店铺损益汇总表']
         # 09先放S8依据，10列依然按S7/S8；验证不能按依据创建顺序错连。
         self.assertEqual([summary.cell(1, c).value for c in (2,3)], ['S7','S8'])

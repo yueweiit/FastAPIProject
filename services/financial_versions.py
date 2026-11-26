@@ -24,8 +24,8 @@ async def collect_payload(db, user, store, report_month, *, oa_values=None, acti
         oa_values=oa_values, active_store_count=active_store_count,
     )
     response.can_edit = False
-    inventory = await _load_inventory_impairment_report_rows(db, cutoff, store.id)
-    lines = await _product_line_profit_data(db, {store.id}, report_month, cutoff)
+    inventory = await _load_inventory_impairment_report_rows(db, cutoff, store.id, with_evidence=True)
+    lines = await _product_line_profit_data(db, {store.id}, report_month, cutoff, with_evidence=True)
     reconciliation_data = await reconciliation(db, store.id, report_month)
     warnings = [*response.warnings, *reconciliation_data["warnings"]]
     unchecked = sum(row.get("cost_status") != "actual" for row in inventory)
@@ -182,4 +182,7 @@ def version_workbook(version):
     from services.profit_loss_evidence_export import append_profit_loss_evidence
     append_profit_loss_evidence(workbook, [(SimpleNamespace(**payload["store"]), values)], report.store_id,
         row_definitions=[(row.key, row.label, row.kind, row.source) for row in report.rows])
+    from services.report_row_evidence_export import append_row_evidence
+    append_row_evidence(workbook, inventory_rows=rows,
+        summary_rows=_summarize_inventory_impairment_rows(rows), product_rows=lines, formula_cache=cache)
     return _workbook_bytes_with_formula_cache(workbook, cache)

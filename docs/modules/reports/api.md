@@ -9,12 +9,13 @@
 2026-11-02：损益响应新增calculation_policy（month_end_fx_mxn8_v1）、exchange_rates及fulfillment_order_counts；每行新增is_reserved。旧字段和三个期间保留，新增字段均有默认值，旧月度版本可读取。查询/保存及Excel使用[现行月度规则](workflow.md)；无需DDL或历史回填。
 
 
-前缀 /reports，共12个端点。读取允许三种角色，但范围不同；保存损益只允许 admin/operator，跨店汇总只允许admin。
+前缀 /reports，共13个端点。读取允许三种角色，但范围不同；保存损益只允许 admin/operator，跨店汇总只允许admin。
 
 | 方法与路径 | 处理函数 | 权限依赖 | 主要输入 | 响应 |
 | --- | --- | --- | --- | --- |
 | `GET /reports/store-profit-loss` | [get_store_profit_loss](../../../routers/reports.py) | admin/operator/viewer | report_month、store_id | StoreProfitLossResponse |
 | `GET /reports/store-profit-loss/evidence/{token}` | [get_profit_loss_evidence](../../../routers/reports.py) | 本次查询用户且当前有店铺权限 | field、period、page、page_size | 同次查询来源明细分页，过期410 |
+| `GET /reports/row-evidence/{token}` | [report_row_evidence](../../../routers/reports.py) | 本次查询用户；12每页复核店铺范围，07保留共享库存权限 | row_key、field（空取首字段）、page≥1、page_size=50（1～100） | 07/12行字段口径、代入过程与来源分页；过期410、范围改变403 |
 | `GET /reports/store-profit-loss-summary` | [get_profit_loss_summary](../../../routers/reports.py) | admin | report_month（月初） | 有效店铺本月金额、合计、占比及各店依据摘要 |
 | `PUT /reports/store-profit-loss` | [update_store_profit_loss](../../../routers/reports.py) | admin/operator | StoreProfitLossUpdateRequest | StoreProfitLossResponse |
 | `GET /reports/store-exchange-rate/reference` | [store_exchange_rate_reference](../../../routers/reports.py) | admin/operator/viewer | store_id、report_month、currency | 自动参考汇率 |
@@ -25,6 +26,8 @@
 | `GET /reports/inventory-impairment/export` | [export_inventory_impairment_report](../../../routers/reports.py) | admin/operator/viewer | report_date、view=batch/sku（默认batch） | 批次或 SKU Excel 文件 |
 | `GET /reports/financial-attachments/export` | [export_financial_attachments](../../../routers/reports.py) | admin/operator/viewer | report_date、report_month、store_id | Excel 文件 |
 | `GET /reports/monthly` | [monthly_report](../../../routers/reports.py) | admin/operator/viewer | start_date、end_date | list[MonthlyReportItem] |
+
+07明细、07汇总和12查询新增可选`include_evidence=false`，原调用返回形状/金额不变。传true时每行增加`evidence`元数据（`schema_version=report_row_evidence_v1`、`row_key`、`calculation_id`、`token`、`total_calculation_id`）；完整字段和源行仅通过上述分页接口取得，合计行键为`__total__`。分页不重新查业务来源，旧令牌不能获得新查询金额。07来源匿名化；12原始结算与销售归属不符时保留金额、隐藏原文并标记partial。详情见[流程](workflow.md#0712报表计算依据)。
 
 ## 日期和店铺
 
@@ -80,7 +83,7 @@ remarks在两种scope下均为完整替换，只接受已定义科目、去空�
 
 ## 导出与副作用
 
-独立存货导出是全局；财务附件保留已有工作表顺序（含07存货SKU汇总），在admin原五张/非管理员原四张之后追加三张依据表。非管理员无跨店损益汇总及其他店铺依据。admin 单店损益为所选店铺、两种存货视图为全局、损益汇总和产品线为当前启用店铺范围；非管理员两种存货视图均按绑定店铺过滤。
+独立存货导出是全局，并追加07/12口径、计算过程、来源明细三表；财务附件保留已有工作表顺序（含07存货SKU汇总），在admin原五张/非管理员原四张之后依次追加09/10的三张依据表、07/12的三张依据表。非管理员无跨店损益汇总及其他店铺销售依据。admin 单店损益为所选店铺、两种存货视图为全局、损益汇总和产品线为当前启用店铺范围；非管理员两种存货视图均按绑定店铺过滤。
 
 损益响应新增可选`evidence`，默认null兼容旧版本。实时GET/PUT返回字段口径、各期间金额/计算项/来源合计/核对状态、calculation_id及临时token；完整sources仅由分页端点返回。缓存按用户隔离且每次复核当前店铺权限，分页page>=1、page_size为1..200，非法参数422、越权403、失效410。容量不足时token为null，页面提示重新查询或导出完整依据。新固定版本保存完整sources，不保存临时token。字段和期间使用稳定编码，不按中文文案判断。细节见[报表计算依据](workflow.md#0910报表计算依据)。
 

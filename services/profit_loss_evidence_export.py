@@ -26,9 +26,11 @@ def append(sheet, values):
     return number
 
 
-def link(cell, sheet, row, label=None):
-    if cell.value is None and label is None:
-        # openpyxl会把空单元格的hyperlink target读回为文本；保留财务未知值为空。
+def link(cell, sheet, row, label=None, *, missing=False):
+    if label is None and (missing or cell.value is None):
+        # 公式文本非空不代表结果已知；空缓存加hyperlink会被data_only读回为链接文本。
+        # 调用方可传实际结果是否缺失，只添加批注，保留公式及原缓存。
+        cell.hyperlink = None
         cell.comment = Comment(f"金额未提供/待核对。请在“{sheet}”第{row}行查看依据。", "报表依据")
         return
     if label is not None:

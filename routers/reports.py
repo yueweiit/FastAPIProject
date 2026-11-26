@@ -57,6 +57,7 @@ from services.financial_facts import (
 from services.batch_store_allocations import has_unassigned_provision
 from services.inventory_provision_data import load_inventory_provision_data
 from services.cost_layers import base_cost_components, fifo_cost_groups, load_cost_layers, unit_adjustment
+from services import report_row_evidence as row_evidence
 from services.batch_store_allocations import (AssignedBatch, allocated_batch_amount, allocated_provision_period,
                                              allocated_provision_balance, allocated_provision_transfers,
                                              load_batch_store_allocations)
@@ -1408,11 +1409,22 @@ def _allocate_store_profit_loss_to_product_lines(
     revenue_by_store_line: dict[int, dict[int | None, dict[str, Decimal]]],
     manual_values_by_store: dict[int, dict],
     unknown_store_periods=None,
+    *, with_evidence=False,
 ) -> None:
     """Allocate store-level revenue and direct costs by product-line sales share."""
     for store_id, line_revenues in revenue_by_store_line.items():
         manual_values = manual_values_by_store.get(store_id, {})
         for period in STORE_PROFIT_LOSS_PERIODS:
+            evidence_inputs, has_evidence_inputs = {}, {}
+            if with_evidence:
+                for metric, keys in (("revenue", PRODUCT_LINE_ALLOCATED_REVENUE_KEYS), ("cost", PRODUCT_LINE_ALLOCATED_COST_KEYS)):
+                    components = {key: manual_values.get(key, {}).get(period) for key in keys}
+                    vouchers = [r for key in keys for r in manual_values.get("_source_rows", {}).get(key, [])
+                                if period in r.get("periods", [])]
+                    evidence_inputs[metric] = {"参与科目": components, "生效凭据": vouchers}
+                    # 科目之间、同科目多凭据或不同月份可能抵消；净额为0仍需保留实际生效来源。
+                    has_evidence_inputs[metric] = (any(_decimal_or_zero(v) != 0 for v in components.values())
+                                                   or any(r.get("amount") is not None for r in vouchers))
             unknown_keys = set(manual_values.get("_unknown", {}).get(period, []))
             if unknown_keys & (set(PRODUCT_LINE_ALLOCATED_REVENUE_KEYS) | set(PRODUCT_LINE_ALLOCATED_COST_KEYS)):
                 for line_id in line_revenues:
@@ -1421,11 +1433,27 @@ def _allocate_store_profit_loss_to_product_lines(
                     if unknown_keys & set(PRODUCT_LINE_ALLOCATED_COST_KEYS):
                         line_data[line_id].setdefault("_unknown_cost_periods", set()).add(period)
                     line_data[line_id]["note"] += "；分摊费用明细尚未确认，相关金额待核对。"
+                    if with_evidence:
+                        for metric, keys in (("revenue", PRODUCT_LINE_ALLOCATED_REVENUE_KEYS), ("cost", PRODUCT_LINE_ALLOCATED_COST_KEYS)):
+                            if unknown_keys & set(keys):
+                                row_evidence.record(line_data[line_id], f"{period}_{metric}", "", None, "分摊输入待确认", store_id,
+                                    **{"店铺ID": store_id, "期间": period, "待确认科目": sorted(unknown_keys & set(keys)),
+                                       **evidence_inputs[metric],
+                                       **manual_values.get("_allocation_evidence", {})})
                 continue
             period_total = sum(
                 (values[period] for values in line_revenues.values()), Decimal("0")
             )
             if not period_total:
+                if with_evidence:
+                    for line_id in line_revenues:
+                        for metric, keys in (("revenue", PRODUCT_LINE_ALLOCATED_REVENUE_KEYS), ("cost", PRODUCT_LINE_ALLOCATED_COST_KEYS)):
+                            amount = sum((_decimal_or_zero(manual_values.get(k, {}).get(period)) for k in keys), Decimal(0))
+                            if amount or has_evidence_inputs[metric]:
+                                row_evidence.record(line_data[line_id], f"{period}_{metric}", "", Decimal(0), "零收入未分摊人工金额", store_id,
+                                    **{"店铺ID": store_id, "期间": period, "原人工合计": amount, "收入分母": period_total,
+                                       **evidence_inputs[metric],
+                                       "说明": "沿用现有口径：该期间收入合计为0时不分摊人工项目，本项参与值为0"})
                 continue
             revenue_to_allocate = sum(
                 (
@@ -1450,15 +1478,35 @@ def _allocate_store_profit_loss_to_product_lines(
                         item.setdefault("_unknown_cost_periods", set()).add(period)
                     if revenue_to_allocate or cost_to_allocate:
                         item["note"] += "；店铺收入不完整，人工金额分摊待核对。"
+                    if with_evidence:
+                        for metric, amount in (("revenue", revenue_to_allocate), ("cost", cost_to_allocate)):
+                            if amount or has_evidence_inputs[metric]:
+                                row_evidence.record(item, f"{period}_{metric}", "", None if amount else Decimal(0), "分摊收入分母不完整", store_id,
+                                    **{"店铺ID": store_id, "期间": period, "待分摊合计": amount, **evidence_inputs[metric],
+                                       "说明": "收入未知，未以部分收入计算分摊比例"})
                 continue
             for line_id, values in line_revenues.items():
                 share = values[period] / period_total
                 line_data[line_id][period]["revenue"] += revenue_to_allocate * share
                 line_data[line_id][period]["cost"] += cost_to_allocate * share
+                if with_evidence:
+                    for metric, keys, amount in (("revenue", PRODUCT_LINE_ALLOCATED_REVENUE_KEYS, revenue_to_allocate),
+                                                  ("cost", PRODUCT_LINE_ALLOCATED_COST_KEYS, cost_to_allocate)):
+                        if amount == 0 and not has_evidence_inputs[metric]:
+                            continue
+                        details = {"店铺ID": store_id, "期间": period, "商品收入分子": values[period],
+                                   "店铺收入分母": period_total, "分摊比例": share, "待分摊合计": amount,
+                                   **evidence_inputs[metric]}
+                        details.update(manual_values.get("_allocation_evidence", {}))
+                        row_evidence.record(line_data[line_id], f"{period}_{metric}",
+                            manual_values.get("_allocation_evidence", {}).get("月份", ""), amount * share,
+                            "代发费按月收入分摊" if "_allocation_evidence" in manual_values else "店铺人工直接收入/费用分摊",
+                            store_id, **details)
 
 
 def _allocate_monthly_fulfillment_cost(
     line_data, monthly_revenues, fulfillment, monthly_rates, periods, unknown_store_months,
+    *, with_evidence=False,
 ) -> None:
     """代发费先按各店各月收入分摊，再加至本月/上月/YTD，避免累计比例重分历史费用。"""
     from services.report_exchange_rates import convert_report_amount
@@ -1487,16 +1535,26 @@ def _allocate_monthly_fulfillment_cost(
                         item.setdefault("_unknown_cost_periods", set()).add(period)
                     else:
                         item[period]["cost"] += amount
+                    if with_evidence:
+                        row_evidence.record(item, f"{period}_cost", month, amount, "零收入店铺代发费单列", store_id,
+                            **{"店铺ID": store_id, "去重订单数": count, "单笔MXN": 8,
+                               "报表汇率": monthly_rates[(store_id, "MXN", month)],
+                               "原订单号": sorted(order for owner, order in orders if owner == store_id)})
                 continue
             # 复用分摊规则，但分母只包含这一个月；YTD直接累加同一笔月度分摊结果。
             inputs = {"fulfillment_cost": {
                 period: amount if period in selected_periods else Decimal(0) for period in periods}}
             if amount is None or revenue_unknown:
                 inputs["_unknown"] = {period: ["fulfillment_cost"] for period in selected_periods}
+            if with_evidence:
+                inputs["_allocation_evidence"] = {"月份": month, "去重订单数": count, "单笔MXN": 8,
+                    "报表汇率": monthly_rates[(store_id, "MXN", month)],
+                    "原订单号": sorted(order for owner, order in orders if owner == store_id),
+                    "累计规则": "先按各月收入分摊，再累计；不按全年收入重新分摊"}
             _allocate_store_profit_loss_to_product_lines(line_data, {
                 store_id: {line_id: {period: revenue if period in selected_periods else Decimal(0)
                                      for period in periods} for line_id, revenue in revenues.items()}
-            }, {store_id: inputs})
+            }, {store_id: inputs}, with_evidence=with_evidence)
 
 
 async def _product_line_profit_data(
@@ -1504,6 +1562,7 @@ async def _product_line_profit_data(
     store_ids: set[int],
     report_month: date,
     report_date: date,
+    *, with_evidence: bool = False,
 ) -> list[dict]:
     periods = _month_periods(report_month)
     ytd_start, ytd_end = periods["ytd"]
@@ -1558,6 +1617,14 @@ async def _product_line_profit_data(
     requirements = {store_rate_key(sale.store_id or owner, import_context_by_sale.get(sale.id, {}).get("currency"), sale.sold_at.date()) for sale, owner in sales}
     requirements.update((owner, "MXN", month) for month, orders in fulfillment.items() for owner, _ in orders)
     monthly_rates = await monthly_store_report_rates(db, requirements)
+    source_refs, restricted_sources = {}, set()
+    if with_evidence:
+        from services.profit_loss_evidence import sale_source_references
+        for owner in sorted(store_ids):
+            refs, _, restricted = await sale_source_references(db,
+                [sale for sale, fallback in sales if (sale.store_id or fallback) == owner], [], store_id=owner)
+            source_refs.update(refs)
+            restricted_sources.update(restricted)
     sale_line_by_id: dict[int, int | None] = {}
     for sale, user_store_id in sales:
         sale_store_id = sale.store_id or user_store_id
@@ -1570,6 +1637,18 @@ async def _product_line_profit_data(
         rate = monthly_rates[store_rate_key(sale_store_id, context.get("currency"), sale.sold_at.date())]
         revenue = convert_report_amount(context.get("source_net_product_sales", sale.selling_price * sale.quantity), rate)
         other_expense = convert_report_amount(context.get("source_other_expense", sale.platform_fee), rate)
+        if with_evidence:
+            details = {"销售ID": sale.id, "本地订单号": sale.order_no, "店铺ID": sale_store_id,
+                       "本地库存件数": sale.quantity, "报表汇率": rate, "原始来源": source_refs.get(sale.id, []),
+                       "原币净商品收入": context.get("source_net_product_sales", sale.selling_price * sale.quantity),
+                       "原币其他费用": context.get("source_other_expense", sale.platform_fee)}
+            scope = {"scope_status": "restricted"} if sale.id in restricted_sources else {}
+            if periods["current"][0] <= sale.sold_at.date() < periods["current"][1]:
+                row_evidence.record(item, "current_quantity", sale.sold_at, sale.quantity, "销售库存件数", sale.id, **details, **scope)
+            for period, (a, b) in periods.items():
+                if a <= sale.sold_at.date() < b:
+                    row_evidence.record(item, f"{period}_revenue", sale.sold_at, revenue, "销售净商品收入", sale.id, **details, **scope)
+                    row_evidence.record(item, f"{period}_cost", sale.sold_at, other_expense, "销售平台费用", sale.id, **details, **scope)
         month = sale.sold_at.date().replace(day=1)
         monthly_revenues[sale_store_id][month][line_id] += revenue if revenue is not None else Decimal(0)
         if revenue is None:
@@ -1596,6 +1675,10 @@ async def _product_line_profit_data(
             note = CLASSIFICATION_TEXT["zh-CN"]["income_only_conflict"]
             if note not in item["note"]:
                 item["note"] = f"{item['note']}；{note}".strip("；")
+        if with_evidence and sale.id in restricted_sources:
+            from services.profit_loss_evidence import SOURCE_SCOPE_WARNING
+            if SOURCE_SCOPE_WARNING not in item["note"]:
+                item["note"] = f"{item['note']}；{SOURCE_SCOPE_WARNING}".strip("；")
 
     if sales:
         cost_rows = (await db.execute(
@@ -1615,6 +1698,9 @@ async def _product_line_profit_data(
                 for period, (start, end) in periods.items():
                     if start <= sale.sold_at.date() < end:
                         line_data[line_id].setdefault("_unknown_cost_periods", set()).add(period)
+                        if with_evidence:
+                            row_evidence.record(line_data[line_id], f"{period}_cost", sale.sold_at, None, "作废批次成本待核对", batch.batch_no,
+                                **{"销售ID": sale.id, "保存FIFO数量": detail.quantity, "保存FIFO单价": detail.unit_cost, "说明": note})
                 if note not in line_data[line_id]["note"]:
                     line_data[line_id]["note"] = f"{line_data[line_id]['note']}；{note}".strip("；")
                 continue
@@ -1626,6 +1712,16 @@ async def _product_line_profit_data(
                 if start <= sale.sold_at.date() < end:
                     line_data[line_id][period]["cost"] += batch_cost
                     adjustment, note = adjustments.get(detail.id, (None, "销售转销明细缺失，相关期间成本和毛利待核对"))
+                    if with_evidence:
+                        row_evidence.record(line_data[line_id], f"{period}_cost", sale.sold_at, batch_cost,
+                            "FIFO成本及补差", batch.batch_no, **{"销售ID": sale.id, "FIFO明细ID": detail.id,
+                            "保存出库数量": detail.quantity, "保存FIFO单价": detail.unit_cost,
+                            "单位补差": unit_adjustment(cost_layers.get(batch.id, [])), "免商品成本": sale.id in income_only_ids,
+                            "补差凭据": [{"凭据ID": h.id, "分类": h.category, "分配数量": l.quantity,
+                                          "调整金额": l.amount_cny, "原凭据": h.source_ref} for l, h in cost_layers.get(batch.id, [])]})
+                        row_evidence.record(line_data[line_id], f"{period}_cost", sale.sold_at,
+                            None if adjustment is None else -adjustment, "非显式归属准备转销抵减", batch.batch_no,
+                            **{"销售ID": sale.id, "FIFO明细ID": detail.id, "说明": note or "显式归属批次在归属份额中单列，本项为0时不重复抵减"})
                     if adjustment is None:
                         line_data[line_id].setdefault("_unknown_cost_periods", set()).add(period)
                         if note not in line_data[line_id]["note"]:
@@ -1642,12 +1738,15 @@ async def _product_line_profit_data(
                 continue
             owners = {s["id"] for r in ([rule_at(batch, date.min)] + batch.allocation_rules) for s in r.stores}
             shares = []
+            share_sources = []
             for owner in owners:
                 if owner not in store_ids:
                     continue
                 shares.append({period: allocated_provision_period(assigned_replay, batch, owner, start, end,
                                                                   writeoff=True, explicit_only=True)
                     for period, (start, end) in periods.items()})
+                if with_evidence:
+                    share_sources.append((owner, shares[-1]))
             amounts = {period: _sum_known(share[period] for share in shares) for period in periods}
             if not shares or all(amount == 0 for amount in amounts.values()):
                 continue
@@ -1656,6 +1755,19 @@ async def _product_line_profit_data(
                 item["note"] = f"{item['note']}；{labels['writeoff_note']}".strip("；")
             for period in periods:
                 amount = amounts[period]
+                if with_evidence:
+                    for owner, share in share_sources:
+                        start, end = periods[period]
+                        days = sorted({r.sale.sold_at.date() for r in assigned_replay.writeoffs_by_batch.get(batch.id, [])
+                            if start <= r.sale.sold_at.date() < end and rule_at(batch, r.sale.sold_at.date()).is_explicit})
+                        for day in days:
+                            daily = allocated_provision_period(assigned_replay, batch, owner, day, day + timedelta(days=1),
+                                                              writeoff=True, explicit_only=True)
+                            row_evidence.record(item, f"{period}_cost", day,
+                                None if daily is None else -daily, "显式归属准备转销份额抵减", batch.batch_no,
+                                **{"授权归属店铺ID": owner, "全局当日准备转销单位": assigned_replay.written_off_units(batch.id, day, day + timedelta(days=1)),
+                                   "有效单位成本": batch.unit_cost, "当日归属店铺数": len(rule_at(batch, day).stores),
+                                   "计算": "当日准备转销单位 × 有效单位成本，按生效归属累计分配差额；本项为成本抵减，不展示跨店订单"})
                 if amount is None:
                     item.setdefault("_unknown_cost_periods", set()).add(period)
                     if labels["writeoff_pending"] not in item["note"]:
@@ -1665,12 +1777,25 @@ async def _product_line_profit_data(
 
     events = await unlinked_settlement_events(db, store_ids, read_start, ytd_end) if store_ids else []
     monthly_rates.update(await monthly_store_report_rates(db, {store_rate_key(event.store_id, event.currency, event.occurred_at.date()) for event in events}))
+    event_refs = {}
+    if with_evidence:
+        for owner in sorted(store_ids):
+            _, refs, _ = await sale_source_references(db, [], [e for e in events if e.store_id == owner], store_id=owner)
+            event_refs.update(refs)
     for event in events:
         rate = monthly_rates[store_rate_key(event.store_id, event.currency, event.occurred_at.date())]
         event_revenue = convert_report_amount(event.original_revenue, rate)
         event_expense = convert_report_amount(event.original_expense, rate)
         line_id = event.product_id if event.product_id is not None else "unallocated_settlement"
         item = product_item(event.product_id)
+        if with_evidence:
+            for period, (a, b) in periods.items():
+                if a <= event.occurred_at.date() < b:
+                    details = {"店铺ID": event.store_id, "原币净商品收入": event.original_revenue,
+                               "原币费用": event.original_expense, "报表汇率": rate, "原始来源": event_refs.get(event.entry_id)}
+                    for metric, amount in (("revenue", event_revenue), ("cost", event_expense)):
+                        row_evidence.record(item, f"{period}_{metric}", event.occurred_at, amount,
+                            "独立结算行", event.entry_id, **details)
         month = event.occurred_at.date().replace(day=1)
         monthly_revenues[event.store_id][month][line_id] += event_revenue if event_revenue is not None else Decimal(0)
         if event_revenue is None or event_expense is None:
@@ -1695,12 +1820,14 @@ async def _product_line_profit_data(
     }
     _allocate_monthly_fulfillment_cost(
         line_data, monthly_revenues, fulfillment, monthly_rates, periods, unknown_store_months,
+        with_evidence=with_evidence,
     )
     _allocate_store_profit_loss_to_product_lines(
         line_data,
         revenue_by_store_line,
         manual_by_store,
         unknown_store_periods,
+        with_evidence=with_evidence,
     )
 
     product_ids = {key for key in line_data if isinstance(key, int)}
@@ -1732,6 +1859,8 @@ async def _product_line_profit_data(
             "ytd": item["ytd"],
             "note": item["note"],
         })
+        if with_evidence:
+            rows[-1]["_evidence"] = row_evidence.product_evidence(item, report_month)
     return rows
 
 
@@ -1994,9 +2123,23 @@ async def _store_provision_financial_values(db, store_id: int, periods: dict) ->
 
 async def _load_inventory_impairment_report_rows(
     db: AsyncSession, report_date: date, store_id: int | None = None,
+    *, with_evidence: bool = False,
 ) -> list[dict]:
     """持有期间增提及转销；金额未知传播null，原始入库和销售成本保留。"""
     batch_rows, sales, replay = await _load_inventory_provision_data(db, report_date)
+    evidence_sales, evidence_rules, evidence_accruals = defaultdict(list), defaultdict(list), defaultdict(list)
+    if with_evidence:
+        for sale in sales:
+            evidence_sales[sale.batch_id].append(sale)
+        for accrual in replay.accruals:
+            evidence_accruals[accrual.batch_id].append(accrual)
+        product_ids = {row[0].product_id for row in batch_rows}
+        rules = (await db.execute(select(ProductImpairmentRule).where(
+            ProductImpairmentRule.product_id.in_(product_ids), ProductImpairmentRule.effective_date <= report_date
+        ).order_by(ProductImpairmentRule.effective_date, ProductImpairmentRule.id))).scalars().all() if product_ids else []
+        for rule in rules:
+            evidence_rules[rule.product_id].append({"生效日": rule.effective_date, "类型": rule.product_type,
+                                                   "安全库存": rule.safe_stock_quantity})
     previous_end = _previous_month_end(report_date)
     month_start, end = report_date.replace(day=1), report_date + timedelta(days=1)
     sold, costs = defaultdict(int), defaultdict(lambda: Decimal("0"))
@@ -2093,6 +2236,10 @@ async def _load_inventory_impairment_report_rows(
         row["monthly_transfer_in_amount"], row["monthly_transfer_out_amount"] = incoming, outgoing
         if incoming is None or outgoing is None:
             row["comparison_note"] += "；归属变更时准备余额或店铺缺失，准备转移待核对"
+        if with_evidence:
+            rules = evidence_rules[batch.product_id] or [{"生效日": "历史默认", "类型": kind, "安全库存": safe}]
+            row["_evidence"] = row_evidence.inventory_evidence(row, batch, evidence_sales[batch.id], replay,
+                rules, evidence_accruals[batch.id], report_date, store_id)
         result.append(row)
     return result
 
@@ -2102,10 +2249,12 @@ async def inventory_impairment_report(
     report_date: date = Query(..., description="报告截止日"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    include_evidence: bool = False,
 ):
     if report_date > date.today():
         raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
-    rows = await _load_inventory_impairment_report_rows(db, report_date)
+    rows = await _load_inventory_impairment_report_rows(db, report_date, with_evidence=include_evidence)
+    evidence = row_evidence.publish_rows(rows, user, kind="inventory") if include_evidence else []
     result = []
     for item in rows:
         inventory_amount = item.get("inventory_amount", item["unit_cost"] * item["quantity"])
@@ -2143,6 +2292,8 @@ async def inventory_impairment_report(
             "comparison_note": item["comparison_note"],
             "status": status,
         })
+        if include_evidence:
+            result[-1]["evidence"] = evidence[len(result) - 1]
     return result
 
 
@@ -2177,6 +2328,9 @@ def _summarize_inventory_impairment_rows(rows: list[dict]) -> list[dict]:
         if missing:
             notes.append(f"{missing}个批次缺少比较基准，无法比较")
         summary["comparison_note"] = "；".join(notes)
+        evidence = row_evidence.summary_evidence(summary, items)
+        if evidence:
+            summary["_evidence"] = evidence
         result.append(summary)
     return sorted(result, key=lambda item: item["sku"])
 
@@ -2186,14 +2340,21 @@ async def inventory_impairment_summary(
     report_date: date = Query(..., description="报告截止日"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    include_evidence: bool = False,
 ):
     """按SKU汇总截止日前全部批次，包含已售完旧批次。"""
     if report_date > date.today():
         raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
     rows = await _load_inventory_impairment_report_rows(
-        db, report_date
+        db, report_date, with_evidence=include_evidence
     )
-    return _summarize_inventory_impairment_rows(rows)
+    result = _summarize_inventory_impairment_rows(rows)
+    if include_evidence:
+        evidence = row_evidence.publish_rows(result, user, kind="inventory")
+        for row, meta in zip(result, evidence):
+            row.pop("_evidence", None)
+            row["evidence"] = meta
+    return result
 
 
 @router.get("/product-line-profit")
@@ -2203,6 +2364,7 @@ async def product_line_profit_report(
     store_id: int | None = Query(default=None, ge=1),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    include_evidence: bool = False,
 ):
     if report_month.day != 1:
         raise HTTPException(status_code=400, detail="核算月份必须传入该月第一天")
@@ -2214,7 +2376,8 @@ async def product_line_profit_report(
     else:
         store = await _resolve_report_store(db, user, store_id)
         store_ids = {store.id}
-    rows = await _product_line_profit_data(db, store_ids, report_month, report_date)
+    rows = await _product_line_profit_data(db, store_ids, report_month, report_date, with_evidence=include_evidence)
+    evidence = row_evidence.publish_rows(rows, user, kind="product", store_ids=store_ids) if include_evidence else []
     result = []
     for item in rows:
         current_gross = _subtract_known(item["current"]["revenue"], item["current"]["cost"])
@@ -2247,7 +2410,22 @@ async def product_line_profit_report(
             ),
             "note": item["note"],
         })
+        if include_evidence:
+            result[-1]["evidence"] = evidence[len(result) - 1]
     return result
+
+
+@router.get("/row-evidence/{token}")
+async def report_row_evidence(token: str, row_key: str, field: str = "", page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100), db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole)):
+    snapshot = row_evidence.CACHE.get(token, user.id)
+    if snapshot["kind"] == "product":
+        # 令牌绑定用户仍不够：角色/店铺绑定可能在查询后被调整，读取每页都重新校验。
+        if user.role != "admin" and set(snapshot["store_ids"]) != {user.store_id}:
+            raise HTTPException(403, detail="无权查看该店铺范围的计算依据")
+        for store_id in snapshot["store_ids"]:
+            await _resolve_report_store(db, user, store_id)
+    return row_evidence.row_page(snapshot, row_key, field, page, page_size)
 
 
 @router.get("/inventory-impairment/export")
@@ -2262,7 +2440,7 @@ async def export_inventory_impairment_report(
         raise HTTPException(status_code=400, detail="报告截止日不能晚于当天")
     if view == "sku":
         report_rows = await _load_inventory_impairment_report_rows(
-            db, report_date
+            db, report_date, with_evidence=True
         )
         workbook, formula_cache = Workbook(), {}
         _build_inventory_impairment_summary_sheet(
@@ -2270,8 +2448,12 @@ async def export_inventory_impairment_report(
             use_active_sheet=True,
         )
     else:
-        report_rows = await _load_inventory_impairment_report_rows(db, report_date)
+        report_rows = await _load_inventory_impairment_report_rows(db, report_date, with_evidence=True)
         workbook, formula_cache = _build_inventory_impairment_workbook(report_rows, report_date)
+    from services.report_row_evidence_export import append_row_evidence
+    append_row_evidence(workbook, inventory_rows=report_rows,
+        summary_rows=_summarize_inventory_impairment_rows(report_rows) if view == "sku" else None,
+        formula_cache=formula_cache)
     output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
     suffix = "_sku" if view == "sku" else ""
     filename = f"inventory_impairment{suffix}_{report_date.strftime('%Y%m%d')}.xlsx"
@@ -2319,7 +2501,7 @@ async def export_financial_attachments(
 
     inventory_store_id = None if user.role == "admin" else selected_store.id
     inventory_rows = await _load_inventory_impairment_report_rows(
-        db, report_date, inventory_store_id
+        db, report_date, inventory_store_id, with_evidence=True
     )
     workbook, formula_cache = _build_inventory_impairment_workbook(inventory_rows, report_date)
     _build_store_profit_loss_sheet(
@@ -2366,7 +2548,7 @@ async def export_financial_attachments(
         product_line_store_ids = {selected_store.id}
 
     product_line_rows = await _product_line_profit_data(
-        db, product_line_store_ids, report_month, report_date
+        db, product_line_store_ids, report_month, report_date, with_evidence=True
     )
     _build_product_line_profit_sheet(workbook, product_line_rows, report_month)
     _build_inventory_impairment_summary_sheet(
@@ -2378,6 +2560,10 @@ async def export_financial_attachments(
         row_definitions=STORE_PROFIT_LOSS_ROWS,
         summary_rows=_store_profit_loss_summary_rows(store_reports) if user.role == "admin" else None,
         summary_store_ids=[s.id for s, _ in store_reports])
+    from services.report_row_evidence_export import append_row_evidence
+    append_row_evidence(workbook, inventory_rows=inventory_rows,
+        summary_rows=_summarize_inventory_impairment_rows(inventory_rows), product_rows=product_line_rows,
+        formula_cache=formula_cache)
 
     output = _workbook_bytes_with_formula_cache(workbook, formula_cache)
     filename = f"financial_attachments_{report_date.strftime('%Y%m%d')}.xlsx"

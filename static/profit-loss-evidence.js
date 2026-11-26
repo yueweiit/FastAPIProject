@@ -1,4 +1,4 @@
-// Read-only 09/10 explanations. All amounts/formulas come from the report snapshot.
+// Read-only 07/09/10/12 explanations. All amounts/formulas come from the report snapshot.
 (function () {
     'use strict';
     const TEXT = {'zh-CN': {
@@ -19,10 +19,13 @@
         noRatio: '毛利率不再计算占比', missing: '待核对/未提供', blank: '未填写（合计按0）',
         sourceTotal: '来源未舍入合计', reference: '凭据编号', day: '归属日期', amount: '参与金额',
         source: '来源类型', detail: '详细依据', snapshotId: '计算编号', period: '核算期间',
+        rowAction: '口径与依据', rowField: '选择字段', numberValue: '参与值',
     }};
     const t = key => TEXT['zh-CN'][key] || key;
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let current = null, generation = 0, request = 0, dialog = null, returnFocus = null;
+    const rowStates = new Map();
+    let rowCurrent = null;
     const active = state => current === state && state.generation === generation && state.hooks.isCurrent();
     const money = (value, key) => {
         if (value == null || value === '') return '—';
@@ -50,6 +53,7 @@
             .ple-dialog::backdrop {background:rgba(15,35,55,.3);}
             .ple-header {display:flex;justify-content:space-between;align-items:center;gap:16px;position:sticky;top:-24px;background:white;padding:12px 0;z-index:1;}
             .ple-dialog h3 {margin:0;} .ple-dialog h4 {margin:22px 0 10px;}
+            .ple-dialog select {padding:8px 12px;border:1px solid #cbd9e7;border-radius:6px;font:inherit;color:inherit;max-width:100%;background:#fff;}
             .ple-context {color:#52687d;white-space:pre-wrap;overflow-wrap:anywhere;}
             .ple-note {background:#eff5fa;padding:12px;border-radius:8px;white-space:pre-wrap;line-height:1.7;}
             .ple-value {font-size:24px;font-weight:700;margin:12px 0;}
@@ -68,6 +72,11 @@
         dialog.setAttribute('aria-label', t('title'));
         dialog.addEventListener('close', () => { request++; returnFocus?.isConnected && returnFocus.focus(); });
         document.body.append(dialog);
+        document.addEventListener('change', event => {
+            if (['inventory-impairment-date', 'inventory-report-view', 'profit-loss-month', 'profit-loss-store'].includes(event.target.id)) {
+                for (const [kind, state] of rowStates) if (!state.hooks.isCurrent()) clearRows(kind);
+            }
+        });
     }
     function close() { request++; if (dialog?.open) dialog.close(); }
     function clear() {
@@ -107,6 +116,7 @@
     }
     function openField(state, report, key, period) {
         if (!active(state)) return;
+        rowCurrent = null;
         const evidence = report.evidence, field = evidence?.schema_version === 'profit_loss_evidence_v1' && evidence.fields?.[key];
         const row = report.rows?.find(r => r.key === key);
         const label = field?.label || row?.label || key;
@@ -188,6 +198,7 @@
     }
     function openTotal(state, key, mode) {
         if (!active(state)) return;
+        rowCurrent = null;
         request++;
         const data = state.summary, row = data.rows.find(r => r.key === key);
         const formula = key === 'gross_margin' ? t(mode === 'ratio' ? 'noRatio' : 'marginRule') : t(mode === 'ratio' ? 'ratioRule' : 'sumRule');
@@ -203,5 +214,79 @@
         }).join('')}`);
         dialog.querySelectorAll('[data-ple-store]').forEach(b => b.onclick = () => openStore(state, Number(b.dataset.pleStore), b.dataset.pleKey));
     }
-    window.ProfitLossEvidence = {render, clear};
+    const rowActive = state => rowStates.get(state.kind) === state && state.hooks.isCurrent();
+    function clearRows(kind) {
+        for (const [key, state] of rowStates) {
+            if (kind && key !== kind) continue;
+            rowStates.delete(key);
+            state.buttons.forEach(button => button.remove());
+            if (rowCurrent === state) { rowCurrent = null; close(); }
+        }
+    }
+    function renderRows(kind, rows, hooks) {
+        clearRows(kind); setup();
+        const state = {kind, hooks, buttons:[]};
+        rowStates.set(kind, state);
+        const add = (parent, meta, title) => {
+            if (!parent) return;
+            const button = addButton(parent, t('rowAction'), () => openRow(state, meta, title));
+            delete button.dataset.pleAdded; button.dataset.pleRowAdded = kind;
+            state.buttons.push(button);
+        };
+        const elements = document.querySelectorAll(`${hooks.tbody} > tr`);
+        rows.forEach((row, i) => add(elements[i]?.cells?.[hooks.labelColumn || 0], row.evidence,
+            row.name || [row.sku, row.batch_no || row.product_name].filter(Boolean).join(' · ')));
+        if (rows.length && hooks.tfoot) {
+            const meta = rows[0].evidence;
+            add(document.querySelector(`${hooks.tfoot} td`), meta?.total_calculation_id ?
+                {...meta, row_key:'__total__', calculation_id:meta.total_calculation_id} : null, t('total'));
+        }
+    }
+    function rowValue(value, format) {
+        if (value == null || value === '') return '—';
+        if (format === 'money') return money(value);
+        if (format === 'percent') return money(value, 'gross_margin');
+        return new Intl.NumberFormat('zh-CN', {maximumFractionDigits:8}).format(Number(value));
+    }
+    async function openRow(state, meta, title, field = '', page = 1) {
+        if (!rowActive(state)) return;
+        rowCurrent = state;
+        const id = ++request;
+        if (!meta || meta.schema_version !== 'report_row_evidence_v1') {
+            shell(title, state.hooks.context || '', `<p class="ple-note">${t('legacy')}</p>`); return;
+        }
+        shell(title, state.hooks.context || '', `<p class="ple-context">${t('loading')}</p>`);
+        const isCurrent = () => rowActive(state) && rowCurrent === state && request === id && dialog.open;
+        try {
+            if (!meta.token) throw new Error(t('unavailable'));
+            const params = new URLSearchParams({row_key:meta.row_key, field, page, page_size:50});
+            const data = await state.hooks.api('GET', `/reports/row-evidence/${encodeURIComponent(meta.token)}?${params}`, undefined,
+                {cache:'no-store', isCurrent});
+            if (!isCurrent()) return;
+            if (data.calculation_id !== meta.calculation_id || String(data.row_key) !== String(meta.row_key)
+                || (field && data.field !== field)) throw new Error(t('mismatch'));
+            const cell = data.fields[data.field];
+            const expression = cell.expression || cell.inputs.map((input, index) => `${index ? input.operator + ' ' : ''}${input.label} (${input.value ?? t('missing')})`).join(' ') + (cell.inputs.length ? ' = ' + (cell.value ?? t('missing')) : '');
+            shell(data.title, `${data.context}\n${t('snapshot')}`, `<select data-ple-row-field aria-label="${t('rowField')}">${Object.entries(data.fields).map(([key, item]) => `<option value="${esc(key)}" ${key === data.field ? 'selected' : ''}>${esc(item.label)}</option>`).join('')}</select>
+                <div class="ple-value">${esc(rowValue(cell.value, cell.format))}</div><p>${esc(data.status_labels[cell.status] || cell.status)}</p>
+                ${data.warning ? `<p class="ple-error">${esc(data.warning)}</p>` : ''}
+                <h4>${t('note')}</h4><div class="ple-note">${esc(cell.note)}</div>
+                <h4>${t('formula')}</h4><div class="ple-calculation">${esc(cell.formula)}\n${esc(expression)}</div>
+                ${!cell.inputs.length ? `<p>${t('sourceTotal')}：${esc(cell.source_total ?? t('missing'))}</p>` : ''}
+                <div>${cell.inputs.map(input => `<button class="ple-action" data-ple-row-input="${esc(input.key)}">${esc(input.label)} · ${t('evidence')}</button>`).join('')}</div>
+                <p class="ple-context">${esc(data.rounding)}\n${t('snapshotId')}：${esc(data.calculation_id)}</p>
+                <h4>${t('sources')} · ${data.total} ${t('count')}</h4><div data-ple-records>${data.items.map(row => `<article class="ple-record"><strong>${esc(row.source)} · ${esc(row.reference)}</strong><p>${esc(row.day)} · ${t('numberValue')}：${esc(row.amount ?? t('missing'))}</p><pre>${esc(detailText(row.details))}</pre></article>`).join('') || esc(t('empty'))}</div><div class="ple-pages" data-ple-pages></div>`);
+            dialog.querySelector('[data-ple-row-field]').onchange = event => openRow(state, meta, title, event.target.value);
+            dialog.querySelectorAll('[data-ple-row-input]').forEach(b => b.onclick = () => openRow(state, meta, title, b.dataset.pleRowInput));
+            if (data.total) {
+                const pages = dialog.querySelector('[data-ple-pages]'), totalPages = Math.ceil(data.total / 50);
+                addButton(pages, t('prev'), () => openRow(state, meta, title, data.field, page - 1)).disabled = page <= 1;
+                const label = document.createElement('span'); label.textContent = `${page} / ${totalPages} ${t('page')}`; pages.append(label);
+                addButton(pages, t('next'), () => openRow(state, meta, title, data.field, page + 1)).disabled = page >= totalPages;
+            }
+        } catch (error) {
+            if (isCurrent()) shell(title, state.hooks.context || '', `<p class="ple-error">${esc(error.message || t('expired'))}</p>`);
+        }
+    }
+    window.ProfitLossEvidence = {render, clear, renderRows, clearRows};
 })();

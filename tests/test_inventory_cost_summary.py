@@ -197,7 +197,7 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                 response = await client.get("/reports/inventory-impairment/summary?report_date=2026-09-30")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()[0]["book_value"], 2760)
-                load.assert_awaited_with(None, REPORT_DATE)
+                load.assert_awaited_with(None, REPORT_DATE, with_evidence=False)
                 for view, title, cell in (("batch", INVENTORY_IMPAIRMENT_SHEET, "P5"),
                                           ("sku", INVENTORY_IMPAIRMENT_SUMMARY_SHEET, "N2")):
                     exported = await client.get(f"/reports/inventory-impairment/export?report_date=2026-09-30&view={view}")
@@ -227,12 +227,12 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                      patch("routers.reports._load_inventory_impairment_report_rows", new_callable=AsyncMock, return_value=rows) as load:
                     response = await client.get("/reports/financial-attachments/export?report_date=2026-09-30")
                     self.assertEqual(response.status_code, 200)
-                    load.assert_awaited_once_with(fake_db, REPORT_DATE, expected_scope)
+                    load.assert_awaited_once_with(fake_db, REPORT_DATE, expected_scope, with_evidence=True)
                     workbook = load_workbook(BytesIO(response.content), data_only=True)
                     original_count = 5 if role == "admin" else 4
-                    self.assertEqual(len(workbook.sheetnames), original_count + 3)
+                    self.assertEqual(len(workbook.sheetnames), original_count + 6)
                     self.assertEqual(workbook.sheetnames[original_count - 1], INVENTORY_IMPAIRMENT_SUMMARY_SHEET)
-                    self.assertEqual(workbook.sheetnames[original_count:], ["报表口径说明", "金额计算依据", "来源明细"])
+                    self.assertEqual(workbook.sheetnames[original_count:], ["报表口径说明", "金额计算依据", "来源明细", "07-12字段口径", "07-12计算过程", "07-12来源明细"])
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["G5"].value, 350)
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["P5"].value, 2760)
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SUMMARY_SHEET]["N2"].value, 2760)
