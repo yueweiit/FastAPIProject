@@ -180,14 +180,14 @@ async def ensure_batch_cost_editable(db, batch_id):
                                        "message": "批次已有成本调整，请追加调整或反向单，不能改写原批次。"})
 
 
-async def sale_cost_context(db, sales, *, include_details=False, source_entry_ids=None):
+async def sale_cost_context(db, sales, *, include_details=False, source_entry_ids=None, source_store_id=None):
     if not sales:
         return {}
     from models import SaleCostDetail
     from services.sales_classification import CLASSIFICATION_TEXT, income_only_sale_ids
     income_only_review_ids = set()
     income_only_ids = await income_only_sale_ids(db, [sale.id for sale in sales],
-        source_entry_ids=source_entry_ids, review_ids=income_only_review_ids)
+        source_entry_ids=source_entry_ids, source_store_id=source_store_id, review_ids=income_only_review_ids)
     details = (await db.execute(select(SaleCostDetail, InventoryBatch).join(
         InventoryBatch, InventoryBatch.id == SaleCostDetail.batch_id).where(
         SaleCostDetail.sale_id.in_([sale.id for sale in sales])

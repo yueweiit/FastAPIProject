@@ -140,6 +140,7 @@
         .sales-kpi .label { color:var(--muted); font-size:var(--font-size-small); }
         .sales-kpi .value { margin-top:3px; color:var(--ink); font-size:18px; font-weight:800; }
         .sales-filter-toolbar { display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+        #sales-record-store-group[hidden] { display:none; }
         .sales-filter-toolbar .form-group input { width:180px; }
         .sales-filter-toolbar .form-group input[type="month"] { width:150px; }
         .sales-monthly-summary { margin:2px 0 16px; }
@@ -995,6 +996,12 @@
             <div class="flex-between">
                 <h3 id="sales-ledger-title">人民币销售台账</h3>
                 <div class="sales-filter-toolbar">
+                    <div id="sales-record-store-group" class="form-group" hidden>
+                        <label for="sales-record-store" data-sales-export-text="salesStoreFilter"></label>
+                        <select id="sales-record-store" onchange="searchSales()">
+                            <option value="" data-sales-export-text="salesAllStores"></option>
+                        </select>
+                    </div>
                     <div class="form-group"><label for="sales-month">月份</label><input id="sales-month" type="month"></div>
                     <div class="form-group"><label for="sales-product-keyword" data-sales-export-text="salesSearch"></label><input id="sales-product-keyword" type="search" maxlength="255" data-sales-search-placeholder="salesSearchPlaceholder" onkeydown="if (event.key === 'Enter') searchSales()"></div>
                     <button id="sales-search-button" class="btn btn-primary" type="button" onclick="searchSales()">搜索</button>
@@ -1108,7 +1115,7 @@
                 </div>
                 <div class="form-row" style="margin:0;align-items:flex-end">
                     <div class="form-group"><label>报告截止日</label><input id="inventory-impairment-date" type="date"></div>
-                    <div class="form-group" style="justify-content:flex-end"><button class="btn btn-primary" onclick="exportFinancialAttachments()">导出财务附件</button></div>
+                    <div class="form-group" style="justify-content:flex-end"><button id="financial-attachments-export" class="btn btn-primary" type="button" onclick="exportFinancialAttachments()">导出财务附件</button></div>
                 </div>
             </div>
         </div>
@@ -1133,9 +1140,11 @@
                     <p id="profit-loss-policy" data-help-tip data-help-anchor="#profit-loss-title" data-profit-loss-text="profitLossPolicy" style="font-size:var(--font-size-small);color:var(--muted);margin:8px 0"></p>
                     <details id="profit-loss-fx-details" class="profit-loss-fx-details" hidden><summary data-profit-loss-text="profitLossExchangeDetails"></summary><p id="profit-loss-fx"></p></details>
                     <div id="report-fx-editor" hidden></div>
-                    <div id="profit-loss-evidence-tools"></div>
+                    <details id="profit-loss-summary-details" hidden ontoggle="if (this.open) loadStoreProfitLossSummary()">
+                        <summary data-profit-loss-text="profitLossSummaryShow"></summary>
+                        <div id="profit-loss-summary"></div>
+                    </details>
                     <div class="table-scroll profit-loss-table"><table><thead><tr><th>项目</th><th>本月金额</th><th data-profit-loss-text="profitLossYtd"></th><th>备注</th></tr></thead><tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody></table></div>
-                    <div id="profit-loss-summary"></div>
                 </div>
                 <div id="report-pane-product-line" class="report-pane card">
                     <div class="flex-between"><h3 id="product-line-profit-title">各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
@@ -1400,9 +1409,9 @@ async function doLogout() {
 }
 
 function handleSessionExpired() {
+    resetFinancialAttachmentsExport();
     inventoryImpairmentRequestId++;
     productLineProfitRequestId++;
-    window.ProfitLossEvidence?.clearRows?.();
     if (typeof resetProductSession === 'function') resetProductSession();
     if (typeof resetBatchSearchSession === 'function') resetBatchSearchSession();
     resetSalesImportState();
@@ -1613,6 +1622,7 @@ function switchTab(name, options = {}) {
     }
     if (name === 'sales') {
         if (!salesMonth) setSalesMonthToCurrent();
+        loadSalesRecordStores();
         loadSkuOptions();
         refreshSalesWorkspace();
     }
@@ -3166,10 +3176,10 @@ async function loadSales() {
         if (!window.SalesLedger.currentLoad(token)) return;
         const productMap = {};
         allProducts.forEach(p => productMap[p.id] = p);
-        const params = new URLSearchParams({page:salesPage, page_size:salesPageSize});
-        const summaryParams = new URLSearchParams();
-        if (salesMonth) {params.set('month',salesMonth); summaryParams.set('month',salesMonth);}
-        if (salesProductKeyword) {params.set('keyword',salesProductKeyword); summaryParams.set('keyword',salesProductKeyword);}
+        const summaryParams = salesLedgerFilterParams(salesMonth, salesProductKeyword);
+        const params = new URLSearchParams(summaryParams);
+        params.set('page', salesPage);
+        params.set('page_size', salesPageSize);
         const [result, monthlySummary] = await Promise.all([
             api('GET', `/sales?${params}`, undefined, requestOptions), api('GET', `/sales/monthly-summary?${summaryParams}`, undefined, requestOptions),
         ]);
@@ -3296,6 +3306,38 @@ let salesPage = 1;
 let salesExportBusy = false;
 let salesExportSessionEpoch = 0;
 let salesExportController = null;
+let salesLedgerStoreRequestId = 0;
+
+async function loadSalesRecordStores() {
+    const group = document.getElementById('sales-record-store-group');
+    group.hidden = !isAdmin();
+    if (group.hidden) return;
+    const select = document.getElementById('sales-record-store');
+    const requestId = ++salesLedgerStoreRequestId, userId = CURRENT_USER_ID;
+    const isCurrent = () => requestId === salesLedgerStoreRequestId && userId === CURRENT_USER_ID && isAdmin();
+    try {
+        const stores = await api('GET', '/finance-masters/stores', undefined, {isCurrent});
+        if (!isCurrent()) return;
+        const selected = select.value;
+        const all = escapeHtml(window.PageInteractions.text('salesAllStores'));
+        const options = stores.map(store => `<option value="${Number(store.id)}">${escapeHtml(store.name)}</option>`).join('');
+        select.innerHTML = `<option value="">${all}</option>${options}`;
+        if (stores.some(store => String(store.id) === selected)) select.value = selected;
+        if (selected && selected !== select.value) searchSales();
+    } catch (error) {
+        if (isCurrent()) showMsg(window.PageInteractions.text('salesStoreFilterFailed'), false);
+    }
+}
+
+function salesLedgerFilterParams(month, keyword) {
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    if (keyword) params.set('keyword', keyword);
+    const storeId = isAdmin() ? document.getElementById('sales-record-store').value : '';
+    if (storeId) params.set('store_id', storeId);
+    return params;
+}
+
 function setSalesExportStatus(message, error = false) {
     for (const id of ['sales-export-status', 'sales-import-export-status']) {
         const status = document.getElementById(id);
@@ -3307,15 +3349,20 @@ function setSalesExportStatus(message, error = false) {
 }
 function setSalesExportBusy(busy) {
     salesExportBusy = busy;
-    for (const id of ['sales-export-button', 'sales-month', 'sales-product-keyword', 'sales-search-button', 'sales-clear-button']) {
+    for (const id of ['sales-export-button', 'sales-month', 'sales-record-store', 'sales-product-keyword', 'sales-search-button', 'sales-clear-button']) {
         document.getElementById(id).disabled = busy;
     }
     for (const button of document.querySelectorAll?.('[data-sales-import-export]') || []) button.disabled = busy;
 }
 function resetSalesExportSession() {
     salesExportSessionEpoch++;
+    salesLedgerStoreRequestId++;
     salesExportController?.abort();
     salesExportController = null;
+    const select = document.getElementById('sales-record-store');
+    select.length = 1;
+    select.value = '';
+    document.getElementById('sales-record-store-group').hidden = true;
     setSalesExportBusy(false);
     setSalesExportStatus('');
 }
@@ -3326,9 +3373,8 @@ async function exportSalesRecords(importBatchId = null) {
     const epoch = salesExportSessionEpoch;
     const month = importBatchId === null ? document.getElementById('sales-month').value : '';
     const keyword = importBatchId === null ? document.getElementById('sales-product-keyword').value.trim() : '';
-    const params = new URLSearchParams();
-    if (month) params.set('month', month);
-    if (keyword) params.set('keyword', keyword);
+    const params = importBatchId === null ? salesLedgerFilterParams(month, keyword) : null;
+    const storeId = params?.get('store_id');
     const text = window.PageInteractions.text;
     const controller = new AbortController();
     salesExportController = controller;
@@ -3360,13 +3406,18 @@ async function exportSalesRecords(importBatchId = null) {
             controller.abort();
             throw new Error(text('salesExportPolicyMismatch'));
         }
+        if (storeId && response.headers.get('X-Sales-Export-Store-Id') !== storeId) {
+            controller.abort();
+            throw new Error(text('salesExportStoreMismatch'));
+        }
         const blob = await response.blob();
         if (epoch !== salesExportSessionEpoch) return;
         if (!blob.size) throw new Error(text('salesExportInvalidFile'));
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = importBatchId === null ? `sales_${month ? month.replace('-', '') : 'all'}.xlsx` : `sales_import_${importBatchId}.xlsx`;
+        const storeSuffix = storeId ? `store_${storeId}_` : '';
+        link.download = importBatchId === null ? `sales_${storeSuffix}${month ? month.replace('-', '') : 'all'}.xlsx` : `sales_import_${importBatchId}.xlsx`;
         link.style.display = 'none';
         document.body.appendChild(link);
         try {
@@ -3400,6 +3451,7 @@ function searchSales() {
 function clearSalesSearch() {
     document.getElementById('sales-month').value = '';
     document.getElementById('sales-product-keyword').value = '';
+    document.getElementById('sales-record-store').value = '';
     searchSales();
 }
 
@@ -3515,10 +3567,28 @@ async function exportInventoryImpairmentReport() {
     } catch (e) { showMsg(e.message, false); }
 }
 
+let financialAttachmentsExportController = null;
+
+function setFinancialAttachmentsExportBusy(busy) {
+    const button = document.getElementById('financial-attachments-export');
+    button.disabled = busy;
+    button.setAttribute('aria-busy', String(busy));
+    button.textContent = window.PageInteractions.text(busy ? 'financialExportGenerating' : 'financialExport');
+}
+
+function resetFinancialAttachmentsExport() {
+    if (!financialAttachmentsExportController) return;
+    financialAttachmentsExportController.abort();
+    financialAttachmentsExportController = null;
+    setFinancialAttachmentsExportBusy(false);
+}
+
 async function exportFinancialAttachments() {
+    if (financialAttachmentsExportController || !CURRENT_USER_ID) return;
+    const text = window.PageInteractions.text;
     const reportDate = document.getElementById('inventory-impairment-date').value;
     if (!reportDate) {
-        showMsg('请选择报告截止日', false);
+        showMsg(text('financialExportDateRequired'), false);
         return;
     }
     const month = defaultProfitLossMonth();
@@ -3527,32 +3597,58 @@ async function exportFinancialAttachments() {
         const storeId = document.getElementById('profit-loss-store').value;
         if (storeId) params.set('store_id', storeId);
     }
+    const controller = new AbortController();
+    financialAttachmentsExportController = controller;
+    setFinancialAttachmentsExportBusy(true);
     try {
         const res = await fetch(`/reports/financial-attachments/export?${params.toString()}`, {
-            headers: authHeaders(),
+            headers: authHeaders(), credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
         });
-        if (res.status === 401) { handleSessionExpired(); throw new Error('登录已过期'); }
-        if (!res.ok) {
-            const raw = await res.text();
-            let detail = raw;
-            try { detail = JSON.parse(raw).detail || raw; } catch {}
-            throw new Error(formatApiError(detail, '导出失败'));
+        if (controller.signal.aborted) return;
+        if (res.status === 401) {
+            handleSessionExpired();
+            showMsg(text('financialExportSessionExpired'), false);
+            return;
         }
+        if (res.status >= 500) {
+            controller.abort();
+            showMsg(text('financialExportFailed'), false);
+            return;
+        }
+        if (!res.ok) {
+            let detail;
+            try { detail = (await res.json()).detail; } catch {}
+            throw new Error(formatApiError(detail, text('financialExportFailed')));
+        }
+        if (!res.headers.get('content-type')?.includes('spreadsheetml.sheet')) throw new Error(text('financialExportInvalidFile'));
         const blob = await res.blob();
+        if (controller.signal.aborted) return;
+        if (!blob.size) throw new Error(text('financialExportInvalidFile'));
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `财务附件报表_${reportDate}.xlsx`;
+        link.download = window.PageInteractions.formatText('financialExportFilename', {date: reportDate});
         document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(url);
-        showMsg(isAdmin() ? '四张财务附件报表已导出' : '财务附件报表已导出（第三张表仅管理员可见）');
-    } catch (e) { showMsg(e.message, false); }
+        try {
+            link.click();
+        } finally {
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+        showMsg(text('financialExportReady'));
+    } catch (error) {
+        if (!controller.signal.aborted) showMsg(escapeHtml(error.message || text('financialExportFailed')), false);
+    } finally {
+        if (financialAttachmentsExportController === controller) {
+            financialAttachmentsExportController = null;
+            setFinancialAttachmentsExportBusy(false);
+        }
+    }
 }
 
 let storeProfitLossReport = null;
 let storeProfitLossRequestId = 0;
+let storeProfitLossSummaryRequestId = 0;
 let storeProfitLossLoading = false;
 let storeProfitLossSavePromise = null;
 
@@ -3594,7 +3690,10 @@ function resetStoreProfitLossState() {
 
 function clearProfitLossContext() {
     if (typeof window !== 'undefined') window.ReportExchangeRates?.clear();
-    if (typeof window !== 'undefined') window.ProfitLossEvidence?.clear();
+    const summary = document.getElementById('profit-loss-summary-details');
+    summary.hidden = true;
+    summary.open = false;
+    document.getElementById('profit-loss-summary').textContent = '';
     document.getElementById('profit-loss-updated').textContent = '';
     const warnings = document.getElementById('profit-loss-warnings');
     warnings.innerHTML = '';
@@ -3734,10 +3833,38 @@ function renderStoreProfitLoss(report) {
             onSaved: reloadProfitLossPreservingDraft,
         });
     }
-    if (window.ProfitLossEvidence) {
-        const evidenceRequestId = storeProfitLossRequestId;
-        window.ProfitLossEvidence.render(report, {api, isAdmin: isAdmin(),
-            isCurrent: () => evidenceRequestId === storeProfitLossRequestId && profitLossSelectionMatches(report)});
+    const summary = document.getElementById('profit-loss-summary-details');
+    summary.hidden = !isAdmin();
+    if (!summary.hidden && summary.open) loadStoreProfitLossSummary();
+}
+
+async function loadStoreProfitLossSummary() {
+    const report = storeProfitLossReport;
+    const summary = document.getElementById('profit-loss-summary-details');
+    if (!summary.open || !isAdmin() || !profitLossSelectionMatches(report)) return;
+    const requestId = ++storeProfitLossSummaryRequestId;
+    const isCurrent = () => requestId === storeProfitLossSummaryRequestId && summary.open
+        && storeProfitLossReport === report && isAdmin() && profitLossSelectionMatches(report);
+    const target = document.getElementById('profit-loss-summary');
+    const text = window.PageInteractions.text;
+    target.textContent = text('profitLossSummaryLoading');
+    try {
+        const month = String(report.report_month).slice(0, 7);
+        const data = await api('GET', `/reports/store-profit-loss-summary?report_month=${month}-01`, undefined, {cache:'no-store', isCurrent});
+        if (!isCurrent()) return;
+        const headings = [text('profitLossSummaryField'), ...data.stores.map(store => store.name),
+            text('profitLossSummaryTotal'), text('profitLossSummaryRatio')];
+        const rows = data.rows.map(row => {
+            const amounts = [...row.values, row.total].map(amount => `<td>${formatProfitLossAmount(amount, row)}</td>`).join('');
+            return `<tr><th scope="row">${escapeHtml(row.label)}</th>${amounts}<td>${reportPercent(row.ratio)}</td></tr>`;
+        }).join('');
+        const warnings = data.stores.flatMap(store => (store.warnings || []).map(warning =>
+            `<p>${escapeHtml(store.name)} · ${escapeHtml(warning)}</p>`)).join('');
+        target.innerHTML = `<div class="table-scroll profit-loss-table"><table>
+            <thead><tr>${headings.map(label => `<th scope="col">${escapeHtml(label)}</th>`).join('')}</tr></thead>
+            <tbody>${rows}</tbody></table></div>${warnings}`;
+    } catch (error) {
+        if (isCurrent()) target.textContent = error.message || text('profitLossSummaryFailed');
     }
 }
 
@@ -3927,7 +4054,6 @@ async function loadInventoryImpairment() {
     const isCurrent = () => requestId === inventoryImpairmentRequestId && userId === CURRENT_USER_ID
         && reportDate === document.getElementById('inventory-impairment-date').value
         && view === document.getElementById('inventory-report-view').value;
-    window.ProfitLossEvidence?.clearRows?.('inventory');
     document.getElementById('inventory-impairment-scroll').hidden = isSummary;
     document.getElementById('inventory-summary-scroll').hidden = !isSummary;
     document.getElementById('inventory-report-title').textContent = isSummary ? '存货SKU汇总表' : '存货跌价准备明细表';
@@ -3942,7 +4068,7 @@ async function loadInventoryImpairment() {
     }
     try {
         const endpoint = isSummary ? '/reports/inventory-impairment/summary' : '/reports/inventory-impairment';
-        const rows = await api('GET', `${endpoint}?report_date=${encodeURIComponent(reportDate)}&include_evidence=true`, undefined, {cache:'no-store', isCurrent});
+        const rows = await api('GET', `${endpoint}?report_date=${encodeURIComponent(reportDate)}`, undefined, {cache:'no-store', isCurrent});
         if (!isCurrent()) return;
         tbody.innerHTML = rows.length ? rows.map(row => isSummary ? `<tr>
             <td class="text-left">${escapeHtml(row.store_name)}</td><td class="text-left"><strong>${escapeHtml(row.sku)}</strong></td><td class="text-left">${escapeHtml(row.product_name)}</td><td>${row.batch_count}</td>
@@ -3955,8 +4081,6 @@ async function loadInventoryImpairment() {
             ${inventoryComparisonCell(row)}<td class="text-left">${escapeHtml(row.status)}</td><td>${reportMoney(row.monthly_transfer_in_amount)}</td><td>${reportMoney(row.monthly_transfer_out_amount)}</td>
         </tr>`).join('') : `<tr><td colspan="${columnCount}" class="empty">当前截止日无${isSummary ? '入库批次' : '库存'}记录</td></tr>`;
         tfoot.innerHTML = inventoryReportTotals(rows, view);
-        window.ProfitLossEvidence?.renderRows?.('inventory', rows, {api, isCurrent, context:reportDate,
-            tbody:`#${prefix}-tbody`, tfoot:`#${prefix}-tfoot`, labelColumn:1});
     } catch (e) {
         if (isCurrent()) tbody.innerHTML = `<tr><td colspan="${columnCount}" class="empty">${escapeHtml(e.message)}</td></tr>`;
     }
@@ -3971,8 +4095,7 @@ async function loadProductLineProfit() {
     const isCurrent = () => requestId === productLineProfitRequestId && userId === CURRENT_USER_ID
         && month === defaultProfitLossMonth() && admin === isAdmin()
         && (!admin || storeId === document.getElementById('profit-loss-store').value);
-    window.ProfitLossEvidence?.clearRows?.('product');
-    const params = new URLSearchParams({report_month: `${month}-01`, report_date: document.getElementById('inventory-impairment-date').value, include_evidence:'true'});
+    const params = new URLSearchParams({report_month: `${month}-01`, report_date: document.getElementById('inventory-impairment-date').value});
     if (isAdmin()) {
         const storeId = document.getElementById('profit-loss-store').value;
         if (storeId) params.set('store_id', storeId);
@@ -3986,7 +4109,6 @@ async function loadProductLineProfit() {
             <td class="text-left"><strong>${escapeHtml(row.name)}</strong></td><td>${Number(row.current_quantity).toLocaleString(document.documentElement.lang)}</td><td>${reportMoney(row.current_revenue)}</td><td>${reportMoney(row.current_cost)}</td><td>${reportMoney(row.current_gross)}</td>
             <td>${reportPercent(row.current_margin)}</td><td>${reportPercent(row.previous_margin)}</td><td>${reportPercent(row.margin_change)}</td><td>${reportMoney(row.ytd_revenue)}</td><td>${reportMoney(row.ytd_gross)}</td><td>${reportPercent(row.ytd_margin)}</td><td class="text-left">${escapeHtml(row.note || '')}</td>
         </tr>`).join('') : `<tr><td colspan="12" class="empty">${escapeHtml(text('productProfitEmpty'))}</td></tr>`;
-        window.ProfitLossEvidence?.renderRows?.('product', rows, {api, isCurrent, context:month, tbody:'#product-line-profit-tbody'});
     } catch (e) { if (isCurrent()) tbody.innerHTML = `<tr><td colspan="12" class="empty">${escapeHtml(e.message)}</td></tr>`; }
 }
 
@@ -3997,7 +4119,6 @@ initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
 <script src="/report-exchange-rates.js" defer></script>
-<script src="/profit-loss-evidence.js" defer></script>
 <script src="/operation-logs.js" defer></script>
 <script src="/sales-import-progress.js" defer></script>
 <script src="/sales-import-results.js" defer></script>

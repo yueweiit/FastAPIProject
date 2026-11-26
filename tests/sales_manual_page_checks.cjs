@@ -18,7 +18,7 @@ function refreshHarness(file,held) {
  let expired=0;
  const c=vm.createContext({window:{},URLSearchParams,AbortController,crypto:require('node:crypto').webcrypto,
   document:{documentElement:{lang:'zh-CN'},getElementById:el,querySelectorAll:()=>[],addEventListener:()=>{}},
-  escapeHtml:String,authHeaders:()=>({}),formatApiError:String,isOperator:()=>true,
+  escapeHtml:String,authHeaders:()=>({}),formatApiError:String,isAdmin:()=>false,isOperator:()=>true,
   renderMonthlySalesSummary:rows=>{el('sales-monthly-tbody').innerHTML=JSON.stringify(rows);},
   renderPagination:id=>{el(id).innerHTML='PAGES';},
   handleSessionExpired:()=>{expired++;c.window.SalesLedger.reset();vm.runInContext('CURRENT_USER_ID=0',c);},
@@ -36,8 +36,8 @@ function refreshHarness(file,held) {
  vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
  vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
  vm.runInContext('let salesExportBusy=false,salesImportsRequestId=0;',c);
- for(const name of ['api','loadProductOptions','loadSales','loadSalesImports','loadPendingConfirmations']){
-  const match=html.match(new RegExp('^async function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}','m'));
+ for(const name of ['api','loadProductOptions','salesLedgerFilterParams','loadSales','loadSalesImports','loadPendingConfirmations']){
+  const match=html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}','m'));
   assert(match,name);vm.runInContext(match[0],c);
  }
  const ledger=c.window.SalesLedger;
@@ -108,7 +108,7 @@ async function main(){
   const ledger=c.window.SalesLedger;
   check(labels.every(n=>n.textContent&&n.textContent!==n.dataset.salesManualText),true);
   check(html.includes('id="s-sku" maxlength="128"'),true);
-  check(html.includes("document.getElementById('platform-sku-mappings-card').style.display = 'none'"),true);
+  check(/id="platform-sku-mappings-card"[^>]*style="display:none"/.test(html),true);
   const wrapper=html.match(/^async function createSale\(\) \{[\s\S]*?^\}/m)[0];
   vm.runInContext(wrapper,c);
   await c.createSale();check(calls.length,0);check(el('s-manual-status').textContent.includes('请填写'),true);

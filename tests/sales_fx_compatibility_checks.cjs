@@ -13,12 +13,12 @@ async function main(){
    document:{documentElement:{lang:'zh-CN'},getElementById:el,querySelectorAll:()=>[]},
    fetch:async()=>({ok:true,json:async()=>resource}),
    escapeHtml:v=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'),
-   isOperator:()=>false,loadProductOptions:async()=>{},loadPendingConfirmations:async()=>{},renderPagination:()=>{},
+   isAdmin:()=>false,isOperator:()=>false,loadProductOptions:async()=>{},loadPendingConfirmations:async()=>{},renderPagination:()=>{},
   });
   vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
   vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="",salesTotal=0,allProducts=[];',c);
-  for(const name of ['loadSales','renderMonthlySalesSummary']){
+  for(const name of ['salesLedgerFilterParams','loadSales','renderMonthlySalesSummary']){
    const fn=html.match(new RegExp(`^(?:async )?function ${name}\\([^\\n]*\\) \\{[\\s\\S]*?^\\}`,'m'));assert(fn);vm.runInContext(fn[0],c);
   }
   const old={id:1,product_id:1,order_no:'OLD',quantity:2,total_cost:10,order_total_cost_cny:10,currency:'MXN',sold_at:'2026-09-10T00:00:00',

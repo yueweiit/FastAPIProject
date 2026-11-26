@@ -48,6 +48,64 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         return {model.__tablename__: list(self.session.execute(select(*model.__table__.columns).order_by(model.id)))
                 for model in (InventoryBatch, Sale, SaleCostDetail, SalesImportBatch, SettlementEntry, SettlementEntryAllocation)}
 
+    async def test_admin_can_filter_list_monthly_totals_and_reconciliation_by_store_and_month(self):
+        batch_id = await self.import_bundle()
+        other = await fixtures.ImportStoreTests.upload(self, 8, detail=True)
+        self.assertEqual(other.status_code, 200, other.text)
+        later = await self.upload([{'order': 'LATER', 'name': '商品', 'quantity': 1, 'ordered_on': '2026-10-01'}])
+        self.assertEqual(later.status_code, 200, later.text)
+        legacy_sale = self.session.scalar(select(Sale).where(Sale.product_id == 2))
+        legacy_sale.store_id, legacy_sale.user_id = None, 2  # 历史销售按创建人店铺回退。
+        pending = self.session.scalar(select(SettlementEntry).where(
+            SettlementEntry.import_batch_id == batch_id, SettlementEntry.mapping_status == 'pending_confirmation',
+        ))
+        pending.store_id = None  # 原始结算行按导入批次店铺回退。
+        self.session.commit()
+        before = self.snapshot()
+        params = {'month': '2026-09', 'store_id': 7}
+        full = await self.request('GET', '/sales', params=params)
+        self.assertEqual(full.status_code, 200)
+        rows = full.json()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual({row['store_name'] for row in rows}, {'店铺7'})
+        self.assertIn(legacy_sale.id, {row['id'] for row in rows})
+        for page, row in enumerate(rows, 1):
+            paged = await self.request('GET', '/sales', params={**params, 'page': page, 'page_size': 1})
+            self.assertEqual(paged.json()['total'], 3)
+            self.assertEqual([item['id'] for item in paged.json()['items']], [row['id']])
+        aggregate = await self.request('GET', '/sales/monthly-summary', params=params)
+        summary, = aggregate.json()
+        self.assertEqual((summary['month'], summary['sales_count'], summary['settlement_event_count']), ('2026-09', 2, 1))
+        self.assertEqual(Decimal(summary['sales_revenue_cny']), sum(Decimal(row['sales_revenue_cny']) for row in rows))
+        download = await self.request('GET', '/sales/export', params=params)
+        self.assertEqual(download.status_code, 200, download.text if download.status_code != 200 else '')
+        self.assertIn('sales_store_7_202609.xlsx', download.headers['content-disposition'])
+        self.assertEqual(download.headers.get('X-Sales-Export-Store-Id'), '7')
+        book = load_workbook(io.BytesIO(download.content), data_only=True)
+        originals, components = self.records(book), self.records(book, '销售拆分明细')
+        self.assertEqual({row['店铺'] for row in originals + components}, {'店铺7'})
+        self.assertEqual({row['订单号'] for row in originals}, {'00042', 'PENDING'})
+        self.assertIn(f'E{pending.id}', {row['关联编号'] for row in originals})
+        self.assertEqual(len(components), 3)
+        self.assertAlmostEqual(Decimal(summary['sales_revenue_cny']),
+                               sum(Decimal(str(row['店铺收入（元）'])) for row in components), places=10)
+        self.assertNotIn('店铺8', '\n'.join(str(value) for sheet in book for row in sheet.values for value in row))
+        self.assertEqual({row['店铺'] for row in self.records(await self.workbook(month='2026-09'))}, {'店铺7', '店铺8'})
+        self.actor = SimpleNamespace(id=2, role='viewer', store_id=7)
+        for endpoint in ('/sales', '/sales/monthly-summary'):
+            bound = await self.request('GET', endpoint, params=params)
+            overridden = await self.request('GET', endpoint, params={**params, 'store_id': 8})
+            self.assertEqual((bound.status_code, overridden.status_code), (200, 200))
+            self.assertEqual(overridden.json(), bound.json())
+        bound_book = await self.workbook(**params)
+        overridden_book = await self.workbook(**{**params, 'store_id': 8})
+        for name in bound_book.sheetnames:
+            self.assertEqual(list(overridden_book[name].values), list(bound_book[name].values))
+        overridden = await self.request('GET', '/sales/export', params={**params, 'store_id': 8})
+        self.assertEqual(overridden.status_code, 200)
+        self.assertNotIn('X-Sales-Export-Store-Id', overridden.headers)
+        self.assertEqual(self.snapshot(), before)
+
     def add_shared_source(self, original, *, store_id=7, same_batch=False):
         batch_id = original.import_batch_id
         if not same_batch:
@@ -124,6 +182,48 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
                                    'OTHER-SOURCE-SKU', 'Otro título', '另一来源名称', 'OTHER-FX',
                                    'OTHER-SOURCE-SPEC', 'OTHER-LOCAL-SPEC'):
                         self.assertNotIn(hidden, exported_text)
+                self.assertEqual(self.snapshot(), before)
+
+    async def test_store_ledger_summary_and_export_omit_cross_store_sources(self):
+        response = await self.upload([
+            {'name': '商品', 'quantity': 1, 'net': 200, 'total': 180},
+            {'order': 'REFUND-1', 'type': '退款', 'name': '商品', 'quantity': -1, 'net': -20, 'total': -18},
+        ])
+        self.assertEqual(response.status_code, 200, response.text)
+        sale = self.session.scalar(select(Sale))
+        original = self.session.scalar(select(SettlementEntry).where(SettlementEntry.transaction_type == '订单'))
+        foreign = self.add_shared_source(original, store_id=8)
+        original.store_id = None  # 本店结算行按导入批次归属读取。
+        foreign.store_id = None
+        foreign.sale_id = sale.id
+        foreign.currency, foreign.net_product_sales, foreign.settlement_total = 'CNY', 50, 40
+        self.session.commit()
+        for link_type in ('direct', 'allocation'):
+            with self.subTest(link_type=link_type):
+                if link_type == 'allocation':
+                    self.allocate_source(foreign, sale.id)
+                before = self.snapshot()
+                for actor, requested_store in ((SimpleNamespace(id=1, role='admin', store_id=None), 7),
+                                               (SimpleNamespace(id=2, role='viewer', store_id=7), 8)):
+                    self.actor = actor
+                    params = {'month': '2026-09', 'store_id': requested_store}
+                    ledger = await self.request('GET', '/sales', params=params)
+                    paged = await self.request('GET', '/sales', params={**params, 'page': 1, 'page_size': 2})
+                    summary = await self.request('GET', '/sales/monthly-summary', params=params)
+                    self.assertEqual((ledger.status_code, paged.status_code, summary.status_code), (200, 200, 200))
+                    self.assertEqual(paged.json()['items'], ledger.json())
+                    sold = next(row for row in ledger.json() if row['id'] == sale.id)
+                    self.assertEqual(Decimal(sold['sales_revenue_cny']), Decimal('200'))
+                    self.assertEqual(Decimal(summary.json()[0]['sales_revenue_cny']), Decimal('180'))
+                    book = await self.workbook(**params)
+                    self.assertEqual({row['订单号'] for row in self.records(book)}, {original.order_id, 'REFUND-1'})
+                    self.assertEqual(sum(row['店铺收入（元）'] for row in self.records(book, '销售拆分明细')), 180)
+                    book.close()
+                    false_match = {**params, 'keyword': 'OTHER-DISPLAY-ORDER'}
+                    for endpoint in ('/sales', '/sales/monthly-summary'):
+                        filtered = await self.request('GET', endpoint, params=false_match)
+                        self.assertEqual(filtered.json(), [])
+                    self.assertEqual((await self.request('GET', '/sales/export', params=false_match)).status_code, 404)
                 self.assertEqual(self.snapshot(), before)
 
     async def test_empty_authorized_source_set_does_not_restore_unscoped_context(self):
@@ -376,15 +476,17 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         sale = self.session.scalar(select(Sale).where(Sale.product_id == 3))
         sale.store_id = 8
         self.session.commit()
+        admin = await self.workbook(store_id=7, month='2026-09')
         self.actor = SimpleNamespace(id=2, username='viewer', role='viewer', store_id=7)
-        book = await self.workbook(f'/sales/imports/{batch_id}/export')
-        self.assertNotIn('WHITE', {row['本地商品 SKU'] for row in self.records(book, '销售拆分明细')})
-        original = self.records(book)[0]
-        self.assertIsNone(original['销售成本（元）'])
-        self.assertIsNone(original['出库明细数'])
-        self.assertIsNone(original['实际出库件数'])
-        self.assertIn('不完整', original['待核对原因'])
-        self.assertNotIn(f'S{sale.id}', original['销售明细编号'].splitlines())
+        viewer = await self.workbook(f'/sales/imports/{batch_id}/export')
+        for book in (admin, viewer):
+            self.assertNotIn('WHITE', {row['本地商品 SKU'] for row in self.records(book, '销售拆分明细')})
+            original = self.records(book)[0]
+            self.assertIsNone(original['销售成本（元）'])
+            self.assertIsNone(original['出库明细数'])
+            self.assertIsNone(original['实际出库件数'])
+            self.assertIn('不完整', original['待核对原因'])
+            self.assertNotIn(f'S{sale.id}', original['销售明细编号'].splitlines())
 
     async def test_manual_settlement_and_legacy_csv_do_not_invent_original_amounts(self):
         response = await self.request('POST', '/sales/manual-settlements', json={
@@ -417,7 +519,7 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(self.session.in_transaction())
             return build_sales_workbook(*args, **kwargs)
         with patch.object(self.db, 'execute', checked), patch('routers.sales.build_sales_workbook', side_effect=build):
-            await self.workbook(month='2026-09', keyword='吸盘', product_id=3)
+            await self.workbook(month='2026-09', keyword='吸盘', product_id=3, store_id=7)
             await self.workbook(f'/sales/imports/{batch_id}/export')
         self.assertTrue(any('UNION' in sql for sql in compiled))
         self.assertTrue(all(sql.lstrip().startswith('SELECT') for sql in compiled))

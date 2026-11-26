@@ -1,6 +1,7 @@
 """财务增强入口；显式启用后使用独立凭证、调整层和不可变版本。"""
 from datetime import date
 from functools import wraps
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -8,6 +9,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from auth import RequireAdmin, RequireAnyRole, RequireOperator
 from database import get_db
@@ -264,7 +266,9 @@ async def compare_financial_version(version_id: int, db: AsyncSession = Depends(
 @router.get("/versions/{version_id}/export")
 async def export_version(version_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(RequireAnyRole)):
     row = await scoped_version(db, user, version_id)
-    return StreamingResponse(version_workbook(row), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    snapshot = SimpleNamespace(payload=row.payload, report_month=row.report_month, version=row.version, status=row.status)
+    output = await run_in_threadpool(version_workbook, snapshot)
+    return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="financial_{row.report_month}_v{row.version}.xlsx"'})
 
 

@@ -33,7 +33,7 @@ async function verify(path) {
     };
     element('inventory-report-view').value = view;
     element('inventory-impairment-date').value = '2026-09-30';
-    const context = vm.createContext({document: {getElementById: element}, window:{ProfitLossEvidence:{clear(){},render(){}}}, CURRENT_USER_ID:1,
+    const context = vm.createContext({document: {getElementById: element}, CURRENT_USER_ID:1,
       api: async () => [fixture], console});
     vm.runInContext(functions.join('\n') + '\n inventoryImpairmentRequestId = 0;', context);
     await vm.runInContext('loadInventoryImpairment()', context);

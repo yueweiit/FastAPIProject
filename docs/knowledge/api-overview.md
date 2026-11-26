@@ -2,7 +2,7 @@
 
 ## 路由组织
 
-[main.py](../../main.py) 注册十组APIRouter，当前源码共有115个路由端点（按HTTP方法与路径计数），另有首页、静态脚本和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
+[main.py](../../main.py) 注册十组APIRouter，当前源码共有114个路由端点（按HTTP方法与路径计数），另有首页、静态脚本和静态挂载。接口详细清单、请求参数、权限和响应由各模块文档维护：
 
 | 前缀 | 数量 | 文档 | 实现 |
 | --- | ---: | --- | --- |
@@ -13,7 +13,7 @@
 | /sales | 20（含店铺映射版本及只读预览、待确认重试、结算补录、导入进度/结果回看、筛选/导入批次对账导出、单件/整单计算明细） | [销售 API](../modules/sales/api.md) | [routers/sales.py](../../routers/sales.py) |
 | /finance-masters | 16 | [主数据 API](../modules/finance-masters/api.md) | [routers/finance_masters.py](../../routers/finance_masters.py) |
 | /financial-control | 22 | [财务增强API](../modules/financial-control/api.md) | [routers/financial_control.py](../../routers/financial_control.py) |
-| /reports | 13（含月度汇率、只读跨店损益汇总及07/09/10/12依据分页） | [报表 API](../modules/reports/api.md) | [routers/reports.py](../../routers/reports.py) |
+| /reports | 11（含跨店损益汇总、手动月度汇率保存和自动参考查询） | [报表 API](../modules/reports/api.md) | [routers/reports.py](../../routers/reports.py) |
 | /operation-logs | 3（全部GET） | [操作日志 API](../modules/operation-logs/api.md) | [routers/operation_logs.py](../../routers/operation_logs.py) |
 
 默认 FastAPI 文档入口为 /docs、/redoc 和 /openapi.json，代码未显式关闭。2026-10-12 商品导入修改后，已在本机核对实际 OpenAPI；不代表服务器已更新。

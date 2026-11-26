@@ -40,7 +40,7 @@ def check_export_limit(count, limit):
                                         "message": TEXT["zh-CN"]["too_large"]})
 
 
-async def export_sources(db, user, items, *, month, keyword, product_id, import_batch_id, limit):
+async def export_sources(db, user, items, *, month, keyword, product_id, import_batch_id, limit, store_id=None):
     """当前台账来源 + 同筛选待确认行；批次导出不继承页面筛选。"""
     owner = func.coalesce(SettlementEntry.store_id, SalesImportBatch.store_id, User.store_id)
     stmt = (select(SettlementEntry, owner.label("source_store_id"), SalesImportBatch.file_type)
@@ -48,6 +48,8 @@ async def export_sources(db, user, items, *, month, keyword, product_id, import_
             .outerjoin(User, User.id == SalesImportBatch.user_id))
     if user.role != "admin":
         stmt = stmt.where(owner == user.store_id)
+    elif store_id is not None:
+        stmt = stmt.where(owner == store_id)
     if import_batch_id is not None:
         stmt = stmt.where(SettlementEntry.import_batch_id == import_batch_id)
     else:

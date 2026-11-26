@@ -1,8 +1,6 @@
 # 现有编码与维护约定
 
-07/12依据回归：`.\.venv\Scripts\python.exe -m unittest tests.test_report_row_evidence -v`覆盖实际SQLite只读取数、来源合计、原金额不变、共享库存匿名出库、跨店来源隐藏、换绑/降权、归属转移及尾差、旧/新版本、公式缓存、正反链接和特殊字符；包括07未知公式结果在独立/附件/旧版导出中保持空值，以及12人工/台账正负抵消来源和零/未知分母边界。`node tests/report_row_evidence_browser_checks.cjs`运行两份实际页面加载函数与共用抽屉，验证字段切换、来源分页、未知值、零净额凭据、旧响应、查询刷新/店铺变更和会话失效；不启动main、不访问业务库。
-
-09/10计算依据回归：`.\.venv\Scripts\python.exe -m unittest tests.test_profit_loss_evidence -v`使用隔离SQLite/ASGI核对来源合计、原始/拆分关联、月汇率、人工与OA/台账互斥、未知金额、跨年、权限、真实附件导出及旧/新固定版本；覆盖跨店/缺失归属、旧式直接关联、历史归属回退、JSON对象重排后的双向链接、10表比例分子/分母及零/未知/正负舍入边界，并检查查询仅SELECT、业务记录不变。`node tests/profit_loss_evidence_browser_checks.cjs`检查两份实际页面渲染函数、共享侧栏、分页、旧接口、特殊字符、失效响应、来源受限提示、同组比例输入和移动端。原`profit_loss_page_checks.cjs`、`report_fx_page_checks.cjs`及导入/FIFO/准备回归仍需按影响范围执行；不启动main或访问业务库。
+财务附件回归使用 `test_financial_facts` 核对报表与 Excel 金额、并发生成、公式缓存和分块响应，并用 `node tests/financial_attachments_export_browser_checks.cjs` 验证两份首页的汇总、下载防重及 5xx 正文挂起时恢复。销售店铺筛选使用 `test_sales_reconciliation_export` 核对跨店关联时的金额、搜索和权限，用 `node tests/sales_store_filter_browser_checks.cjs` 验证单店确认缺失或错误时停止下载。`test_financial_controls` 包含带退役依据字段的旧快照比对和版本复用回归。
 
 ## 实际代码习惯
 

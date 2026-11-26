@@ -770,8 +770,6 @@ class StoreProfitLossResponse(BaseModel):
     calculation_policy: str | None = None
     exchange_rate_settings: list[dict] = Field(default_factory=list)
     supports_manual_fx: bool = True
-    # 缺失表示旧版本未保存依据；只读查询发送摘要和分页快照令牌，固定版本保存完整依据。
-    evidence: dict | None = None
 
 
 # ========== 财务主数据 ==========

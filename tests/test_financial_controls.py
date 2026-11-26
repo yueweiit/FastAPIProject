@@ -475,6 +475,19 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         new_excel = load_workbook(version_workbook(second), data_only=True)
         self.assertEqual(old_excel.worksheets[0]["F2"].value, 10)
         self.assertEqual(new_excel.worksheets[0]["F2"].value, 30)
+        saved_with_evidence = copy.deepcopy(saved)
+        saved_with_evidence["profit_loss"]["evidence"] = {"schema_version": "profit_loss_evidence_v1"}
+        for key in ("inventory", "product_lines"):
+            for row in saved_with_evidence[key]:
+                row["_evidence"] = {"schema_version": "report_row_evidence_v1"}
+        version_with_evidence = SimpleNamespace(payload=saved_with_evidence, report_month=original.report_month,
+            version=original.version, status=original.status)
+        archived = load_workbook(version_workbook(version_with_evidence), data_only=True)
+        self.assertEqual(archived.sheetnames, old_excel.sheetnames)
+        for name in old_excel.sheetnames:
+            self.assertEqual(list(archived[name].values), list(old_excel[name].values), name)
+        self.assertEqual(saved_with_evidence["profit_loss"]["evidence"]["schema_version"], "profit_loss_evidence_v1")
+        archived.close()
         duplicate = await save_version(self.db, self.admin, FinancialVersionRequest(
             request_key="version-003", store_id=7, report_month=date(2026, 9, 1)))
         self.assertEqual(duplicate.id, second.id)
@@ -489,6 +502,39 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         self.assertEqual(comparison["changes"], [])
         self.assertTrue(comparison["changed"])
         self.assertEqual(len(third.payload["cost_manifest"]), 2)
+
+    async def test_retired_evidence_fields_do_not_change_comparison_or_create_duplicate_versions(self):
+        month = date(2026, 9, 1)
+        options = {"oa_values": {"office": {}, "salaries": {}, "shared_admin_by_store": {},
+                                 "shared_admin_unresolved": {}}, "active_store_count": 2}
+        original = await save_version(self.db, self.admin, FinancialVersionRequest(
+            request_key="legacy-evidence-original", store_id=7, report_month=month), **options)
+        legacy = copy.deepcopy(original.payload)
+        legacy["profit_loss"]["evidence"] = {"schema_version": "profit_loss_evidence_v1"}
+        for section in ("inventory", "product_lines"):
+            for row in legacy[section]:
+                row["_evidence"] = {"schema_version": "report_row_evidence_v1"}
+        legacy_digest = controls.digest(legacy)
+        original.payload, original.source_digest = legacy, legacy_digest
+        changed = copy.deepcopy(legacy)
+        changed["expense_manifest"].append({"id": 90, "category": "advertising", "amount": "1.00",
+            "status": "posted", "source_ref": "historical-voucher"})
+        newer = FinancialReportVersion(request_key="legacy-evidence-newer", store_id=7, report_month=month,
+            version=2, source_digest=controls.digest(changed), payload=changed, status=original.status, created_by=1)
+        self.session.add(newer)
+        await self.db.commit()
+
+        comparison = await compare_version(self.db, self.admin, original, **options)
+        self.assertEqual(comparison["changes"], [])
+        self.assertFalse(comparison["changed"])
+        self.assertTrue((await compare_version(self.db, self.admin, newer, **options))["changed"])
+        reused = await save_version(self.db, self.admin, FinancialVersionRequest(
+            request_key="legacy-evidence-retry", store_id=7, report_month=month), **options)
+        self.assertEqual(reused.id, original.id)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(FinancialReportVersion)), 2)
+        self.session.refresh(reused)
+        self.assertEqual(reused.payload, legacy)
+        self.assertEqual(reused.source_digest, legacy_digest)
 
     async def test_ownership_change_preserves_saved_version_and_exports_reserve_transfers(self):
         from services.batch_impairment_history import save_change

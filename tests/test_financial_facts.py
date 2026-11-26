@@ -1,18 +1,25 @@
 """隔离SQLite验证财务事实查询和跨入口勾稽，不运行应用生命周期。"""
 
+import asyncio
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
+from io import BytesIO
+from threading import Barrier, get_ident
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from openpyxl import Workbook
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
 
-from database import Base
+from auth import RequireAnyRole
+from database import Base, get_db
 from models import (InventoryBatch, Product, Sale, SaleCostDetail, SalesImportBatch,
                     SettlementEntry, SettlementEntryAllocation, Store, StoreProfitLossReport, User)
+from routers import reports as reports_api
 from routers.reports import (_build_product_line_profit_sheet, _build_store_profit_loss_summary_sheet,
                              _build_store_profit_loss_sheet,
                              _build_store_profit_loss_values, _product_line_profit_data,
@@ -34,6 +41,9 @@ class AsyncFacade:
 
     async def scalar(self, statement):
         return self.session.scalar(statement)
+
+    async def get(self, model, key):
+        return self.session.get(model, key)
 
 
 class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
@@ -279,6 +289,82 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         original = next(x for x in full if x.id == 1)
         self.assertEqual(original.cost_details[0].batch_no, "TEST")
         self.assertEqual(sum(x.profit_cny for x in full), Decimal(37))
+
+    async def test_financial_downloads_keep_report_values_and_stream_without_evidence_sheets(self):
+        user = SimpleNamespace(id=1, role='admin', store_id=7)
+        app = FastAPI()
+        app.include_router(reports_api.router)
+        app.dependency_overrides[get_db] = lambda: self.db
+        app.dependency_overrides[RequireAnyRole] = lambda: user
+        chunks = {}
+
+        async def capture_stream(scope, receive, send):
+            sizes = []
+
+            async def capture(message):
+                if message['type'] == 'http.response.body' and message.get('body'):
+                    sizes.append(len(message['body']))
+                await send(message)
+
+            await app(scope, receive, capture)
+            if scope['path'].endswith('/financial-attachments/export'):
+                chunks[scope['query_string']] = sizes
+
+        request_thread = get_ident()
+        together = Barrier(2, timeout=10)
+        serialize = reports_api._workbook_bytes_with_formula_cache
+
+        def serialize_concurrently(workbook, cache):
+            self.assertNotEqual(get_ident(), request_thread)
+            together.wait()
+            return serialize(workbook, cache)
+
+        oa = {'office': {}, 'salaries': {}, 'shared_admin_by_store': {}, 'shared_admin_unresolved': {}}
+        month = {'report_month': '2026-09-01'}
+        timing = {**month, 'report_date': '2026-09-30'}
+        async with AsyncClient(transport=ASGITransport(app=capture_stream), base_url='http://fixture') as client:
+            with patch.object(reports_api, '_prepare_profit_loss_oa_values', new=AsyncMock(return_value=(2, oa))):
+                with patch.object(reports_api, '_workbook_bytes_with_formula_cache', side_effect=serialize_concurrently), \
+                     patch.object(reports_api.ElementTree, 'register_namespace') as register:
+                    first, second = await asyncio.gather(*(client.get('/reports/financial-attachments/export',
+                        params={**timing, 'store_id': store_id}) for store_id in (7, 8)))
+                    register.assert_not_called()
+                month_report = await client.get('/reports/store-profit-loss', params={**month, 'store_id': 7})
+                summary = await client.get('/reports/store-profit-loss-summary', params=month)
+                items = await client.get('/reports/product-line-profit', params=timing)
+                inventory = await client.get('/reports/inventory-impairment', params={'report_date': timing['report_date']})
+                user.role = 'viewer'
+                self.assertEqual((await client.get('/reports/store-profit-loss-summary', params=month)).status_code, 403)
+        for response in (first, second, month_report, summary, items, inventory):
+            self.assertEqual(response.status_code, 200)
+        for response, revenue in ((first, 80), (second, -900)):
+            size = int(response.headers['content-length'])
+            self.assertEqual(size, len(response.content))
+            self.assertEqual(chunks[response.request.url.query], [min(65536, size - start) for start in range(0, size, 65536)])
+            book = load_workbook(BytesIO(response.content), data_only=True)
+            self.assertEqual(book.sheetnames, [reports_api.INVENTORY_IMPAIRMENT_SHEET,
+                reports_api.FINANCIAL_ATTACHMENT_SHEET, reports_api.STORE_PROFIT_LOSS_SUMMARY_SHEET,
+                reports_api.PRODUCT_LINE_PROFIT_SHEET, reports_api.INVENTORY_IMPAIRMENT_SUMMARY_SHEET])
+            self.assertEqual(book[reports_api.FINANCIAL_ATTACHMENT_SHEET]['B3'].value, revenue)
+            self.assertEqual(book[reports_api.INVENTORY_IMPAIRMENT_SHEET]['H2'].value, 100)
+            book.close()
+        book = load_workbook(BytesIO(first.content), data_only=True)
+        self.addCleanup(book.close)
+        value = lambda amount: float(amount) if amount is not None else None
+        individual, cross_store = month_report.json(), summary.json()
+        self.assertNotIn('evidence', individual)
+        self.assertEqual([store['id'] for store in cross_store['stores']], [7, 8])
+        for number, row in enumerate(individual['rows'], 2):
+            sheet = book[reports_api.FINANCIAL_ATTACHMENT_SHEET]
+            for cell, period in zip(sheet[number][1:4], ('current', 'previous', 'ytd')):
+                self.assertAlmostEqual(cell.value, value(row['value'][period]), places=10)
+        for number, row in enumerate(cross_store['rows'], 2):
+            sheet = book[reports_api.STORE_PROFIT_LOSS_SUMMARY_SHEET]
+            for cell, amount in zip(sheet[number][1:], [*row['values'], row['total'], row['ratio']]):
+                self.assertAlmostEqual(cell.value, value(amount), places=10)
+        self.assertEqual(book[reports_api.INVENTORY_IMPAIRMENT_SHEET]['P2'].value, value(inventory.json()[0]['book_value']))
+        self.assertEqual(book[reports_api.PRODUCT_LINE_PROFIT_SHEET]['C2'].value, value(items.json()[0]['current_revenue']))
+        self.assertEqual(self.session.get(InventoryBatch, 1).remaining_quantity, 6)
 
     async def test_compensation_income_uses_signed_settlement_and_saved_fx_without_stock_changes(self):
         self.entry(6,net=999,total='117.50',quantity=0,kind='物流赔付',product=None,currency='MXN',rate='0.4')

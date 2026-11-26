@@ -1,7 +1,5 @@
 # 国际化现状与渐进扩展约定
 
-07/12新增“口径与依据”复用`static/profit-loss-evidence.js`局部zh-CN字典；后端字段键/来源状态保持语言中立，标签由`services/report_row_evidence.py`的LABELS集中映射，字段说明和Excel中文输出沿用当前语言范围。日期、数量、金额和比例仍按原中文报表格式展示，未新增翻译依赖、语言或业务数据字段。
-
 销售映射和扣库预览文本使用sales-pending.js及sales-deduction-preview.js的局部zh-CN字典，按页面lang回退；导入帮助复用PageInteractions.importDateHelp，审计标签复用operation-logs.js。key_kind、method、status为中立编码；API冲突使用稳定code及现有message。来源名称、规格、编码、单位按原业务文本安全显示，不自动翻译。当前仅中文，无新翻译依赖；Excel原列与语言契约保持。
 
 初始化扣减的来源编码opening_deduction在inventory-workspace.js的zh-CN字典集中展示；API business_kind使用inventory_sale/opening_deduction/settlement，规则匹配使用店铺ID和平台SKU，不判断中文名称。准备回放说明及维护原因沿用既有后端中文备注契约；无新语言/依赖。分类数量冲突返回稳定码opening_deduction_quantity_invalid。
@@ -52,8 +50,6 @@
 新增用户可见文本应集中组织并登记待翻译项；后续建立正式机制时同步所有已支持语言。当前无统一机制的功能应在实施方案说明文本组织方式，不借局部修改批量重写旧页面。
 
 ## 交付检查与已知限制
-
-- 09/10计算依据侧栏使用`profit-loss-evidence.js`的局部`TEXT['zh-CN']`，复用页面既有币种格式；依据服务集中维护`PERIODS/SOURCES/STATUS/NOTES`及来源受限提示`SOURCE_SCOPE_WARNING`，字段标签沿用报表行定义，Excel依据表复用同一结果。`scope_status=restricted`为中立编码，不按提示文案判断；比例代入过程复用实际汇总字段标签，未知值与不适用占比沿用局部字典。当前仅支持既有中文，没有新增语言、依赖或业务名称迁移。
 
 - 销售跌价新增的“订单创建日期缺失/来源日期不一致”说明集中在`sales_costs.py`的日期来源解析中，经既有`impairment_review_reason`传给页面及Excel；未知日期/比例/金额复用既有待核对展示，不把结算日标为创建日。沿用现有中文信息契约，无新增语言或前端枚举。
 

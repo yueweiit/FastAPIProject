@@ -77,7 +77,7 @@ from auth import RequireOperator, RequireAnyRole
 
 from services.business_audit import BusinessAuditRoute
 from services.sales_classification import (NON_INVENTORY, INCOME_ONLY_GIFT, inventory_sales_condition,
-    is_opening_deduction, non_inventory_skus, is_income_only_order, FINANCIAL_CLASSIFICATION_KEY)
+    is_opening_deduction, non_inventory_skus, is_income_only_order, settlement_store_id, FINANCIAL_CLASSIFICATION_KEY)
 
 router = APIRouter(prefix="/sales", tags=["销售管理"], route_class=BusinessAuditRoute)
 
@@ -628,10 +628,14 @@ def _require_bound_store(user: User) -> int:
     return user.store_id
 
 
-def _sale_store_scope(user: User):
-    if user.role == "admin":
+def _sales_read_store_id(user: User, requested_store_id: int | None = None) -> int | None:
+    return requested_store_id if user.role == "admin" else _require_bound_store(user)
+
+
+def _sale_store_scope(user: User, requested_store_id: int | None = None):
+    store_id = _sales_read_store_id(user, requested_store_id)
+    if store_id is None:
         return None
-    store_id = _require_bound_store(user)
     return or_(
         Sale.store_id == store_id,
         and_(
@@ -1575,14 +1579,17 @@ def _build_sale_response(
 
 
 async def _sale_import_context(
-    db: AsyncSession, sales: list[Sale], *, source_entry_ids: set[int] | None = None
+    db: AsyncSession, sales: list[Sale], *, source_entry_ids: set[int] | None = None,
+    source_store_id: int | None = None,
 ) -> tuple[dict[int, dict], dict[int, str]]:
-    """Resolve imported amounts/metadata; exports may restrict their source rows."""
+    """Resolve imported amounts and metadata from the requested source rows and store."""
     if not sales:
         return {}, {}
 
     sale_by_id = {sale.id: sale for sale in sales}
     source_filters = [SettlementEntry.id.in_(source_entry_ids)] if source_entry_ids is not None else []
+    if source_store_id is not None:
+        source_filters.append(settlement_store_id() == source_store_id)
     persisted_store_ids = {sale.store_id for sale in sales if sale.store_id is not None}
     store_by_sale: dict[int, str] = {}
     if persisted_store_ids:
@@ -1822,8 +1829,10 @@ async def _sale_import_context(
     return import_context_by_sale, store_by_sale
 
 
-async def _sale_reporting_context(db, sales, *, source_entry_ids=None):
-    contexts, stores = await _sale_import_context(db, sales, source_entry_ids=source_entry_ids)
+async def _sale_reporting_context(db, sales, *, source_entry_ids=None, source_store_id=None):
+    contexts, stores = await _sale_import_context(
+        db, sales, source_entry_ids=source_entry_ids, source_store_id=source_store_id,
+    )
     return await sale_report_contexts(db, sales, contexts), stores
 
 
@@ -2154,6 +2163,7 @@ def _sale_filter_values(
     keyword: str | None,
     month: str | None,
     user: User,
+    *, store_id: int | None = None,
 ):
     conditions = [inventory_sales_condition()]
     normalized_keyword = keyword.strip() if keyword and keyword.strip() else None
@@ -2167,6 +2177,9 @@ def _sale_filter_values(
                             SettlementEntry.product_name.ilike(pattern),
                             SettlementEntry.raw_data["产品名"].as_string().ilike(pattern),
                             SettlementEntry.transaction_type.ilike(pattern))
+        source_store_id = _sales_read_store_id(user, store_id)
+        if source_store_id is not None:
+            source_matches = and_(source_matches, settlement_store_id() == source_store_id)
         conditions.append(
             or_(Product.name.ilike(pattern), Product.sku.ilike(pattern), Sale.order_no.ilike(pattern),
                 Sale.id.in_(select(SettlementEntry.sale_id).where(source_matches)),
@@ -2184,7 +2197,7 @@ def _sale_filter_values(
             1,
         )
         conditions.extend((Sale.sold_at >= month_start, Sale.sold_at < next_month))
-    store_scope = _sale_store_scope(user)
+    store_scope = _sale_store_scope(user, store_id)
     if store_scope is not None:
         conditions.append(store_scope)
     return conditions, normalized_keyword
@@ -2196,9 +2209,9 @@ async def _filtered_sales(
     keyword: str | None,
     month: str | None,
     user: User,
-    *, include_cost_details: bool = False,
+    *, include_cost_details: bool = False, store_id: int | None = None,
 ) -> list[Sale]:
-    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
+    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user, store_id=store_id)
     stmt = select(Sale)
     if include_cost_details:
         stmt = stmt.options(selectinload(Sale.cost_details))
@@ -2283,18 +2296,21 @@ async def monthly_sales_summary(
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    store_id: Annotated[int | None, Query(gt=0)] = None,
 ):
     """按月份汇总销售记录，金额统一返回人民币。"""
-    sales = await _filtered_sales(db, product_id, keyword, month, user)
-    import_context_by_sale, _ = await _sale_reporting_context(db, sales)
+    scoped_store_id = _sales_read_store_id(user, store_id)
+    sales = await _filtered_sales(db, product_id, keyword, month, user, store_id=store_id)
+    import_context_by_sale, _ = await _sale_reporting_context(db, sales, source_store_id=scoped_store_id)
     start = datetime.strptime(month, "%Y-%m").date() if month else None
     end = (start.replace(year=start.year + 1, month=1) if start.month == 12
            else start.replace(month=start.month + 1)) if start else None
     events = await _sales_financial_events(
-        db, None if user.role == "admin" else {_require_bound_store(user)}, start, end,
+        db, {scoped_store_id} if scoped_store_id is not None else None, start, end,
         product_id=product_id, keyword=keyword.strip() if keyword else None,
     )
-    return _monthly_sales_summary(sales, import_context_by_sale, events, await sale_cost_context(db, sales))
+    costs = await sale_cost_context(db, sales, source_store_id=scoped_store_id)
+    return _monthly_sales_summary(sales, import_context_by_sale, events, costs)
 
 
 async def _attach_sale_product_identity(db, rows):
@@ -2309,8 +2325,10 @@ async def _attach_sale_product_identity(db, rows):
             row.local_specification = product.specification
 
 
-async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids=None):
-    import_context_by_sale, store_by_sale = await _sale_reporting_context(db, sales, source_entry_ids=source_entry_ids)
+async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids=None, source_store_id=None):
+    import_context_by_sale, store_by_sale = await _sale_reporting_context(
+        db, sales, source_entry_ids=source_entry_ids, source_store_id=source_store_id,
+    )
 
     batch_ids = {detail.batch_id for sale in sales for detail in sale.cost_details}
     batch_map = {}
@@ -2321,7 +2339,7 @@ async def _sale_response_rows(db, sales, *, cost_contexts=None, source_entry_ids
         batch_map = dict(batches_result.all())
 
     cost_contexts = cost_contexts if cost_contexts is not None else await sale_cost_context(
-        db, sales, source_entry_ids=source_entry_ids)
+        db, sales, source_entry_ids=source_entry_ids, source_store_id=source_store_id)
 
     response = []
     for sale in sales:
@@ -2391,10 +2409,12 @@ async def list_sales(
     page_size: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    store_id: Annotated[int | None, Query(gt=0)] = None,
 ):
     """列出销售，支持按月份、商品名称或 SKU 筛选。"""
     requested_page = page
-    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
+    scoped_store_id = _sales_read_store_id(user, store_id)
+    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user, store_id=store_id)
     stmt = select(Sale).options(selectinload(Sale.cost_details))
     count_stmt = select(func.count()).select_from(Sale)
     if normalized_keyword:
@@ -2408,12 +2428,12 @@ async def list_sales(
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(stmt)
     sales = result.scalars().all()
-    response = await _sale_response_rows(db, sales)
+    response = await _sale_response_rows(db, sales, source_store_id=scoped_store_id)
     start_date = datetime.strptime(month, "%Y-%m").date() if month else None
     end_date = (start_date.replace(year=start_date.year + 1, month=1) if start_date.month == 12
                 else start_date.replace(month=start_date.month + 1)) if start_date else None
     events = await _sales_financial_events(
-        db, None if user.role == "admin" else {_require_bound_store(user)}, start_date, end_date,
+        db, {scoped_store_id} if scoped_store_id is not None else None, start_date, end_date,
         product_id=product_id, keyword=normalized_keyword,
     )
     if events:
@@ -2429,8 +2449,9 @@ async def list_sales(
         await _attach_sale_product_identity(db, event_responses)
         if page is not None:
             # 先合并全部记录再分页，费用/退款不能造成丢行、重复页或缺失成本明细。
-            all_sales = await _filtered_sales(db, product_id, keyword, month, user, include_cost_details=True)
-            response = await _sale_response_rows(db, all_sales)
+            all_sales = await _filtered_sales(db, product_id, keyword, month, user,
+                                             include_cost_details=True, store_id=store_id)
+            response = await _sale_response_rows(db, all_sales, source_store_id=scoped_store_id)
         combined = sorted([*response, *event_responses], key=lambda item: (item.sold_at, item.id), reverse=True)
         if page is None:
             response = combined
@@ -2438,17 +2459,24 @@ async def list_sales(
             total = len(combined)
             page = min(requested_page, max(1, (total + page_size - 1) // page_size))
             response = combined[(page-1)*page_size:page*page_size]
+    if user.role == "admin" and store_id is not None and response:
+        # 历史销售按创建人归属筛选时，台账的店铺列也使用已确认的筛选范围。
+        store_name = await db.scalar(select(Store.name).where(Store.id == store_id))
+        for item in response:
+            item.store_name = store_name
     await attach_sale_impairment(db, response)
     if page is None:
         return response
     return SalePageResponse(items=response, total=total, page=page, page_size=page_size)
 
 
-async def _order_cost_data(db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include_details=False, source_entry_ids=None):
+async def _order_cost_data(
+    db, seeds, user, *, max_rows=MAX_EXPORT_ROWS, include_details=False, source_entry_ids=None, store_id=None,
+):
     """按授权店铺+订单读取完整出库明细；不沿用商品、月份或页面筛选。"""
     if not seeds:
         return {}, {}, {}, {}
-    scope = _sale_store_scope(user)
+    scope = _sale_store_scope(user, store_id)
     owner = aliased(User)
     store = func.coalesce(Sale.store_id, owner.store_id)
     filters = [inventory_sales_condition(), Sale.id.in_({sale.id for sale in seeds})]
@@ -2543,8 +2571,10 @@ async def export_sales_records(
     month: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(RequireAnyRole),
+    store_id: Annotated[int | None, Query(gt=0)] = None,
 ):
-    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user)
+    scoped_store_id = _sales_read_store_id(user, store_id)
+    conditions, normalized_keyword = _sale_filter_values(product_id, keyword, month, user, store_id=store_id)
     count_stmt = select(func.count()).select_from(Sale)
     if normalized_keyword:
         count_stmt = count_stmt.join(Product)
@@ -2553,7 +2583,7 @@ async def export_sales_records(
     end = (start.replace(year=start.year + 1, month=1) if start.month == 12
            else start.replace(month=start.month + 1)) if start else None
     event_count = await count_unlinked_settlement_events(
-        db, None if user.role == "admin" else {_require_bound_store(user)}, start, end,
+        db, {scoped_store_id} if scoped_store_id is not None else None, start, end,
         product_id=product_id, keyword=normalized_keyword,
     )
     total = sales_count + event_count
@@ -2561,8 +2591,10 @@ async def export_sales_records(
         raise HTTPException(422, detail={"code": "sales_export_too_large", "max_rows": MAX_EXPORT_ROWS,
             "message": f"单次最多导出{MAX_EXPORT_ROWS}条记录，请缩小月份或商品范围。"})
     # 保留列表原有筛选和金额口径；另补同范围待确认来源并展开完整组件。
-    items = await list_sales(product_id, normalized_keyword, month, None, 100, db, user)
-    return await _build_sales_export(db, user, items, month=month, keyword=normalized_keyword, product_id=product_id)
+    items = await list_sales(product_id, normalized_keyword, month, None, 100, db, user, store_id=store_id)
+    return await _build_sales_export(
+        db, user, items, month=month, keyword=normalized_keyword, product_id=product_id, store_id=store_id,
+    )
 
 
 @router.get("/imports/{import_batch_id}/export")
@@ -2582,14 +2614,14 @@ async def export_sales_import(
     return await _build_sales_export(db, user, [], month=None, keyword=None, product_id=None, import_batch=batch)
 
 
-async def _build_sales_export(db, user, items, *, month, keyword, product_id, import_batch=None):
+async def _build_sales_export(db, user, items, *, month, keyword, product_id, import_batch=None, store_id=None):
     check_export_limit(len(items), MAX_EXPORT_ROWS)
     sources, links, shared_sales = await export_sources(db, user, items, month=month, keyword=keyword, product_id=product_id,
-        import_batch_id=import_batch.id if import_batch else None, limit=MAX_EXPORT_ROWS)
+        import_batch_id=import_batch.id if import_batch else None, limit=MAX_EXPORT_ROWS, store_id=store_id)
     source_entry_ids = {entry.id for entry, _store_id, _file_type in sources}
     sale_ids = {key for ids in links.values() for key in ids} | {item.id for item in items if item.id > 0}
     conditions = [inventory_sales_condition(), Sale.id.in_(sale_ids)]
-    store_scope = _sale_store_scope(user)
+    store_scope = _sale_store_scope(user, store_id)
     if store_scope is not None:
         conditions.append(store_scope)
     seeds = list((await db.execute(select(Sale).where(*conditions).options(selectinload(Sale.cost_details))
@@ -2603,7 +2635,10 @@ async def _build_sales_export(db, user, items, *, month, keyword, product_id, im
     items = [scoped_by_id[item.id] if item.id > 0 else item for item in items
              if item.id in scoped_by_id or (item.id < 0 and -item.id in source_entry_ids)]
     items.extend(item for item in scoped_sales if item.id not in known)
-    source_store_ids = {store_id for _entry, store_id, _file_type in sources if store_id is not None}
+    source_store_ids = {owner for _entry, owner, _file_type in sources if owner is not None}
+    admin_selection = user.role == "admin" and store_id is not None
+    if admin_selection:
+        source_store_ids.add(store_id)
     stores = dict((await db.execute(select(Store.id, Store.name).where(Store.id.in_(source_store_ids)))).all()) if source_store_ids else {}
     if import_batch:
         events = await _sales_financial_events(db, None if user.role == "admin" else {_require_bound_store(user)},
@@ -2612,6 +2647,9 @@ async def _build_sales_export(db, user, items, *, month, keyword, product_id, im
     check_export_limit(len(items), MAX_EXPORT_ROWS)
     if not items and not sources and import_batch is None:
         raise HTTPException(404, detail={"code": "sales_export_empty", "message": "没有符合条件的销售记录可导出。"})
+    if admin_selection:
+        for item in items:
+            item.store_name = stores.get(store_id)
     ids = {item.product_id for item in items if item.product_id is not None}
     products = {p.id: p for p in (await db.execute(select(Product).where(Product.id.in_(ids)))).scalars().all()} if ids else {}
     rows = []
@@ -2622,19 +2660,27 @@ async def _build_sales_export(db, user, items, *, month, keyword, product_id, im
                      "local_specification": product.specification if product else None})
     originals = reconciliation_rows(sources, links, rows, stores, limit=MAX_EXPORT_ROWS,
         rates=await reconciliation_rates(db, sources, links, rows), shared_sales=shared_sales)
-    order_summaries, _groups, _costs, _impairments = await _order_cost_data(db, seeds, user, source_entry_ids=source_entry_ids)
+    order_summaries, _groups, _costs, _impairments = await _order_cost_data(
+        db, seeds, user, source_entry_ids=source_entry_ids, store_id=store_id,
+    )
     unique_orders = {(value.store_id, value.order_no, None if value.complete else key): value.model_dump()
                      for key, value in order_summaries.items()}
     scope = "全部店铺" if user.role == "admin" else "账号绑定店铺"
+    if admin_selection:
+        scope = f"店铺 · {stores.get(store_id) or store_id}"
     batch_info = {"id": import_batch.id, "file_name": import_batch.file_name,
         "total_rows": import_batch.total_rows, "skipped_duplicates": import_batch.skipped_duplicates} if import_batch else None
     await db.rollback()
     output = await run_in_threadpool(build_sales_workbook, rows, month=month, keyword=keyword,
         scope=scope, product_id=product_id, order_summaries=list(unique_orders.values()), originals=originals, batch_info=batch_info)
     suffix = f"import_{batch_info['id']}" if batch_info else month.replace("-", "") if month else "all"
+    scope_headers = {}
+    if admin_selection:
+        suffix = f"store_{store_id}_{suffix}"
+        scope_headers["X-Sales-Export-Store-Id"] = str(store_id)
     return StreamingResponse(output, media_type=SALES_EXPORT_MIME,
         headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"', "Cache-Control": "private, no-store",
-                 "X-Sales-Impairment-Policy": SALES_IMPAIRMENT_POLICY})
+                 "X-Sales-Impairment-Policy": SALES_IMPAIRMENT_POLICY, **scope_headers})
 
 
 @router.get("/{sale_id}", response_model=SaleResponse)

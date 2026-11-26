@@ -15,7 +15,7 @@ async function main(){
    {group_by:'product',name:'未分配商品（结算调整/赔付）',current_quantity:0,current_revenue:5,current_cost:0,current_gross:5}];
   let admin=true,error=null;
   const context=vm.createContext({URLSearchParams,Date,document:{getElementById:el,documentElement:{lang:'zh-CN'}},
-   window:{PageInteractions:{text:key=>labels[key]||key},ProfitLossEvidence:{clear(){},render(){}}},isAdmin:()=>admin, CURRENT_USER_ID:1, productLineProfitRequestId:0,
+   window:{PageInteractions:{text:key=>labels[key]||key}},isAdmin:()=>admin, CURRENT_USER_ID:1, productLineProfitRequestId:0,
    api:async(method,url)=>{calls.push({method,url});if(error)throw Error(error);return rows;}});
   for(const name of ['escapeHtml','reportMoney','reportPercent','defaultProfitLossMonth','loadProductLineProfit']){
    const fn=source.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}','m'));

@@ -165,14 +165,6 @@ class _Result:
 
 class _AutoValuesDb:
     def __init__(self, sales, cost_rows):
-        # 新增只读依据需要真实模型具备的定位字段；本组仍用确定的简化成本样本。
-        for sale in sales:
-            sale.order_no = getattr(sale, "order_no", f"TEST-{sale.id}")
-            sale.product_id = getattr(sale, "product_id", 1)
-        for number, (detail, batch, sold_at) in enumerate(cost_rows, 1):
-            detail.id = getattr(detail, "id", number)
-            detail.sale_id = getattr(detail, "sale_id", next(s.id for s in sales if s.sold_at == sold_at))
-            batch.batch_no = getattr(batch, "batch_no", f"BATCH-{batch.id}")
         # 独立结算、来源订单去重、赠品历史关联均为空；本组只验证 FIFO 科目和准备。
         self.results = [_Result(sales), _Result(cost_rows), _Result([]), _Result([]), _Result([])]
 
@@ -186,12 +178,6 @@ class _AutoValuesDb:
 
 
 class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
-    def setUp(self):
-        # SQL来源关联由test_profit_loss_evidence的实际SQLite查询覆盖。
-        references = patch("routers.reports.sale_source_references", new=AsyncMock(return_value=({}, {}, set())))
-        references.start()
-        self.addCleanup(references.stop)
-
     async def test_voided_batch_marks_original_sale_month_cost_and_profit_pending(self):
         sale = SimpleNamespace(id=1, sold_at=datetime(2026, 9, 8),
                                selling_price=Decimal("10"), quantity=2, platform_fee=Decimal(0))

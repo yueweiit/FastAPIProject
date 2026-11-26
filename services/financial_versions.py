@@ -24,8 +24,8 @@ async def collect_payload(db, user, store, report_month, *, oa_values=None, acti
         oa_values=oa_values, active_store_count=active_store_count,
     )
     response.can_edit = False
-    inventory = await _load_inventory_impairment_report_rows(db, cutoff, store.id, with_evidence=True)
-    lines = await _product_line_profit_data(db, {store.id}, report_month, cutoff, with_evidence=True)
+    inventory = await _load_inventory_impairment_report_rows(db, cutoff, store.id)
+    lines = await _product_line_profit_data(db, {store.id}, report_month, cutoff)
     reconciliation_data = await reconciliation(db, store.id, report_month)
     warnings = [*response.warnings, *reconciliation_data["warnings"]]
     unchecked = sum(row.get("cost_status") != "actual" for row in inventory)
@@ -72,6 +72,40 @@ async def collect_payload(db, user, store, report_month, *, oa_values=None, acti
         "warnings": list(dict.fromkeys(warnings)), "calculation_version": "restated-cost-ownership-v2"})
 
 
+def _version_financial_payload(payload):
+    """只移除已撤回的展示依据，保留已存快照及其他核算事实。"""
+    normalized = {}
+    profit_loss = payload.get("profit_loss", {})
+    if "evidence" in profit_loss:
+        normalized["profit_loss"] = {key: value for key, value in profit_loss.items() if key != "evidence"}
+    for section in ("inventory", "product_lines"):
+        rows = payload.get(section, [])
+        if any("_evidence" in row for row in rows):
+            normalized[section] = [{key: value for key, value in row.items() if key != "_evidence"} for row in rows]
+    return {**payload, **normalized} if normalized else payload
+
+
+def _version_matches(version, fingerprint):
+    if version.source_digest == fingerprint:
+        return True
+    normalized = _version_financial_payload(version.payload)
+    return normalized is not version.payload and digest(normalized) == fingerprint
+
+
+async def _find_matching_legacy_version(db, versions, fingerprint):
+    # 已存摘要不能用于查找退役字段以外的同一内容，按本店本月分批读取旧快照。
+    ordered = versions.order_by(FinancialReportVersion.version.desc())
+    query = ordered
+    while snapshots := (await db.execute(query.limit(8))).scalars().all():
+        for snapshot in snapshots:
+            if _version_matches(snapshot, fingerprint):
+                return snapshot
+        if len(snapshots) < 8:
+            break
+        query = ordered.where(FinancialReportVersion.version < snapshots[-1].version)
+    return None
+
+
 async def save_version(db, user, payload, *, oa_values=None, active_store_count=None):
     require_enabled()
     if db.get_bind().dialect.name == "mysql":
@@ -91,15 +125,16 @@ async def save_version(db, user, payload, *, oa_values=None, active_store_count=
         db, user, store, payload.report_month,
         oa_values=oa_values, active_store_count=active_store_count,
     )
-    fingerprint = digest(result)
-    duplicate = await db.scalar(select(FinancialReportVersion).where(
+    fingerprint = digest(_version_financial_payload(result))
+    versions = select(FinancialReportVersion).where(
         FinancialReportVersion.store_id == store.id, FinancialReportVersion.report_month == payload.report_month,
-        FinancialReportVersion.source_digest == fingerprint))
+    )
+    duplicate = await db.scalar(versions.where(FinancialReportVersion.source_digest == fingerprint))
+    if duplicate is None:
+        duplicate = await _find_matching_legacy_version(db, versions, fingerprint)
     if duplicate:
         return duplicate
-    latest = await db.scalar(select(FinancialReportVersion).where(
-        FinancialReportVersion.store_id == store.id, FinancialReportVersion.report_month == payload.report_month
-    ).order_by(FinancialReportVersion.version.desc()).limit(1).with_for_update())
+    latest = await db.scalar(versions.order_by(FinancialReportVersion.version.desc()).limit(1).with_for_update())
     row = FinancialReportVersion(request_key=payload.request_key, store_id=store.id,
         report_month=payload.report_month, version=(latest.version+1 if latest else 1), source_digest=fingerprint,
         payload=result, note=payload.note, created_by=user.id,
@@ -128,7 +163,7 @@ async def compare_version(db, user, version, *, oa_values=None, active_store_cou
                 changes.append({"key": row["key"], "label": row["label"], "period": period,
                     "previous": previous, "current": latest,
                     "difference": Decimal(latest)-Decimal(previous) if previous is not None and latest is not None else None})
-    return {"version": version.version, "changed": version.source_digest != digest(current),
+    return {"version": version.version, "changed": not _version_matches(version, digest(_version_financial_payload(current))),
             "changes": changes, "warnings": current["warnings"], "profit_layers": current["profit_layers"]}
 
 
@@ -158,7 +193,6 @@ def version_workbook(version):
     values["_exchange_rates"] = report.exchange_rates
     values["_fulfillment_counts"] = report.fulfillment_order_counts
     values["_calculation_policy"] = report.calculation_policy
-    values["_evidence"] = report.evidence
     _build_store_profit_loss_sheet(workbook, SimpleNamespace(**payload["store"]), version.report_month,
                                   values, {row.key: row.remark for row in report.rows},
                                   row_definitions=[(row.key, row.label, row.kind, row.source) for row in report.rows])
@@ -179,10 +213,4 @@ def version_workbook(version):
         for cell in row:
             if isinstance(cell.value, str):
                 cell.data_type = "s"
-    from services.profit_loss_evidence_export import append_profit_loss_evidence
-    append_profit_loss_evidence(workbook, [(SimpleNamespace(**payload["store"]), values)], report.store_id,
-        row_definitions=[(row.key, row.label, row.kind, row.source) for row in report.rows])
-    from services.report_row_evidence_export import append_row_evidence
-    append_row_evidence(workbook, inventory_rows=rows,
-        summary_rows=_summarize_inventory_impairment_rows(rows), product_rows=lines, formula_cache=cache)
     return _workbook_bytes_with_formula_cache(workbook, cache)

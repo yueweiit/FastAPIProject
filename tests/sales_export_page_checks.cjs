@@ -9,7 +9,7 @@ function setup(file) {
         if (!elements.has(id)) elements.set(id, {value: '', disabled: false, textContent: '', style: {}});
         return elements.get(id);
     };
-    const c = vm.createContext({window: {}, URLSearchParams, AbortController,
+    const c = vm.createContext({window: {}, URLSearchParams, AbortController, isAdmin: () => false,
         document: {documentElement: {lang: 'zh-CN'}, getElementById: element,
             querySelectorAll: selector => selector === '[data-sales-import-export]' ? [element('import-export-button')] : [],
             createElement: () => {const link = {style: {}, click() {this.clicked = true;}, remove() {this.removed = true;}}; links.push(link); return link;},
@@ -20,8 +20,8 @@ function setup(file) {
         formatApiError: (detail, fallback) => detail?.message || detail || fallback,
     });
     vm.runInContext(fs.readFileSync('static/page-interactions.js', 'utf8'), c);
-    vm.runInContext('let salesExportBusy=false,salesExportSessionEpoch=0,salesExportController=null,salesImportsRequestId=0;', c);
-    for (const name of ['setSalesExportStatus', 'setSalesExportBusy', 'resetSalesExportSession', 'exportSalesRecords', 'loadSalesImports', 'escapeHtml']) {
+    vm.runInContext('let salesExportBusy=false,salesExportSessionEpoch=0,salesExportController=null,salesImportsRequestId=0,salesLedgerStoreRequestId=0;', c);
+    for (const name of ['salesLedgerFilterParams', 'setSalesExportStatus', 'setSalesExportBusy', 'resetSalesExportSession', 'exportSalesRecords', 'loadSalesImports', 'escapeHtml']) {
         const source = html.match(new RegExp('^(?:async )?function '+name+'\\([^\\n]*\\) \\{[\\s\\S]*?^\\}', 'm'));
         assert(source, name); vm.runInContext(source[0], c);
     }

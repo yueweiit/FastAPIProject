@@ -25,9 +25,9 @@
 | `GET /sales/pending-confirmations` | [list_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | page、page_size、reason、keyword | PendingConfirmationPageResponse |
 | `GET /sales/pending-confirmations/export` | [export_pending_confirmations](../../../routers/sales.py) | admin/operator/viewer | reason、keyword | 筛选后的Excel文件 |
 | `POST /sales/pending-confirmations/retry` | [retry_pending_confirmations](../../../routers/sales.py) | admin/operator | PendingRetryRequest | PendingRetryResponse |
-| `GET /sales/monthly-summary` | [monthly_sales_summary](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month | list[MonthlySalesSummaryResponse] |
-| `GET /sales` | [list_sales](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month、page、page_size | list[SaleResponse] \| SalePageResponse |
-| `GET /sales/export` | [export_sales_records](../../../routers/sales.py) → _build_sales_export | admin/operator/viewer | product_id、keyword、month | 匹配来源及完整关联组件的对账Excel |
+| `GET /sales/monthly-summary` | [monthly_sales_summary](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month、store_id | list[MonthlySalesSummaryResponse] |
+| `GET /sales` | [list_sales](../../../routers/sales.py) | admin/operator/viewer | product_id、keyword、month、page、page_size、store_id | list[SaleResponse] \| SalePageResponse |
+| `GET /sales/export` | [export_sales_records](../../../routers/sales.py) → _build_sales_export | admin/operator/viewer | product_id、keyword、month、store_id | 匹配来源及完整关联组件的对账Excel |
 | `GET /sales/{sale_id}/cost-breakdown` | [sale_cost_breakdown](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleCostExplanationResponse：本行代入、FIFO批次及完整订单汇总 |
 | `GET /sales/{sale_id}` | [get_sale](../../../routers/sales.py) | admin/operator/viewer | sale_id | SaleResponse |
 
@@ -105,6 +105,8 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 
 ## 销售台账导出
 
+上述三个只读接口共用可选 `store_id`。管理员省略时沿用全部店铺，指定时仅查看所选店铺，包括可追溯的历史记录。非管理员由账号绑定决定店铺范围，无绑定返回 403。单店台账及月度统计按与普通对账导出一致的结算来源归属匹配关键词、计算收入和费用。普通导出同时限制原始结算和展开后的出库明细、整单汇总，管理员单店文件名带 `store_<id>`。批次导出沿用导入批次范围。
+
 列表（分页/数组）、`GET /sales/{sale_id}` 及手工销售响应在 `SaleResponse` 增加以下只读字段，旧字段和结构兼容，无数据库迁移；规则见[成本流程](workflow.md#出库成本拆分与跌价参考)。
 
 | 字段 | 类型/精度 | 含义 |
@@ -134,6 +136,8 @@ SaleResponse 包含原始金额、*_cny 字段、汇率依据、店铺和 cost_d
 2026-11-23起，文件默认打开第一张“原始结算对账”（29列），第二张“销售拆分明细”（44列），另保留“说明”“字段口径说明”“订单汇总”。原拆分表前34列金额位置保留，第3/4列明确改为本地商品SKU/名称，来源字段移至追加的追溯列；规格支持在原始表第28–29列追加来源规格/导入指定规格，在拆分表第42–44列追加本地规格/来源规格/导入指定规格，不移动旧列。使用旧工作表名或固定列数的外部脚本须适配。关联编号以E+结算ID标识原始行，无来源历史销售用S+销售ID；明细编号以S+销售ID或F+独立结算ID标识，两表保留来源文件/工作表/行号并支持跳转。单价、汇率不合计，未知金额及对应合计留空，原币只在同币种且完整时合计；所有业务文本按字面量写入。附件名仍为`sales_YYYYMM.xlsx`/`sales_all.xlsx`，MIME仍为application/vnd.openxmlformats-officedocument.spreadsheetml.sheet。
 
 两种导出的成功文件响应均带`X-Sales-Impairment-Policy: sale_month_elapsed_v1`，值来自运行中销售跌价计算模块的`SALES_IMPAIRMENT_POLICY`，与JSON响应的`impairment_policy`同源；不从磁盘字段说明或当前列表推定。保留原MIME、附件名和`Cache-Control: private, no-store`，错误状态与响应不变。页面在读取blob和创建下载链接前逐次校验该响应头，缺失、空值或其他版本均取消下载并提示更新后端；因此导入历史直接导出及新旧进程混用也受保护。
+
+管理员指定店铺的成功文件响应另带 `X-Sales-Export-Store-Id`，值是服务端实际应用的店铺编号。页面选择单店时，先确认该编号匹配请求，再读取文件正文。确认缺失或不匹配会立即取消响应并恢复按钮。
 
 只SELECT，不扣库、改成本、补快照或写导出记录。取数完成后释放只读事务，在线程生成文件。新接口须加载更新后的后端；前端未加载接口时会明确提示，不把错误网页下载为Excel。页面行为见[流程](workflow.md#销售台账导出)。
 

@@ -31,7 +31,8 @@ def is_income_only_order(store, order_id, sku, created_at):
             and (str(order_id or "").strip(), str(sku or "").strip(), day) in _GIFT_ORDERS)
 
 
-def _settlement_store_id():
+def settlement_store_id():
+    """结算行归属优先，其次导入批次、导入人店铺。"""
     return func.coalesce(SettlementEntry.store_id,
         select(SalesImportBatch.store_id).where(SalesImportBatch.id == SettlementEntry.import_batch_id)
             .correlate(SettlementEntry).scalar_subquery(),
@@ -41,7 +42,7 @@ def _settlement_store_id():
 
 def income_only_entry_condition():
     """与导入共用精确清单；旧已出库/待确认记录只读适用，不回写历史。"""
-    store = exists(select(Store.id).where(Store.id == _settlement_store_id(),
+    store = exists(select(Store.id).where(Store.id == settlement_store_id(),
         Store.platform == _GIFT_POLICY["platform"], Store.platform_store_id == _GIFT_POLICY["platform_store_id"])
         .correlate(SettlementEntry))
     rows = [and_(SettlementEntry.order_id == order, SettlementEntry.platform_sku_id == sku,
@@ -51,7 +52,7 @@ def income_only_entry_condition():
     return and_(SettlementEntry.transaction_type == "订单", store, or_(*rows))
 
 
-async def income_only_sale_ids(db, sale_ids, *, source_entry_ids=None, review_ids=None):
+async def income_only_sale_ids(db, sale_ids, *, source_entry_ids=None, source_store_id=None, review_ids=None):
     """仅同店且单一来源可免成本；限定导出来源，冲突ID交由调用方标记待核对。"""
     ids = set(sale_ids)
     if not ids or source_entry_ids is not None and not source_entry_ids:
@@ -61,7 +62,9 @@ async def income_only_sale_ids(db, sale_ids, *, source_entry_ids=None, review_id
         SettlementEntry.sale_id.in_(ids)).union(select(SettlementEntryAllocation.settlement_entry_id,
             SettlementEntryAllocation.sale_id).where(SettlementEntryAllocation.sale_id.in_(ids))).subquery()
     filters = [SettlementEntry.id.in_(source_entry_ids)] if source_entry_ids is not None else []
-    candidates = dict((await db.execute(select(links.c.sale_id, _settlement_store_id())
+    if source_store_id is not None:
+        filters.append(settlement_store_id() == source_store_id)
+    candidates = dict((await db.execute(select(links.c.sale_id, settlement_store_id())
         .select_from(links).join(SettlementEntry, SettlementEntry.id == links.c.entry_id)
         .where(income_only_entry_condition(), *filters))).all())
     if not candidates:

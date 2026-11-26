@@ -76,7 +76,7 @@ async function verify(file) {
         getElementById:node,querySelector:node};
     context.window = {};
     for (const name of ['resetSalesImportState','resetBatchEditSession','resetBatchExportSession',
-        'resetProductImportPreview','resetStoreProfitLossState','clearLegacyAuth']) context[name]=()=>{};
+        'resetProductImportPreview','resetStoreProfitLossState','resetFinancialAttachmentsExport','clearLegacyAuth']) context[name]=()=>{};
     context.renderProductPage=()=>context.productsRendered=true;
     context.initializeProductSearch=()=>{};
     context.updateProductSelectionState=()=>{};
