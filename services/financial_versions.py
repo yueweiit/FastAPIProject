@@ -192,7 +192,6 @@ def version_workbook(version):
     values["_warnings"] = payload["warnings"]
     values["_exchange_rates"] = report.exchange_rates
     values["_fulfillment_counts"] = report.fulfillment_order_counts
-    values["_calculation_policy"] = report.calculation_policy
     _build_store_profit_loss_sheet(workbook, SimpleNamespace(**payload["store"]), version.report_month,
                                   values, {row.key: row.remark for row in report.rows},
                                   row_definitions=[(row.key, row.label, row.kind, row.source) for row in report.rows])
@@ -208,7 +207,6 @@ def version_workbook(version):
     sheet.append(["月份", str(version.report_month), "版本", version.version, "状态", version.status])
     for warning in payload["warnings"]:
         sheet.append(["待核对", warning])
-    sheet.append(["说明", "四张单店报表来自该不可变版本；跨店汇总需分别选择各店已确认版本。"])
     for row in sheet:
         for cell in row:
             if isinstance(cell.value, str):

@@ -205,6 +205,9 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                     sheet = load_workbook(BytesIO(exported.content), data_only=True).active
                     self.assertEqual(sheet.title, title)
                     self.assertEqual(sheet[cell].value, 2760)
+                    self.assertEqual(sheet.cell(sheet.max_row - 1, 1).value, "合计")
+                    self.assertEqual([cell.value for cell in sheet[sheet.max_row][:2]],
+                                     ["报告截止日", "2026-09-30"])
                 self.assertEqual((await client.get("/reports/inventory-impairment/export?report_date=2026-09-30&view=other")).status_code, 422)
                 load.reset_mock()
                 future = (date.today() + timedelta(days=1)).isoformat()

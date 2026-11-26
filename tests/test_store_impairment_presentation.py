@@ -142,8 +142,10 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         for label, expected in (("减：存货跌价净影响", 40962.30), ("  减：本期销售转销", 3681.16),
                                 ("毛利", 17593.34), ("二、营业利润", -23368.96)):
             self.assertEqual(row_by_label(summary, label)[3].value, expected)
-        for sheet in (detail, summary):
-            self.assertIn("内部管理口径", row_by_label(sheet, "跌价列报口径")[1].value)
+        for sheet, metadata in ((detail, ["店铺", "所属平台", "核算期间"]),
+                                (summary, ["店铺数量", "核算期间"])):
+            self.assertEqual([row[0].value for row in sheet.iter_rows(min_row=len(response.rows) + 2)],
+                             metadata)
 
     def test_export_unknown_writeoff_keeps_cost_and_masks_net_and_aggregate(self):
         auto = example()
@@ -162,6 +164,7 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
             for column in (1, 3, 4):
                 self.assertIsNone(row_by_label(summary, label)[column].value)
         self.assertEqual(row_by_label(detail, "待核对")[1].value, "转销归属待核对")
+        self.assertEqual(row_by_label(summary, "待核对")[1].value, "Lemos：转销归属待核对")
 
     async def test_frozen_legacy_versions_keep_their_own_labels_order_and_amounts(self):
         response = await self.response()
@@ -203,17 +206,21 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(any(row[0].value == "跌价列报口径" for row in sheet))
                 self.assertEqual(payload, original)
 
-    async def test_new_frozen_version_exports_its_saved_net_amount_and_policy(self):
+    async def test_new_frozen_version_exports_its_saved_net_amount_and_version(self):
         response = await self.response()
         payload = {"inventory": [], "product_lines": [], "warnings": [], "store": vars(STORE),
                    "report_date": "2026-10-31", "profit_loss": response.model_dump(mode="json")}
         version = SimpleNamespace(payload=payload, report_month=MONTH, version=2, status="confirmed")
         original = copy.deepcopy(payload)
-        sheet = load_workbook(version_workbook(version), data_only=True)["09-店铺损益表"]
+        book = load_workbook(version_workbook(version), data_only=True)
+        sheet = book["09-店铺损益表"]
         self.assertEqual(row_by_label(sheet, "减：存货跌价净影响")[1].value, 20481.15)
         self.assertEqual(row_by_label(sheet, "毛利")[1].value, 8796.67)
         self.assertEqual(row_by_label(sheet, "二、营业利润")[1].value, -11684.48)
-        self.assertIn("内部管理口径", row_by_label(sheet, "跌价列报口径")[1].value)
+        self.assertNotIn("跌价列报口径", [row[0].value for row in sheet])
+        version_sheet = book["版本及核对说明"]
+        self.assertEqual(version_sheet.max_row, 1)
+        self.assertEqual([cell.value for cell in version_sheet[1][2:6]], ["版本", 2, "状态", "confirmed"])
         self.assertEqual(payload, original)
 
 

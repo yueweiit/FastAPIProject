@@ -98,9 +98,11 @@ class FinancialAttachmentsWorkbookTests(unittest.TestCase):
     def test_store_profit_loss_sheet_uses_all_period_values(self):
         workbook = Workbook()
         values = self._values(Decimal("100"), Decimal("40"))
+        values["_fulfillment_counts"] = {"current": 3, "previous": 2, "ytd": 7}
         store = SimpleNamespace(name="测试店铺", platform="tiktok_shop")
 
-        _build_store_profit_loss_sheet(workbook, store, date(2026, 9, 1), values, {})
+        _build_store_profit_loss_sheet(workbook, store, date(2026, 9, 1), values,
+                                     {"product_sales_revenue": "已对账"})
 
         sheet = workbook["09-店铺损益表"]
         self.assertEqual(sheet.max_column, 5)
@@ -109,6 +111,9 @@ class FinancialAttachmentsWorkbookTests(unittest.TestCase):
         self.assertEqual(sheet[3][1].value, 100)
         self.assertEqual(sheet[3][2].value, 80)
         self.assertEqual(sheet[3][3].value, 180)
+        self.assertEqual(sheet[3][4].value, "已对账")
+        self.assertEqual([cell.value for cell in sheet[sheet.max_row][:2]],
+                         ["履约订单数", "本月3单，上月2单，本年累计7单"])
         self.assertNotIn("23", [cell.value for row in sheet.iter_rows() for cell in row])
 
     def test_admin_summary_reconciles_store_totals(self):
@@ -166,6 +171,8 @@ class FinancialAttachmentsWorkbookTests(unittest.TestCase):
         self.assertEqual(sheet[3][11].value, "销售记录未匹配到有效店铺 SKU 产品线映射")
         self.assertEqual(sheet[4][1].value, 3)
         self.assertAlmostEqual(sheet[4][5].value, 75 / 120)
+        self.assertEqual(sheet.max_row, 5)
+        self.assertEqual([cell.value for cell in sheet[5][:2]], ["核算期间", "2026年9月"])
 
     def test_product_line_cost_can_be_attributed_when_sale_revenue_rate_is_missing(self):
         """FIFO cost remains usable even when the sales revenue FX rate is unavailable."""

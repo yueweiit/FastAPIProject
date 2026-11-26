@@ -1002,23 +1002,7 @@ def _build_inventory_impairment_workbook(rows: list[dict], report_date: date) ->
     for cell in sheet[total_row]:
         cell.fill = PatternFill("solid", fgColor="F2F2F2")
         cell.font = Font(name="等线", size=10, bold=True)
-    notes = [
-        f"报告截止日：{report_date.isoformat()}；上月末：{_previous_month_end(report_date).isoformat()}。",
-        "入库当天0天；销售当天先计提，再出库转销；仅累加每天新增准备，累计比例最多90%。",
-        "期初准备+本月计提总额−本月销售转销+准备转入−准备转出=期末准备；转移不重复计入费用。",
-        "账面价值=现存库存成本−期末准备；售完期末余额为0，本月总计提及销售转销仍可能非0。",
-        "本月计提（现存库存）仅为期末仍在库部分本月形成的准备，不等于本月计提总额。",
-        "安全库存按当天销售前实际数量保护最新批次/批内靠后数量层；已形成准备保留。",
-        "四类商品分别计提后汇总：稳健1%/日、新品0.5%/日、安全库存商品超额部分1%/日、不计跌价商品不新增；切换规则不清零历史准备。",
-        "原始入库及保存销售成本独立保留；多批按自身成本/日期计算后加总，批次号在备注列。",
-        "历史时序或数量异常的相关准备留空且不作不完整合计；推定规则及成本差异见备注。",
-        "本表按现有流水重算，不读写或补建快照；缺失、撤销的真实历史不能自动恢复。",
-        "单件成本包含采购、头程、尾程及其他成本，未单列关税；店铺按归属生效历史，旧无历史批次沿用原归属。",
-    ]
-    for number, note in enumerate(notes, total_row + 2):
-        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=25)
-        sheet.cell(number, 1, note).alignment = Alignment(wrap_text=True, vertical="center")
-        sheet.row_dimensions[number].height = 30
+    sheet.append(["报告截止日", report_date.isoformat(), "上月末", _previous_month_end(report_date).isoformat()])
     widths = [18,18,28,13,12,18,14,22,18,24,15,12,23,16,25,23,25,24,18,62,24,24,24,24,24]
     for column, width in enumerate(widths, 1):
         sheet.column_dimensions[sheet.cell(1,column).column_letter].width = width
@@ -1084,8 +1068,6 @@ PRODUCT_PROFIT_TEXT = {"zh-CN": {
     "settlement_note": "无可靠本地商品关联的结算调整和赔付单独列示，不根据平台SKU或标题推定商品。",
     "writeoff_note": "按批次跌价归属店铺抵减销售转销；出库数量仍按实际销售店铺统计。",
     "writeoff_pending": "批次跌价归属或历史流水待核对，相关成本和毛利暂缺。",
-    "period_note": "核算期间：{year}年{month}月；收入及销售费用按各核算月末汇率换算，成本包含采购、头尾程及入库其他成本、销售费用和分摊成本，扣除已确认销售转销准备；未知金额及不完整合计留空。",
-    "allocation_note": "按本地商品汇总，不依赖产品线映射；店铺收入及费用沿用各店原分摊规则，代发成本逐月分摊后累计。无可靠商品关联的结算调整/赔付单独列示。",
 }}
 PRODUCT_LINE_ALLOCATED_REVENUE_KEYS = ("shipping_revenue", "other_revenue")
 PRODUCT_LINE_ALLOCATED_COST_KEYS = (
@@ -1144,17 +1126,7 @@ def _build_inventory_impairment_summary_sheet(
     for cell in sheet[total_row]:
         cell.fill = PatternFill("solid", fgColor="F2F2F2")
         cell.font = Font(name="等线", size=10, bold=True)
-    notes = [
-        f"报告截止日：{report_date.isoformat()}；与批次明细范围一致，包含全部已到货批次和售完批次。",
-        "各批按自身单价、规则和实际持有期间增提、转销后加总；不合计单价、库龄和比例。",
-        "期初准备+本月计提总额−本月销售转销+准备转入−准备转出=期末准备；账面=现存成本−期末准备。",
-        "售完余额0但本月总计提/转销可能非0；未知金额及不完整合计留空，原因见比较说明。",
-        "本月计提（现存库存）不包含本月已售部分的增提；销售转销可能包含前月准备。",
-    ]
-    for number, note in enumerate(notes, total_row + 2):
-        sheet.merge_cells(start_row=number, start_column=1, end_row=number, end_column=len(columns))
-        sheet.cell(number, 1, note).alignment = Alignment(wrap_text=True, vertical="center")
-        sheet.row_dimensions[number].height = 28
+    sheet.append(["报告截止日", report_date.isoformat()])
     for number in range(1, len(columns) + 1):
         sheet.column_dimensions[sheet.cell(1,number).column_letter].width = 36 if number in (3,16) else 23
     last_column = sheet.cell(1, len(columns)).column_letter
@@ -1210,23 +1182,20 @@ def _build_store_profit_loss_sheet(
         ["店铺", store.name, None, None, None],
         ["所属平台", store.platform, None, None, None],
         ["核算期间", f"{report_month.year}年{report_month.month}月", None, None, None],
-        ["数据来源", "与系统中的店铺损益表查询结果一致；人工项目保留已保存值。", None, None, None],
     ]
-    if values.get("_calculation_policy") == STORE_PROFIT_LOSS_POLICY:
-        metadata.append(["跌价列报口径", STORE_PROFIT_LOSS_IMPAIRMENT_NOTE, None, None, None])
     from services.report_exchange_rates import rate_evidence_text
     metadata.extend([["月度汇率", rate_evidence_text(item), None, None, None]
                      for item in values.get("_exchange_rates", [])])
     counts = values.get("_fulfillment_counts", {})
     if counts:
-        metadata.append(["履约订单数", f"本月{counts.get('current', 0)}单，上月{counts.get('previous', 0)}单，本年累计{counts.get('ytd', 0)}单；每单8 MXN，各月分别换算。", None, None, None])
+        metadata.append(["履约订单数", f"本月{counts.get('current', 0)}单，上月{counts.get('previous', 0)}单，本年累计{counts.get('ytd', 0)}单", None, None, None])
     metadata.extend([["待核对", note, None, None, None] for note in values.get("_warnings", [])])
     for row in metadata:
         sheet.append(row)
     for row_number in range(last_data_row + 1, sheet.max_row + 1):
-        if sheet.cell(row_number, 1).value in ("月度汇率", "履约订单数", "跌价列报口径"):
+        if sheet.cell(row_number, 1).value in ("月度汇率", "履约订单数"):
             sheet.merge_cells(start_row=row_number, start_column=2, end_row=row_number, end_column=5)
-            sheet.row_dimensions[row_number].height = 45 if sheet.cell(row_number, 1).value == "跌价列报口径" else 30
+            sheet.row_dimensions[row_number].height = 30
         sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == last_data_row + 1)
         sheet.cell(row_number, 2).font = Font(name="等线", size=10, color="666666")
         for column in range(1, 6):
@@ -1289,16 +1258,10 @@ def _build_store_profit_loss_summary_sheet(
                 cell.font = Font(name="等线", size=10, bold=True)
     sheet.append(["店铺数量", len(store_reports)] + [None] * (len(headers) - 2))
     sheet.append(["核算期间", f"{report_month.year}年{report_month.month}月"] + [None] * (len(headers) - 2))
-    sheet.append(["占比口径", "各项目合计 ÷ 合计营业收入；毛利率按合计毛利 ÷ 合计营业收入计算。", *([None] * (len(headers) - 2))])
-    if store_reports and all(values.get("_calculation_policy") == STORE_PROFIT_LOSS_POLICY for _store, values in store_reports):
-        sheet.append(["跌价列报口径", STORE_PROFIT_LOSS_IMPAIRMENT_NOTE, *([None] * (len(headers) - 2))])
     for store, values in store_reports:
         for note in values.get("_warnings", []):
             sheet.append(["待核对", f"{store.name}：{note}"] + [None] * (len(headers) - 2))
     for row_number in range(last_data_row + 1, sheet.max_row + 1):
-        if sheet.cell(row_number, 1).value == "跌价列报口径":
-            sheet.merge_cells(start_row=row_number, start_column=2, end_row=row_number, end_column=len(headers))
-            sheet.row_dimensions[row_number].height = 75
         for column in range(1, len(headers) + 1):
             sheet.cell(row_number, column).alignment = Alignment(vertical="center", wrap_text=True)
     sheet.column_dimensions["A"].width = 28
@@ -1739,18 +1702,12 @@ def _build_product_line_profit_sheet(
             for cell in sheet[row_number]:
                 cell.font = Font(name="等线", size=10, bold=True)
                 cell.fill = PatternFill("solid", fgColor="EEF3F8")
-    note_row = sheet.max_row + 2
-    sheet.cell(note_row, 1, "说明")
-    sheet.cell(note_row, 2, labels["period_note"].format(year=report_month.year, month=report_month.month))
-    sheet.cell(note_row + 1, 2, labels["allocation_note"])
-    for row_number in (note_row, note_row + 1):
-        sheet.cell(row_number, 1).font = Font(name="等线", size=10, bold=row_number == note_row)
-        sheet.cell(row_number, 2).font = Font(name="等线", size=9, color="666666")
-        sheet.cell(row_number, 2).alignment = Alignment(wrap_text=True, vertical="center")
+    total_row = sheet.max_row
+    sheet.append(["核算期间", f"{report_month.year}年{report_month.month}月"])
     widths = {"A": 24, "B": 12, "C": 16, "D": 16, "E": 16, "F": 14, "G": 14, "H": 14, "I": 16, "J": 16, "K": 14, "L": 48}
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
-    sheet.auto_filter.ref = f"A1:L{sheet.max_row - 2}"
+    sheet.auto_filter.ref = f"A1:L{total_row}"
     sheet.print_title_rows = "1:1"
     sheet.print_area = f"A1:L{sheet.max_row}"
     sheet.page_setup.orientation = "landscape"
