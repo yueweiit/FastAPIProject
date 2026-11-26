@@ -1015,7 +1015,7 @@
                 <div class="sales-monthly-summary-title"><span>月度统计</span><span id="sales-monthly-summary-note">金额均为人民币</span></div>
                 <div class="table-scroll sales-monthly-scroll">
                     <table class="sales-monthly-table">
-                        <thead><tr><th>月份</th><th>销售记录</th><th>销售数量</th><th>净商品收入（元）</th><th>销售成本（元）</th><th>其他费用（元）</th><th>毛利（元）</th></tr></thead>
+                        <thead><tr><th>月份</th><th>销售记录</th><th>销售数量</th><th>净商品收入（元）</th><th>销售成本（元）</th><th data-sales-cost-text="salesOtherDirectCost"></th><th>毛利（元）</th></tr></thead>
                         <tbody id="sales-monthly-tbody"></tbody>
                     </table>
                 </div>
@@ -3802,6 +3802,7 @@ function renderStoreProfitLoss(report) {
     fxDetails.hidden = !(report.exchange_rates || []).length;
     tbody.innerHTML = report.rows.map(row => {
         const readOnlyClass = row.is_auto ? 'profit-loss-auto' : 'profit-loss-formula';
+        const autoSource = (row.key === 'other_direct_cost' && window.PageInteractions?.text('profitLossOtherDirectCostHelp')) || row.source;
         const amountCells = ['current','ytd'].map(period => {
             const value = row.value?.[period];
             const breakdown = salaryBreakdownText(report, row, period);
@@ -3816,7 +3817,7 @@ function renderStoreProfitLoss(report) {
                 const cellTitle = breakdown ? ` title="${escapeHtml(breakdown)}"` : '';
                 return `<td class="profit-loss-value"${cellTitle}><input class="profit-loss-amount" type="number" step="0.01" inputmode="decimal" title="${escapeHtml(title)}" data-profit-key="${row.key}" data-profit-period="${period}" value="${inputValue}" placeholder="${defaultValue}" ${editable ? '' : 'disabled'}></td>`;
             }
-            const title = period === 'ytd' ? window.PageInteractions?.text('profitLossYtdHelp') : row.input_source === 'ledger' ? (window.PageInteractions?.text('profitLossLedger') || row.source) : row.is_auto ? (row.source || '系统自动生成') : '按表内公式自动计算';
+            const title = period === 'ytd' ? window.PageInteractions?.text('profitLossYtdHelp') : row.input_source === 'ledger' ? (window.PageInteractions?.text('profitLossLedger') || row.source) : row.is_auto ? (autoSource || '系统自动生成') : '按表内公式自动计算';
             return `<td class="profit-loss-value ${readOnlyClass}" title="${escapeHtml(breakdown || title)}">${formatProfitLossAmount(value, row)}</td>`;
         }).join('');
         const remark = `<td class="profit-loss-remark"><input type="text" maxlength="500" data-profit-remark="${row.key}" value="${escapeHtml(row.remark || '')}" ${editable ? '' : 'disabled'}></td>`;

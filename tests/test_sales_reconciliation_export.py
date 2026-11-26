@@ -150,7 +150,7 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(detail['来源净商品销售额（原币，整行勿合计）'], net)
                     self.assertEqual(detail['分摊净商品销售额（原币）'], net)
                     self.assertEqual(detail['分摊结算总金额（原币）'], total)
-                    self.assertEqual((detail['店铺收入（元）'], detail['其他费用（元）']), (revenue, fee))
+                    self.assertEqual((detail['店铺收入（元）'], detail['其他直接成本']), (revenue, fee))
                     self.assertEqual((detail['原币'], detail['核算汇率'], detail['订单号']), (currency, rate, order_no))
                     self.assertEqual(detail['关联编号'], f'E{entry.id}')
                     self.assertEqual(detail['来源 SKU ID'], entry.platform_sku_id)

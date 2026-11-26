@@ -2,6 +2,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const locale = {window: {}, document: {documentElement: {lang: 'zh-CN'}}};
+vm.runInNewContext(fs.readFileSync('static/page-interactions.js', 'utf8'), locale);
+const localizedText = locale.window.PageInteractions.text;
 let checks = 0;
 const equal = (actual, expected) => { assert.equal(actual, expected); checks++; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -63,11 +66,13 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
                 profitLossNetImpairmentPolicy:'内部管理：计提减转销',profitLossLegacyImpairmentPolicy:'旧口径：转销抵成本',
                 profitLossPeriodCurrent:'本月',profitLossPeriodPrevious:'上月',profitLossPeriodYtd:'本年累计',profitLossPeriodSeparator:'、',
                 profitLossSalaryHelp:'本月薪资合计覆盖OA',profitLossSharedAdminHelp:'本店本月管理费覆盖OA',
+                profitLossOtherDirectCostHelp:localizedText('profitLossOtherDirectCostHelp'),
                 profitLossSalaryBase:'工资',profitLossSalaryTax:'个税',profitLossSalaryFund:'公积金',profitLossSalaryOaTotal:'OA合计',
                 profitLossSalaryYtd:'报表累计',profitLossSalaryManual:'人工覆盖',profitLossSalaryLedger:'费用台账',profitLossSalaryDefault:'OA取值'};
             equal(Object.hasOwn(labels,key),true);return labels[key];
         }}},
         document: {getElementById: element},
+        isAdmin: () => false,
         formatProfitLossAmount: value => value == null ? '—' : String(value),
     });
     for (const name of ['escapeHtml', 'profitLossPolicyReady', 'compactProfitLossWarnings', 'salaryBreakdownText', 'renderStoreProfitLoss']) {
@@ -78,6 +83,7 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
     context.report = {
         store_name: '测试店铺', period_label: '2026年9月', can_edit: true, calculation_policy:policy, salary_oa_breakdown: breakdown,
         rows: [{key, label: '费用', kind, input_source: inputSource,
+            is_auto: kind === 'auto', source: key === 'other_direct_cost' ? '销售记录中的其他费用' : undefined,
             value: {current: 100,ytd:321}, manual_value: manualValue, remark: ''}],
     };
     vm.runInContext('renderStoreProfitLoss(report)', context);
@@ -127,6 +133,9 @@ async function verify(file) {
         const compensationCell = renderManualCell(file, null, 'manual', 'compensation_revenue', 'auto', 'month_end_fx_mxn8_compensation_v2');
         equal(compensationCell.includes('data-profit-key="compensation_revenue"'),false);
         equal(compensationCell.includes('>100</td>'),true);
+        const directCostCell = renderManualCell(file, null, 'manual', 'other_direct_cost', 'auto');
+        equal(directCostCell.includes('title="对账可查看销售明细「其他直接成本」列。涉及历史跨店结算关联时，请核对原始结算的店铺归属及金额。">100</td>'),true);
+        equal(directCostCell.includes('title="各月累计">321</td>'),true);
         equal(/data-profit-key="salary"[^>]*value="" placeholder="100"/.test(defaultCell), true);
         const overrideCell = renderManualCell(file, {current: 120});
         equal(/data-profit-key="salary"[^>]*value="120" placeholder=""/.test(overrideCell), true);

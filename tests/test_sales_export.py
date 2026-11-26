@@ -79,13 +79,17 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         page = (await self.client.get("/sales", params={"month": "2026-09", "page": 2, "page_size": 1})).json()
         self.assertEqual(len(page["items"]), 1)
         workbook = await self.exported(page=2, page_size=1)
+        details = workbook["销售拆分明细"]
+        self.assertEqual(details["J1"].value, "其他直接成本")
+        field_labels = dict(workbook["字段口径说明"].iter_rows(min_row=2, max_col=2, values_only=True))
+        self.assertEqual(field_labels["platform_fee_cny"], details["J1"].value)
         rows = self.rows(workbook)
         self.assertEqual(len(rows), page["total"])
         self.assertEqual(len(rows), 27)
         self.assertEqual(sum(row[4] for row in rows), 28)
         self.assertEqual(sum(row[12] != "销售" for row in rows), 2)
         summary = (await self.client.get("/sales/monthly-summary", params={"month": "2026-09"})).json()[0]
-        totals = list(workbook["销售拆分明细"].values)[-1]
+        totals = list(details.values)[-1]
         for column, key in ((7, "sales_revenue_cny"), (8, "sales_cost_cny"),
                             (9, "platform_fee_cny"), (10, "gross_profit_cny")):
             self.assertEqual(Decimal(str(totals[column])), Decimal(summary[key]))

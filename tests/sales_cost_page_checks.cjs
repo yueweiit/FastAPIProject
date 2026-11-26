@@ -15,16 +15,20 @@ async function main(){
    document:{documentElement:{lang:'zh-CN'},getElementById:element,querySelectorAll:s=>s==='[data-sales-cost-text]'?translated:s==='[data-sales-pin-text]'?pinTexts:[]},
    fetch:async()=>({ok:true,status:200,json:async()=>resource}),
    escapeHtml:v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;'),
-   isOperator:()=>false,loadProductOptions:async()=>{},renderMonthlySalesSummary:summary=>{element('sales-monthly-tbody').innerHTML=JSON.stringify(summary);},
+   isAdmin:()=>false,isOperator:()=>false,loadProductOptions:async()=>{},renderMonthlySalesSummary:summary=>{element('sales-monthly-tbody').innerHTML=JSON.stringify(summary);},
    renderPagination:(id,...args)=>{element(id).innerHTML=JSON.stringify(args);},loadPendingConfirmations:async()=>{},
   });
   vm.runInContext(fs.readFileSync('static/page-interactions.js','utf8'),c);
   vm.runInContext(fs.readFileSync('static/sales-ledger.js','utf8'),c);
   check(translated.every(n=>n.textContent?.length>0),true);
+  check(translated.find(n=>n.dataset.salesCostText==='salesOtherDirectCost')?.textContent,resource.fields.find(f=>f.key==='platform_fee_cny').label);
   check(resource.fields.length,35);check(resource.fields.every(f=>f.formula&&f.source&&f.note),true);
   check(html.includes('/sales-ledger.js'),true);
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="SKU",salesTotal=0,allProducts=[];',c);
-  const source=html.match(/^async function loadSales\(\) \{[\s\S]*?^\}/m);assert(source);vm.runInContext(source[0],c);
+  for(const name of ['salesLedgerFilterParams','loadSales']){
+   const source=html.match(new RegExp(`^(?:async )?function ${name}\\([^\\n]*\\) \\{[\\s\\S]*?^\\}`,'m'));
+   assert(source,name);vm.runInContext(source[0],c);
+  }
   const sale={id:1,product_id:1,order_no:'ORDER-1',display_name:'商品',source_product_name:'Juguete para Perro',quantity:2,total_cost:'20.004',order_total_cost_cny:'20.00',
    impairment_policy:'sale_month_elapsed_v1',
    exchange_rate_policy:'store_month_report_v1',exchange_rate_month:'2026-09',exchange_rate_mode:'auto',exchange_rate_status:'available',
