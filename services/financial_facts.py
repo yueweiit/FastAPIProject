@@ -209,4 +209,8 @@ async def manual_period_values(db, store_id, report_month, keys, monthly_default
     if financial_controls_enabled():
         from services.financial_controls import ledger_manual_periods
         return await ledger_manual_periods(db, store_id, report_month, keys, reports, monthly_defaults, force_monthly=force_monthly)
-    return derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)
+    result = derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)
+    if force_monthly:
+        from services.profit_loss_evidence import manual_sources
+        result["_source_rows"] = manual_sources(reports, report_month, keys, monthly_defaults)
+    return result

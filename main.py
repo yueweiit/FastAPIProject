@@ -136,6 +136,12 @@ async def report_exchange_rates_script():
                         headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/profit-loss-evidence.js", include_in_schema=False)
+async def profit_loss_evidence_script():
+    return FileResponse(BASE_DIR / "static" / "profit-loss-evidence.js", media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
 @app.get("/sales-ledger.js", include_in_schema=False)
 async def sales_ledger_script():
     return FileResponse(BASE_DIR / "static" / "sales-ledger.js", media_type="text/javascript",

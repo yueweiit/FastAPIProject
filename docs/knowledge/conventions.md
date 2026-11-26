@@ -1,5 +1,7 @@
 # 现有编码与维护约定
 
+09/10计算依据回归：`.\.venv\Scripts\python.exe -m unittest tests.test_profit_loss_evidence -v`使用隔离SQLite/ASGI核对来源合计、原始/拆分关联、月汇率、人工与OA/台账互斥、未知金额、跨年、权限、真实附件导出及旧/新固定版本；覆盖跨店/缺失归属、旧式直接关联、历史归属回退、JSON对象重排后的双向链接、10表比例分子/分母及零/未知/正负舍入边界，并检查查询仅SELECT、业务记录不变。`node tests/profit_loss_evidence_browser_checks.cjs`检查两份实际页面渲染函数、共享侧栏、分页、旧接口、特殊字符、失效响应、来源受限提示、同组比例输入和移动端。原`profit_loss_page_checks.cjs`、`report_fx_page_checks.cjs`及导入/FIFO/准备回归仍需按影响范围执行；不启动main或访问业务库。
+
 ## 实际代码习惯
 
 | 项目 | 当前实现 | 依据 |

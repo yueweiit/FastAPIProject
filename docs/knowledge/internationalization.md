@@ -51,6 +51,8 @@
 
 ## 交付检查与已知限制
 
+- 09/10计算依据侧栏使用`profit-loss-evidence.js`的局部`TEXT['zh-CN']`，复用页面既有币种格式；依据服务集中维护`PERIODS/SOURCES/STATUS/NOTES`及来源受限提示`SOURCE_SCOPE_WARNING`，字段标签沿用报表行定义，Excel依据表复用同一结果。`scope_status=restricted`为中立编码，不按提示文案判断；比例代入过程复用实际汇总字段标签，未知值与不适用占比沿用局部字典。当前仅支持既有中文，没有新增语言、依赖或业务名称迁移。
+
 - 销售跌价新增的“订单创建日期缺失/来源日期不一致”说明集中在`sales_costs.py`的日期来源解析中，经既有`impairment_review_reason`传给页面及Excel；未知日期/比例/金额复用既有待核对展示，不把结算日标为创建日。沿用现有中文信息契约，无新增语言或前端枚举。
 
 - 销售当月参考跌价的公式、来源及口径集中于`sales-fields.zh-CN.json`，供页面和Excel共用；日期/天数/类型/日比例/本批订单成本标签及旧接口提示`impairmentBackendUpdate`由`sales-ledger.js`局部zh-CN字典维护，比例使用当前语言的百分数格式。`impairment_policy=sale_month_elapsed_v1`为中立口径码，不按中文文案判断新旧公式；旧API折算字段保留兼容。后台历史类型推定和异常仍沿用可读说明，仅支持现有中文，无新增语言、依赖或数据库字段。

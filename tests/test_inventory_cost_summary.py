@@ -229,8 +229,10 @@ class InventoryCostSummaryTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.status_code, 200)
                     load.assert_awaited_once_with(fake_db, REPORT_DATE, expected_scope)
                     workbook = load_workbook(BytesIO(response.content), data_only=True)
-                    self.assertEqual(len(workbook.sheetnames), 5 if role == "admin" else 4)
-                    self.assertEqual(workbook.sheetnames[-1], INVENTORY_IMPAIRMENT_SUMMARY_SHEET)
+                    original_count = 5 if role == "admin" else 4
+                    self.assertEqual(len(workbook.sheetnames), original_count + 3)
+                    self.assertEqual(workbook.sheetnames[original_count - 1], INVENTORY_IMPAIRMENT_SUMMARY_SHEET)
+                    self.assertEqual(workbook.sheetnames[original_count:], ["报表口径说明", "金额计算依据", "来源明细"])
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["G5"].value, 350)
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SHEET]["P5"].value, 2760)
                     self.assertEqual(workbook[INVENTORY_IMPAIRMENT_SUMMARY_SHEET]["N2"].value, 2760)

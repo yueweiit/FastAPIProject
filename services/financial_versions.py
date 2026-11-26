@@ -158,6 +158,7 @@ def version_workbook(version):
     values["_exchange_rates"] = report.exchange_rates
     values["_fulfillment_counts"] = report.fulfillment_order_counts
     values["_calculation_policy"] = report.calculation_policy
+    values["_evidence"] = report.evidence
     _build_store_profit_loss_sheet(workbook, SimpleNamespace(**payload["store"]), version.report_month,
                                   values, {row.key: row.remark for row in report.rows},
                                   row_definitions=[(row.key, row.label, row.kind, row.source) for row in report.rows])
@@ -178,4 +179,7 @@ def version_workbook(version):
         for cell in row:
             if isinstance(cell.value, str):
                 cell.data_type = "s"
+    from services.profit_loss_evidence_export import append_profit_loss_evidence
+    append_profit_loss_evidence(workbook, [(SimpleNamespace(**payload["store"]), values)], report.store_id,
+        row_definitions=[(row.key, row.label, row.kind, row.source) for row in report.rows])
     return _workbook_bytes_with_formula_cache(workbook, cache)

@@ -1133,7 +1133,9 @@
                     <p id="profit-loss-policy" data-help-tip data-help-anchor="#profit-loss-title" data-profit-loss-text="profitLossPolicy" style="font-size:var(--font-size-small);color:var(--muted);margin:8px 0"></p>
                     <details id="profit-loss-fx-details" class="profit-loss-fx-details" hidden><summary data-profit-loss-text="profitLossExchangeDetails"></summary><p id="profit-loss-fx"></p></details>
                     <div id="report-fx-editor" hidden></div>
+                    <div id="profit-loss-evidence-tools"></div>
                     <div class="table-scroll profit-loss-table"><table><thead><tr><th>项目</th><th>本月金额</th><th data-profit-loss-text="profitLossYtd"></th><th>备注</th></tr></thead><tbody id="store-profit-loss-tbody"><tr><td colspan="3" class="empty">请选择核算月份</td></tr></tbody></table></div>
+                    <div id="profit-loss-summary"></div>
                 </div>
                 <div id="report-pane-product-line" class="report-pane card">
                     <div class="flex-between"><h3 id="product-line-profit-title">各产品线毛利分析表</h3><button class="btn btn-secondary" onclick="loadProductLineProfit()">刷新</button></div>
@@ -3568,6 +3570,7 @@ function resetStoreProfitLossState() {
 
 function clearProfitLossContext() {
     if (typeof window !== 'undefined') window.ReportExchangeRates?.clear();
+    if (typeof window !== 'undefined') window.ProfitLossEvidence?.clear();
     document.getElementById('profit-loss-updated').textContent = '';
     const warnings = document.getElementById('profit-loss-warnings');
     warnings.innerHTML = '';
@@ -3706,6 +3709,11 @@ function renderStoreProfitLoss(report) {
             isCurrent: () => fxRequestId === storeProfitLossRequestId && profitLossSelectionMatches(report),
             onSaved: reloadProfitLossPreservingDraft,
         });
+    }
+    if (window.ProfitLossEvidence) {
+        const evidenceRequestId = storeProfitLossRequestId;
+        window.ProfitLossEvidence.render(report, {api, isAdmin: isAdmin(),
+            isCurrent: () => evidenceRequestId === storeProfitLossRequestId && profitLossSelectionMatches(report)});
     }
 }
 
@@ -3949,6 +3957,7 @@ initializeAuth();
 </script>
 <script src="/page-interactions.js" defer></script>
 <script src="/report-exchange-rates.js" defer></script>
+<script src="/profit-loss-evidence.js" defer></script>
 <script src="/operation-logs.js" defer></script>
 <script src="/sales-import-progress.js" defer></script>
 <script src="/sales-import-results.js" defer></script>

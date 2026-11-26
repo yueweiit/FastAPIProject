@@ -364,7 +364,11 @@ async def ledger_manual_periods(db, store_id, report_month, keys, reports, month
         FinancialExpenseSource.report_month <= report_month,
         FinancialExpenseSource.category.in_(keys)))).scalars().all()
     if not selections:
-        return derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)
+        result = derive_manual_periods(reports, report_month, keys, monthly_defaults, force_monthly=force_monthly)
+        if force_monthly:
+            from services.profit_loss_evidence import manual_sources
+            result["_source_rows"] = manual_sources(reports, report_month, keys, monthly_defaults)
+        return result
     rows = (await db.execute(select(FinancialExpense).where(
         FinancialExpense.store_id == store_id, FinancialExpense.expense_date >= start,
         FinancialExpense.expense_date < month_bounds(report_month)[1]))).scalars().all()
@@ -403,6 +407,9 @@ async def ledger_manual_periods(db, store_id, report_month, keys, reports, month
             result[selected.category][period] = recalculated[selected.category][period]
     result["_unknown"], result["_warnings"] = unknown, warnings
     result["_sources"] = {row.category: row.mode for row in selections if row.report_month == report_month}
+    if force_monthly:
+        from services.profit_loss_evidence import manual_sources
+        result["_source_rows"] = manual_sources(reports, report_month, keys, monthly_defaults, selections, rows)
     return result
 
 

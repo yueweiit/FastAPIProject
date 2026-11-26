@@ -1,5 +1,7 @@
 # 报表模块代码映射
 
+09/10计算依据由[profit_loss_evidence.py](../../../services/profit_loss_evidence.py)收集同次只读事实、生成字段/期间依据并暂存用户隔离分页快照；[profit_loss_evidence_export.py](../../../services/profit_loss_evidence_export.py)追加离线核对表并建立工作簿内部链接。两份首页调用[profit-loss-evidence.js](../../../static/profit-loss-evidence.js)；`get_profit_loss_summary`与10表Excel复用`_store_profit_loss_summary_rows`。固定版本仍走`collect_payload`/`version_workbook`，完整依据进入现有payload，旧版不补算。回归入口为[test_profit_loss_evidence.py](../../../tests/test_profit_loss_evidence.py)与[profit_loss_evidence_browser_checks.cjs](../../../tests/profit_loss_evidence_browser_checks.cjs)，范围和缓存边界见[流程](workflow.md#0910报表计算依据)。
+
 店铺跌价净列报：`routers/reports.py`的`STORE_PROFIT_LOSS_ROWS/STORE_PROFIT_LOSS_POLICY`统一页面、09和10的行标签与策略，`_build_store_profit_loss_values`将期间计提减销售转销；源金额仍由`_store_provision_financial_values`读取原回放。`services/financial_versions.py:version_workbook`使用保存的行定义、金额和策略，旧版本不重算。回归见[test_store_impairment_presentation.py](../../../tests/test_store_impairment_presentation.py)、[test_store_profit_loss_report.py](../../../tests/test_store_profit_loss_report.py)、[test_provision_reporting.py](../../../tests/test_provision_reporting.py)及[两份页面检查](../../../tests/profit_loss_page_checks.cjs)。
 
 月末汇率与代发： [report_exchange_rates.py](../../../services/report_exchange_rates.py)负责按店铺/币种/月选择手动覆盖或自动月末值、请求内缓存、未结束月手动暂估/自动缺率留空及原始订单去重（旧CSV按保存编号兼容）；reports.py复用于店铺损益与产品线，`_allocate_monthly_fulfillment_cost`按各店各月收入分摊后累计。回归：[test_monthly_profit_policy.py](../../../tests/test_monthly_profit_policy.py)、[CSV实际导入](../../../tests/test_sales_import_store.py)。
