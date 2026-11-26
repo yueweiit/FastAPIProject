@@ -1,4 +1,4 @@
-"""销售出库跌价参考：订单库龄×订单日类型比例×实际FIFO成本，不改写准备转销。"""
+"""销售出库跌价参考：销售当月经过天数×订单日类型比例×实际FIFO成本。"""
 from bisect import bisect_right
 from collections import defaultdict
 from decimal import Decimal, ROUND_HALF_UP
@@ -11,6 +11,7 @@ from services.inventory_impairment import daily_impairment_rate, normalized_prod
 from services.financial_facts import SETTLEMENT_ONLY_KEY, is_fulfillment_settlement
 
 ZERO = Decimal(0)
+SALES_IMPAIRMENT_POLICY = "sale_month_elapsed_v1"
 
 
 async def _sale_order_dates(db, sales):
@@ -37,7 +38,7 @@ async def _sale_order_dates(db, sales):
         if not dates:
             result[sale_id] = (row.sold_at.date(), None)
         elif None in dates:
-            result[sale_id] = (None, "订单创建日期缺失，不能使用结算日期计算出库跌价")
+            result[sale_id] = (None, "订单创建日期缺失，无法确定出库跌价的商品类型")
         elif len(dates) > 1:
             result[sale_id] = (None, "同一销售的来源订单创建日期不一致，出库跌价待核对")
         else:
@@ -47,6 +48,7 @@ async def _sale_order_dates(db, sales):
 
 async def attach_sale_impairment(db, rows, *, include_details=False):
     for row in rows:
+        row.impairment_policy = SALES_IMPAIRMENT_POLICY
         if getattr(row, "income_only", False):
             row.impairment_cny, row.impairment_review_reason = ZERO, None
     sales = {row.id: row for row in rows if row.record_type == "sale" and not getattr(row, "income_only", False)}
@@ -71,6 +73,9 @@ async def attach_sale_impairment(db, rows, *, include_details=False):
     details = {key: [] for key in sales}
     for sale_id, row in sales.items():
         order_date, date_note = order_dates[sale_id]
+        sale_date = row.sold_at.date()
+        month_start = sale_date.replace(day=1)
+        days = (sale_date - month_start).days
         amount, quantity, original_cost, effective_cost = ZERO, 0, ZERO, ZERO
         invalid = row.cost_status == "needs_review" or (order_date is None and row.quantity > 0)
         notes = {date_note} if date_note and row.quantity > 0 else set()
@@ -82,7 +87,6 @@ async def attach_sale_impairment(db, rows, *, include_details=False):
             found = by_batch.get(detail.batch_id)
             batch, current_kind = found if found else (None, None)
             arrival_date = batch.arrived_at.date() if batch else None
-            days = (order_date - arrival_date).days if arrival_date is not None and order_date is not None else None
             kind, rate = None, None
             if batch and order_date is not None:
                 key = (batch.product_id, order_date)
@@ -99,7 +103,8 @@ async def attach_sale_impairment(db, rows, *, include_details=False):
                     notes.add(note)
                 rate = daily_impairment_rate(order_date, kind)
             line_invalid = (batch is None or batch.product_id != row.product_id or batch.voided_at is not None
-                            or days is None or days < 0 or detail.quantity <= 0
+                            or arrival_date is None or order_date is None
+                            or order_date < arrival_date or sale_date < arrival_date or detail.quantity <= 0
                             or detail.quantity > batch.quantity or detail.unit_cost < 0)
             units = None if line_invalid else Decimal(days) * rate * detail.quantity
             line_amount = None if units is None else units * detail.unit_cost
@@ -110,6 +115,7 @@ async def attach_sale_impairment(db, rows, *, include_details=False):
                 details[sale_id].append({"batch_id": detail.batch_id, "batch_no": detail.batch_no,
                     "quantity": detail.quantity, "unit_cost": detail.unit_cost,
                     "arrival_date": arrival_date, "order_date": order_date, "age_days": days,
+                    "sale_date": sale_date, "month_start": month_start,
                     "product_type": kind, "daily_rate": rate, "total_cost_cny": total_cost,
                     "impairment_units": units, "impairment_cny": line_amount})
         costs_known = all(detail.base_unit_cost is not None for detail in row.cost_details)

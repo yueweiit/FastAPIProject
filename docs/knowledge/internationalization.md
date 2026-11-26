@@ -53,7 +53,7 @@
 
 - 销售跌价新增的“订单创建日期缺失/来源日期不一致”说明集中在`sales_costs.py`的日期来源解析中，经既有`impairment_review_reason`传给页面及Excel；未知日期/比例/金额复用既有待核对展示，不把结算日标为创建日。沿用现有中文信息契约，无新增语言或前端枚举。
 
-- 销售出库跌价的批次库龄公式、日期/天数/类型/日比例/本批订单成本标签集中于`sales-ledger.js`的局部zh-CN字典；比例使用当前语言的百分数格式。销售字段公式与导出“跌价”说明共用`sales-fields.zh-CN.json`，不再展示准备转销折算量公式；旧API折算字段保留兼容。后台历史类型推定和异常仍沿用可读说明，无新增语言、依赖或数据库字段。
+- 销售当月参考跌价的公式、来源及口径集中于`sales-fields.zh-CN.json`，供页面和Excel共用；日期/天数/类型/日比例/本批订单成本标签及旧接口提示`impairmentBackendUpdate`由`sales-ledger.js`局部zh-CN字典维护，比例使用当前语言的百分数格式。`impairment_policy=sale_month_elapsed_v1`为中立口径码，不按中文文案判断新旧公式；旧API折算字段保留兼容。后台历史类型推定和异常仍沿用可读说明，仅支持现有中文，无新增语言、依赖或数据库字段。
 
 - 跌价归属弹窗新增的编辑标题、多选说明、生效方式说明、保存影响说明及操作列表头集中于`inventory-allocations.js`局部zh-CN字典的`editorTitle/storeHint/splitHint/arrivalHelp/changeHelp/saveHint/action`；商品、批次和店铺名称保留原值并转义。沿用当前语言回退，无新增语言或依赖。
 
@@ -116,6 +116,8 @@
 商品三种类型的下拉、列表、编辑、导入预览及规则说明集中在两份首页的`productTypeText`局部zh-CN字典，按document.documentElement.lang取词并回退中文；旧商品类型由`productTypeValue`将旧safe_stock编码兼容为stable，安全库存不再派生第四种类型。后端`services/inventory_impairment.py`的`PRODUCT_TYPE_NAMES`集中类型标签，商品导出、导入别名/模板/校验和结果复用，`IMPAIRMENT_STATUS_NAMES`集中新增报表状态。仍仅支持zh-CN；没有新增语言依赖、全站切换或导出语言参数。
 
 ## 销售字段公式资源
+
+销售导出未确认当月跌价口径的阻止提示复用PageInteractions局部zh-CN字典的`salesExportPolicyMismatch`，由两份页面的普通/批次导出共同显示；以响应头中的中立口径码判断，不解析中文提示或Excel说明。沿用现有中文回退，无新增语言依赖。
 
 销售月度汇率旧接口提示和占位符使用PageInteractions的`salesRateBackendUpdate/salesRateUnavailable`；明细与月度统计共享词条，仍仅支持zh-CN并回退中文。`exchange_rate_policy`与`exchange_rate_store_id`为中立元数据，店铺/月冲突使用`sales_reconciliation.TEXT.zh-CN`的`store_conflict/period_conflict`及Excel集中说明，不按中文文案判断口径。
 

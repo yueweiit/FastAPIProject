@@ -58,6 +58,7 @@
         salesExportTooLarge: '单次最多导出{limit}条记录，请缩小月份或商品范围。',
         salesExportUnavailable: '当前服务尚未加载销售导出接口，请更新并重启后端后刷新页面。',
         salesExportInvalidFile: '服务器未返回有效的Excel文件，请稍后重试。',
+        salesExportPolicyMismatch: '无法确认导出文件采用销售当月跌价公式，已停止下载。请更新并重启后端后刷新页面，再重新导出；无需重新导入销售。',
         salesCostTotal: '订单总成本（元，本行）', salesCostPurchase: '采购成本（元）',
         salesCostHead: '头程成本（元）', salesCostLast: '尾程成本（元）', salesCostOther: '其他入库成本（元）',
         salesCostImpairment: '出库商品跌价（元，参考）', salesCostPending: '待核对',

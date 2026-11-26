@@ -3330,6 +3330,10 @@ async function exportSalesRecords(importBatchId = null) {
             throw new Error(response.status >= 500 ? text('salesExportFailed') : formatApiError(detail, text('salesExportFailed')));
         }
         if (!response.headers.get('content-type')?.includes('spreadsheetml.sheet')) throw new Error(text('salesExportInvalidFile'));
+        if (response.headers.get('X-Sales-Impairment-Policy') !== 'sale_month_elapsed_v1') {
+            controller.abort();
+            throw new Error(text('salesExportPolicyMismatch'));
+        }
         const blob = await response.blob();
         if (epoch !== salesExportSessionEpoch) return;
         if (!blob.size) throw new Error(text('salesExportInvalidFile'));

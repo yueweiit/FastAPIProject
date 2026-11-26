@@ -22,6 +22,7 @@ async function main(){
    const fn=html.match(new RegExp(`^(?:async )?function ${name}\\([^\\n]*\\) \\{[\\s\\S]*?^\\}`,'m'));assert(fn);vm.runInContext(fn[0],c);
   }
   const old={id:1,product_id:1,order_no:'OLD',quantity:2,total_cost:10,order_total_cost_cny:10,currency:'MXN',sold_at:'2026-09-10T00:00:00',
+   impairment_policy:'sale_month_elapsed_v1',
    source_row_net_product_sales:100,source_row_settlement_total:90,allocated_net_product_sales:100,allocated_settlement_total:90,
    exchange_rate_to_cny:'.0123',exchange_rate_date:'2026-09-10',exchange_rate_source:'old-daily',selling_price_cny:'.615',
    sales_revenue_cny:'1.23',platform_fee_cny:'.123',profit_cny:'-8.893'};

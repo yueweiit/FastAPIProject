@@ -63,6 +63,7 @@ class SalesExportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.text if response.status_code != 200 else "")
         self.assertIn("spreadsheetml.sheet", response.headers["content-type"])
         self.assertIn("sales_202609.xlsx", response.headers["content-disposition"])
+        self.assertEqual(response.headers.get("X-Sales-Impairment-Policy"), "sale_month_elapsed_v1")
         return load_workbook(BytesIO(response.content), data_only=True)
 
     def rows(self, workbook):

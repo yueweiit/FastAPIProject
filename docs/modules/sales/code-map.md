@@ -10,7 +10,7 @@
 
 非实物/期初分类共用`services/sales_classification.py`；名称导入及重试读取`non_inventory_sku_rules`，独立结算沿用`financial_facts.SETTLEMENT_ONLY_REASONS`。`inventory_sales_condition`统一排除明确的opening_deduction，`report_exchange_rates.fulfillment_orders`另作内存兜底；`migrate.PENDING_MAPPING_REPAIR_SQL`保证重启不恢复为待确认。`tests/test_sales_classification.py`覆盖规则店铺隔离、停用、正金额结算、原记录重试/幂等、未来批次、数量/成本不变、正常异常保留、库存日结与准备/销售列表/月度/成本解释一致。结构见[离线 DDL](../../../migrations/add_sales_classification.py)，发布核对见[运行说明](../../../PROJECT_RUNBOOK.md#非实物结算与初始化分类2026-11-10)。
 
-销售跌价日期由`services/sales_costs.py:_sale_order_dates`统一读取获准销售的分摊/直接履约来源，沿用`financial_facts.is_fulfillment_settlement`排除退款及纯结算来源；实际来源创建日缺失或冲突保留null，legacy_csv/手工显式日期兼容，不改销售归属期。`attach_sale_impairment`比较成本差额的四位HALF_UP结果，避免先舍入总额的中点误判。`test_sales_costs`覆盖正负微小补差、真实差额拒绝、缺日期的列表/解释/Excel、直接/重复/冲突关联、来源日期与销售归属期不同、退款排除及旧CSV。
+销售参考跌价由`services/sales_costs.py:attach_sale_impairment`按`Sale.sold_at`减同月1日得到自然日天数，返回`sale_date/month_start/age_days`和`impairment_policy`。`_sale_order_dates`继续读取获准销售的分摊/直接履约来源，供原订单日商品类型与历史异常校验使用；排除退款及纯结算来源，缺失或冲突保留null，legacy_csv/手工显式日期兼容。成本差额按四位HALF_UP核验，不改变成本、销售日期或报表准备。`test_sales_costs/test_sales_cost_explanations`覆盖9月30日示例、月初/跨年/闰月、多批次当月入库、整单跨月、只读和两种Excel；`sales_month_impairment_checks.cjs`覆盖页面公式、合计及旧接口保护。
 
 | 功能 | 页面函数 | 后端/服务函数 | 核心数据 |
 | --- | --- | --- | --- |
@@ -33,7 +33,7 @@
 | 原始结算/拆分对账Excel | exportSalesRecords、resetSalesExportSession；导入历史传入批次ID | export_sales_records/export_sales_import → _build_sales_export；services/sales_reconciliation.py查询来源、关联和投影；services/sales_export.py格式化 | 首表原始行、次表本地组件，关联编号跳转；完整来源成本、待确认、批次范围、只读及店铺边界 |
 | 成本详情 | 列表成本提示；独立详情 API | get_sale | sale_cost_details、inventory_batches |
 | 四项成本/本行总额 | loadSales，字段资源驱动的台账及本页合计 | sale_cost_context → fifo_cost_components/rounded_cost_components；_build_sale_response | 保存FIFO成本、冻结cost_basis、财务补差；原成本不改写 |
-| 出库商品跌价参考 | loadSales、sales-ledger.js计算明细、销售Excel追加列 | services/sales_costs.py attach_sale_impairment → 商品类型历史、获准销售FIFO明细及引用批次 | 自然日库龄×订单日比例×本批有效成本；不扣安全库存、不设90%上限，与报表准备转销分开 |
+| 出库商品跌价参考 | loadSales、sales-ledger.js计算明细、销售Excel追加列 | services/sales_costs.py attach_sale_impairment → 商品类型历史、获准销售FIFO明细及引用批次 | 销售当月经过自然日数×原订单日比例×本批有效成本；不扣安全库存，与报表准备转销分开 |
 | 待确认筛选/导出/重试 | SalesPending（static/sales-pending.js），两份首页的原函数委托 | list_pending_confirmations、export_pending_confirmations、retry_pending_confirmations → services/sales_pending.py | 原settlement_entries及分配、原导入头；共用_write_candidate_sales/FIFO，不重建结算来源 |
 | 导入历史/对账/撤销 | loadSalesImports、sales-import-status、exportSalesRecords(importBatchId)、rollbackSalesImport | list_sales_imports、export_sales_import、rollback_sales_import | 默认成功；状态和店铺条件先于limit，旧请求不传status仍返回全部；对账只读已保存来源；撤销仍按原FIFO明细恢复 |
 | 导入结果回看 | viewSalesImportResult → static/sales-import-results.js；浮层共用sales-import-progress.js | _import_sales_file保存、get_sales_import_result只读查询 | sales_import_batches.result_snapshot；按店铺隔离、历史缺失提示、原结果与当前统计区分 |

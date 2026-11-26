@@ -29,7 +29,9 @@ function setup(file) {
     c.fetch = async (url, options) => {requests.push({url, options}); return success();};
     return {c, element, links, revoked, timers, requests, html};
 }
-const success = () => ({ok: true, status: 200, headers: {get: () => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}, blob: async () => ({size: 100})});
+const success = (policy = 'sale_month_elapsed_v1') => ({ok: true, status: 200,
+    headers: {get: name => ({'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'x-sales-impairment-policy': policy})[name.toLowerCase()] ?? null}, blob: async () => ({size: 100})});
 async function main() {
     for (const file of ['templates/index.html', 'index.html']) {
         const {c, element: e, links, revoked, timers, requests, html} = setup(file);
@@ -132,6 +134,47 @@ async function main() {
         const staleExport = waitingFx.c.exportSalesRecords();
         waitingFx.c.resetSalesExportSession(); staleFx.resolve(); await staleExport;
         equal(waitingFx.requests.length, 1); equal(waitingFx.links.length, 1);
+
+        // 直接从任一入口导出，不依赖销售列表是否加载；旧接口、新旧进程混合均按本次响应校验。
+        for (const batchId of [null, 17]) {
+            for (const policy of [null, '', 'holding_days_v0', 'sale_month_elapsed_v2']) {
+                const blocked = setup(file);
+                let blobReads = 0, objectUrls = 0, exportSignal;
+                blocked.c.URL.createObjectURL = () => {objectUrls++; return 'blob:sales';};
+                blocked.c.fetch = async (_url, options) => {
+                    exportSignal = options.signal;
+                    return {...success(policy), blob: async () => {blobReads++; return {size: 100};}};
+                };
+                await blocked.c.exportSalesRecords(batchId);
+                equal(blobReads, 0); equal(objectUrls, 0); equal(blocked.links.length, 0);
+                equal(exportSignal.aborted, true);
+                const message = blocked.c.window.PageInteractions.text('salesExportPolicyMismatch');
+                equal(message.includes('无法确认'), true);
+                equal(message.includes('无需重新导入'), true);
+                for (const id of ['sales-export-status', 'sales-import-export-status']) {
+                    equal(blocked.element(id).textContent, message);
+                    equal(blocked.element(id).className, 'msg msg-err');
+                }
+                equal(blocked.element('sales-export-button').disabled, false);
+                equal(blocked.element('import-export-button').disabled, false);
+                // 后端更新后立即可重试，不永久禁用；随后命中旧进程仍须拒绝。
+                blocked.c.fetch = async () => success();
+                await blocked.c.exportSalesRecords(batchId);
+                equal(blocked.links.length, 1); equal(blocked.links[0].clicked, true);
+                equal(blocked.links[0].download, batchId === null ? 'sales_all.xlsx' : 'sales_import_17.xlsx');
+                blocked.c.fetch = async () => success(policy);
+                await blocked.c.exportSalesRecords(batchId);
+                equal(blocked.links.length, 1); equal(objectUrls, 1);
+                // 退出后晚到的旧口径响应不能覆盖新会话。
+                const latePolicy = deferred();
+                blocked.c.fetch = () => latePolicy.promise;
+                const obsolete = blocked.c.exportSalesRecords(batchId);
+                blocked.c.resetSalesExportSession();
+                latePolicy.resolve(success(policy)); await obsolete;
+                equal(blocked.links.length, 1);
+                equal(blocked.element('sales-import-export-status').textContent, '');
+            }
+        }
 
     }
     console.log(JSON.stringify({checks, pages: 2, scope: 'actual sales export functions in VM'}));

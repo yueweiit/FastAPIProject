@@ -26,6 +26,7 @@ async function main(){
   vm.runInContext('let salesPage=1,salesPageSize=20,salesMonth="2026-09",salesProductKeyword="SKU",salesTotal=0,allProducts=[];',c);
   const source=html.match(/^async function loadSales\(\) \{[\s\S]*?^\}/m);assert(source);vm.runInContext(source[0],c);
   const sale={id:1,product_id:1,order_no:'ORDER-1',display_name:'商品',source_product_name:'Juguete para Perro',quantity:2,total_cost:'20.004',order_total_cost_cny:'20.00',
+   impairment_policy:'sale_month_elapsed_v1',
    exchange_rate_policy:'store_month_report_v1',exchange_rate_month:'2026-09',exchange_rate_mode:'auto',exchange_rate_status:'available',
    selling_price_cny:'30',sales_revenue_cny:'60',platform_fee_cny:'5',profit_cny:'34.996',
    unit_purchase_cost_cny:'4.0001',unit_head_shipping_cost_cny:'2',unit_last_mile_cost_cny:'1',unit_other_cost_cny:'3',unit_total_cost_cny:'10.002',
@@ -145,7 +146,7 @@ async function main(){
   check(total('purchase_cost_cny'),'待核对');check(total('impairment_cny'),'待核对');
   check(element('sales-tbody').innerHTML.includes('<script>'),false);
   check(element('sales-tbody').innerHTML.includes('title="&quot; onmouseover=&quot;unsafe"'),true);
-  rows=[{id:3,quantity:1,total_cost:10}];await c.loadSales();
+  rows=[{id:3,quantity:1,total_cost:10,impairment_policy:'sale_month_elapsed_v1'}];await c.loadSales();
   check(body('unit_total_cost_cny'),['待核对']);check(body('impairment_cny'),['待核对']);check(body('order_total_cost_cny'),['¥10.00']);
   rows=[{...sale,currency:'MXN',exchange_rate_to_cny:null,sales_revenue_cny:null}];await c.loadSales();
   check(element('sales-tbody').innerHTML.includes('原币 MXN；核算汇率 待核对'),true);

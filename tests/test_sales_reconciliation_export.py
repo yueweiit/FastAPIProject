@@ -37,6 +37,7 @@ class ReconciliationExportTests(unittest.IsolatedAsyncioTestCase):
         response = await self.request('GET', url, params=params)
         self.assertEqual(response.status_code, 200, response.text if response.status_code != 200 else '')
         self.assertEqual(response.headers['cache-control'], 'private, no-store')
+        self.assertEqual(response.headers.get('X-Sales-Impairment-Policy'), 'sale_month_elapsed_v1')
         return load_workbook(io.BytesIO(response.content), data_only=True)
 
     def records(self, book, name='原始结算对账'):

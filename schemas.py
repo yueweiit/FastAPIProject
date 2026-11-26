@@ -404,6 +404,7 @@ class SaleResponse(BaseModel):
     unit_other_cost_cny: Decimal | None = None
     unit_total_cost_cny: Decimal | None = None
     impairment_cny: Decimal | None = None
+    impairment_policy: str | None = None
     impairment_review_reason: str | None = None
     platform_fee: Decimal
     profit: Decimal
@@ -476,6 +477,8 @@ class SaleBatchImpairmentResponse(BaseModel):
     impairment_cny: Decimal | None = None
     arrival_date: date | None = None
     order_date: date | None = None
+    sale_date: date | None = None
+    month_start: date | None = None
     age_days: int | None = None
     product_type: str | None = None
     daily_rate: Decimal | None = None

@@ -75,11 +75,14 @@ class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(summary['complete']);self.assertEqual(summary['line_count'],2)
         self.assertEqual(D(summary['total_cost_cny']),46)
         self.assertEqual(D(summary['impairment_cny']),sum(D(row['impairment_cny']) for row in data['order_lines']))
+        self.assertEqual(D(summary['impairment_cny']),D('3.6'))  # 9月10日9天；10月1日重置为0天。
         self.assertEqual(data['cost_batches'][0]['batch_no'],'TEST')
         self.assertEqual(sum(D(row['impairment_cny']) for row in data['impairment_batches']),D(data['sale']['impairment_cny']))
         impairment=data['impairment_batches'][0]
         self.assertEqual(impairment['arrival_date'],'2026-09-01')
         self.assertEqual(impairment['order_date'],data['sale']['sold_at'][:10])
+        self.assertEqual(impairment['sale_date'],data['sale']['sold_at'][:10])
+        self.assertEqual(impairment['month_start'],'2026-09-01')
         self.assertEqual(impairment['age_days'],9)
         self.assertEqual(impairment['product_type'],'stable')
         self.assertEqual(D(impairment['daily_rate']),D('.01'))
@@ -123,7 +126,7 @@ class SalesCostExplanationTests(unittest.IsolatedAsyncioTestCase):
                 data=await self.explanation()
                 self.assertEqual(D(data['sale']['unit_total_cost_cny']),expected)
                 self.assertEqual(D(data['sale']['unit_head_shipping_cost_cny']),D('4.5') if key==1 else D('3.5'))
-                self.assertEqual(D(data['sale']['impairment_cny']),D('2.08') if key==1 else D('1.9'))
+                self.assertEqual(D(data['sale']['impairment_cny']),D('2.88') if key==1 else D('2.7'))
                 self.assertEqual(sum(D(line['total_cost_cny']) for line in data['impairment_batches']),D(data['sale']['total_cost']))
                 self.assertEqual(self.session.get(Sale,1).total_cost,60)
                 self.assertEqual(self.session.scalar(select(SaleCostDetail).where(SaleCostDetail.batch_id==1)).unit_cost,10)

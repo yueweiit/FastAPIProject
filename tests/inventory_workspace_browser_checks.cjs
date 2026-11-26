@@ -531,6 +531,7 @@ async function main() {
                 if (salesExportStatus !== 200) return route.fulfill({status: salesExportStatus, contentType: 'application/json',
                     body: JSON.stringify({detail: {code: 'sales_export_empty'}})});
                 return route.fulfill({status: 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    headers: {'X-Sales-Impairment-Policy': 'sale_month_elapsed_v1'},
                     body: Buffer.from('PK\x03\x04sales-download-transport-fixture')});
             }
             if (url.pathname === '/sales/monthly-summary') {salesSummaryQueries.push(Object.fromEntries(url.searchParams));return fulfill([]);}

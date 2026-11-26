@@ -67,7 +67,7 @@ from services.financial_facts import (unlinked_settlement_events, count_unlinked
 from services.cost_layers import sale_cost_context, rounded_cost_components
 from services.report_exchange_rates import convert_report_amount
 from services.sales_report_currency import SALES_RATE_POLICY, sale_report_contexts, report_financial_events, sale_rate_fields
-from services.sales_costs import attach_sale_impairment
+from services.sales_costs import SALES_IMPAIRMENT_POLICY, attach_sale_impairment
 from services.sales_export import MAX_EXPORT_ROWS, MIME as SALES_EXPORT_MIME, build_sales_workbook
 from services.sales_reconciliation import export_sources, reconciliation_rows, reconciliation_rates, check_export_limit
 from services.sales_product_identity import source_local_specification
@@ -2633,7 +2633,8 @@ async def _build_sales_export(db, user, items, *, month, keyword, product_id, im
         scope=scope, product_id=product_id, order_summaries=list(unique_orders.values()), originals=originals, batch_info=batch_info)
     suffix = f"import_{batch_info['id']}" if batch_info else month.replace("-", "") if month else "all"
     return StreamingResponse(output, media_type=SALES_EXPORT_MIME,
-        headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"', "Cache-Control": "private, no-store"})
+        headers={"Content-Disposition": f'attachment; filename="sales_{suffix}.xlsx"', "Cache-Control": "private, no-store",
+                 "X-Sales-Impairment-Policy": SALES_IMPAIRMENT_POLICY})
 
 
 @router.get("/{sale_id}", response_model=SaleResponse)
