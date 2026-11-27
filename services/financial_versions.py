@@ -72,12 +72,26 @@ async def collect_payload(db, user, store, report_month, *, oa_values=None, acti
         "warnings": list(dict.fromkeys(warnings)), "calculation_version": "restated-cost-ownership-v2"})
 
 
+_VERSION_ROW_LABELS = {
+    ("inventory_writeoff", "  本期销售转销"): "  减：本期销售转销",
+    ("credit_impairment_loss", "信用减值损失"): "减：信用减值损失",
+}
+
+
 def _version_financial_payload(payload):
-    """只移除已撤回的展示依据，保留已存快照及其他核算事实。"""
+    """用兼容旧版的名称和字段计算财务摘要。"""
     normalized = {}
     profit_loss = payload.get("profit_loss", {})
-    if "evidence" in profit_loss:
+    rows = profit_loss.get("rows", [])
+    canonical_rows = []
+    for row in rows:
+        label = _VERSION_ROW_LABELS.get((row.get("key"), row.get("label")))
+        canonical_rows.append({**row, "label": label} if label is not None else row)
+    labels_changed = canonical_rows != rows
+    if "evidence" in profit_loss or labels_changed:
         normalized["profit_loss"] = {key: value for key, value in profit_loss.items() if key != "evidence"}
+        if labels_changed:
+            normalized["profit_loss"]["rows"] = canonical_rows
     for section in ("inventory", "product_lines"):
         rows = payload.get(section, [])
         if any("_evidence" in row for row in rows):
@@ -85,11 +99,18 @@ def _version_financial_payload(payload):
     return {**payload, **normalized} if normalized else payload
 
 
+def version_source_digest(payload, *, stored_digest=None):
+    """计算财务总览与月度版本共用的来源摘要。"""
+    normalized = _version_financial_payload(payload)
+    if normalized is payload and stored_digest is not None:
+        return stored_digest
+    return digest(normalized)
+
+
 def _version_matches(version, fingerprint):
     if version.source_digest == fingerprint:
         return True
-    normalized = _version_financial_payload(version.payload)
-    return normalized is not version.payload and digest(normalized) == fingerprint
+    return version_source_digest(version.payload, stored_digest=version.source_digest) == fingerprint
 
 
 async def _find_matching_legacy_version(db, versions, fingerprint):
@@ -125,7 +146,7 @@ async def save_version(db, user, payload, *, oa_values=None, active_store_count=
         db, user, store, payload.report_month,
         oa_values=oa_values, active_store_count=active_store_count,
     )
-    fingerprint = digest(_version_financial_payload(result))
+    fingerprint = version_source_digest(result)
     versions = select(FinancialReportVersion).where(
         FinancialReportVersion.store_id == store.id, FinancialReportVersion.report_month == payload.report_month,
     )
@@ -163,7 +184,8 @@ async def compare_version(db, user, version, *, oa_values=None, active_store_cou
                 changes.append({"key": row["key"], "label": row["label"], "period": period,
                     "previous": previous, "current": latest,
                     "difference": Decimal(latest)-Decimal(previous) if previous is not None and latest is not None else None})
-    return {"version": version.version, "changed": not _version_matches(version, digest(_version_financial_payload(current))),
+    fingerprint = version_source_digest(current)
+    return {"version": version.version, "changed": not _version_matches(version, fingerprint),
             "changes": changes, "warnings": current["warnings"], "profit_layers": current["profit_layers"]}
 
 

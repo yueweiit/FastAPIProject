@@ -19,7 +19,8 @@ from schemas import (CostAdjustmentRequest, ExpenseRequest, ExpenseSourceRequest
                      FinancialVersionRequest, ReceiptRequest, SettlementClassificationRequest)
 from services.finance_config import financial_controls_enabled
 from services import financial_controls as controls
-from services.financial_versions import collect_payload, compare_version, save_version, version_workbook
+from services.financial_versions import (collect_payload, compare_version, save_version,
+                                         version_source_digest, version_workbook)
 from routers.reports import _prepare_profit_loss_oa_values
 
 class FinancialRoute(APIRoute):
@@ -204,7 +205,7 @@ async def financial_overview(store_id: int, report_month: date, db: AsyncSession
     payload = await collect_payload(db, user, store, report_month,
                                     oa_values=oa_values, active_store_count=active_store_count)
     return {"profit_layers": payload["profit_layers"], "warnings": payload["warnings"],
-            "report_date": payload["report_date"], "source_digest": controls.digest(payload)}
+            "report_date": payload["report_date"], "source_digest": version_source_digest(payload)}
 
 
 @router.post("/versions")

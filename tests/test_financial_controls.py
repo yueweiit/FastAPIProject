@@ -18,7 +18,7 @@ from database import Base, get_db
 from models import (InventoryBatch, InventoryCostAdjustment, InventoryCostAdjustmentLine,
                     FinancialAuditEvent, FinancialExpense, FinancialExpenseSource, FinancialReportVersion, SettlementEntry,
                     Store, StoreProfitLossReport, User)
-from routers import financial_control
+from routers import financial_control, reports
 from routers.products import _product_summary_stmt
 from routers.reports import (_store_profit_loss_auto_values, _store_profit_loss_response,
                              _build_store_profit_loss_values, _build_store_profit_loss_sheet,
@@ -536,6 +536,40 @@ class FinancialControlsTests(facts.FinancialFactsTests):
         self.assertEqual(reused.payload, legacy)
         self.assertEqual(reused.source_digest, legacy_digest)
 
+    async def test_loss_label_prefix_removal_reuses_saved_monthly_version(self):
+        month = date(2026, 9, 1)
+        options = {"oa_values": {"office": {}, "salaries": {}, "shared_admin_by_store": {}},
+                   "active_store_count": 2}
+        old_labels = {"inventory_writeoff": "  减：本期销售转销", "credit_impairment_loss": "减：信用减值损失"}
+        old_definitions = [(key, old_labels.get(key, label), kind, source)
+                           for key, label, kind, source in reports.STORE_PROFIT_LOSS_ROWS]
+        with patch.object(reports, "STORE_PROFIT_LOSS_ROWS", old_definitions):
+            original = await save_version(self.db, self.admin, FinancialVersionRequest(
+                request_key="old-loss-labels", store_id=7, report_month=month), **options)
+        await self.db.commit()
+        saved_payload = copy.deepcopy(original.payload)
+        saved_digest = original.source_digest
+
+        with patch.object(financial_control, "_prepare_profit_loss_oa_values", new=AsyncMock(
+                return_value=(options["active_store_count"], options["oa_values"]))):
+            overview = await financial_control.financial_overview(7, month, db=self.db, user=self.admin)
+        self.assertEqual(overview["source_digest"], saved_digest)
+        self.assertEqual(overview["profit_layers"], saved_payload["profit_layers"])
+
+        comparison = await compare_version(self.db, self.admin, original, **options)
+        self.assertFalse(comparison["changed"])
+        self.assertEqual(comparison["changes"], [])
+        reused = await save_version(self.db, self.admin, FinancialVersionRequest(
+            request_key="renamed-loss-labels", store_id=7, report_month=month), **options)
+        self.assertEqual(reused.id, original.id)
+        self.assertEqual(reused.payload, saved_payload)
+        self.assertEqual(reused.source_digest, saved_digest)
+        self.assertEqual(self.session.scalar(select(func.count()).select_from(FinancialReportVersion)), 1)
+        book = load_workbook(version_workbook(reused), data_only=True)
+        labels = {row[0] for row in book["09-店铺损益表"].values}
+        self.assertTrue(set(old_labels.values()).issubset(labels))
+        book.close()
+
     async def test_ownership_change_preserves_saved_version_and_exports_reserve_transfers(self):
         from services.batch_impairment_history import save_change
         from services.batch_store_allocations import replace_stores, validate_stores
@@ -670,9 +704,13 @@ class FinancialControlsTests(facts.FinancialFactsTests):
                 self.assertEqual(overview.status_code, 200, overview.text)
                 captured = await client.post("/financial-control/versions", json=body)
                 self.assertEqual(captured.status_code, 200, captured.text)
+                self.assertEqual(captured.json()["source_digest"], overview.json()["source_digest"])
                 version_id = captured.json()["id"]
                 compared = await client.get(f"/financial-control/versions/{version_id}/compare")
                 self.assertEqual(compared.status_code, 200, compared.text)
+                self.assertFalse(compared.json()["changed"])
+                self.assertEqual(compared.json()["changes"], [])
+                self.assertEqual(compared.json()["profit_layers"], overview.json()["profit_layers"])
                 self.assertEqual(len(oa_reads), 12)  # Four OA reads per request, outside the MySQL transaction.
 
                 async def unavailable(*_args):

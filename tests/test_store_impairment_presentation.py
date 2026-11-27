@@ -120,10 +120,11 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.calculation_policy, STORE_PROFIT_LOSS_POLICY)
         keys = [row.key for row in response.rows]
         start = keys.index("asset_impairment_loss")
-        self.assertEqual(keys[start:start+3], ["asset_impairment_loss", "inventory_impairment", "inventory_writeoff"])
+        self.assertEqual(keys[start:start+4],
+                         ["asset_impairment_loss", "inventory_impairment", "inventory_writeoff", "credit_impairment_loss"])
         self.assertGreater(start, keys.index("gross_profit"))
-        self.assertEqual([row.label for row in response.rows[start:start+3]],
-                         ["减：存货跌价净影响", "  本期存货跌价计提", "  减：本期销售转销"])
+        self.assertEqual([row.label for row in response.rows[start:start+4]],
+                         ["减：存货跌价净影响", "  本期存货跌价计提", "  本期销售转销", "信用减值损失"])
         values = _build_store_profit_loss_values(example(), {})
         book = Workbook()
         _build_store_profit_loss_sheet(book, STORE, MONTH, values, {})
@@ -139,7 +140,7 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertAlmostEqual(detail.cell(number, column).value, float(value), places=14)
                 else:
                     self.assertEqual(detail.cell(number, column).value, None if value is None else float(value))
-        for label, expected in (("减：存货跌价净影响", 40962.30), ("  减：本期销售转销", 3681.16),
+        for label, expected in (("减：存货跌价净影响", 40962.30), ("  本期销售转销", 3681.16),
                                 ("毛利", 17593.34), ("二、营业利润", -23368.96)):
             self.assertEqual(row_by_label(summary, label)[3].value, expected)
         for sheet, metadata in ((detail, ["店铺", "所属平台", "核算期间"]),
@@ -159,7 +160,7 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         detail, summary = book["09-店铺损益表"], book["10-各店铺损益汇总表"]
         self.assertEqual(row_by_label(detail, "毛利")[1].value, 8796.67)
         self.assertEqual(row_by_label(summary, "毛利")[3].value, 17593.34)
-        for label in ("  减：本期销售转销", "减：存货跌价净影响", "二、营业利润", "三、净利润"):
+        for label in ("  本期销售转销", "减：存货跌价净影响", "二、营业利润", "三、净利润"):
             self.assertIsNone(row_by_label(detail, label)[1].value)
             for column in (1, 3, 4):
                 self.assertIsNone(row_by_label(summary, label)[column].value)
@@ -215,6 +216,8 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         book = load_workbook(version_workbook(version), data_only=True)
         sheet = book["09-店铺损益表"]
         self.assertEqual(row_by_label(sheet, "减：存货跌价净影响")[1].value, 20481.15)
+        self.assertEqual(row_by_label(sheet, "  本期销售转销")[1].value, 1840.58)
+        self.assertIsNone(row_by_label(sheet, "信用减值损失")[1].value)
         self.assertEqual(row_by_label(sheet, "毛利")[1].value, 8796.67)
         self.assertEqual(row_by_label(sheet, "二、营业利润")[1].value, -11684.48)
         self.assertNotIn("跌价列报口径", [row[0].value for row in sheet])
