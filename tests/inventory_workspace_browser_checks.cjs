@@ -569,7 +569,7 @@ async function main() {
                 const sale={...salesRows[0],display_sku:'CW0001',display_name:'狗狗咀嚼玩具',...(missingDate?{impairment_cny:null,impairment_review_reason:'订单创建日期缺失，不能使用结算日期计算出库跌价'}:{})};
                 return fulfill({sale,sku:'CW0001',product_name:'狗狗咀嚼玩具',quantity_basis:'inventory_units',
                     cost_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,total_cost_cny:20,purchase_cost_cny:8,head_shipping_cost_cny:4,last_mile_cost_cny:2,other_cost_cny:6}],
-                    impairment_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,impairment_units:missingDate?null:'.09',impairment_cny:missingDate?null:'.9',arrival_date:'2026-09-01',order_date:missingDate?null:'2026-09-10',age_days:missingDate?null:9,product_type:missingDate?null:'new',daily_rate:missingDate?null:'.005',total_cost_cny:20}],
+                    impairment_batches:[{batch_id:1,batch_no:'COST-BATCH',quantity:2,unit_cost:10,impairment_units:missingDate?null:'.09',impairment_cny:missingDate?null:'.9',arrival_date:'2026-09-01',order_date:missingDate?null:'2026-09-10',sale_date:'2026-09-10',month_start:'2026-09-01',age_days:9,product_type:missingDate?null:'new',daily_rate:missingDate?null:'.005',total_cost_cny:20}],
                     order_summary:{order_no:sale.order_no,store_id:7,store_name:'店铺A',line_count:2,complete:true,total_cost_cny:25,impairment_cny:missingDate?null:'1.1'},
                     order_lines:[sale,{...sale,id:101,display_sku:'COMPONENT-OFF-PAGE',display_name:'筛选外组合组件',quantity:1,order_total_cost_cny:5,impairment_cny:'.2'}]});
             }
@@ -1259,17 +1259,30 @@ async function main() {
         await page.locator('#ial-rows tr').waitFor();check(await page.locator('[data-ial-edit]').count(),0);
         check(await page.getByText('当前账号只读，管理员和运营可维护归属。',{exact:true}).isVisible(),true);
         await page.locator('[data-ial-action="close"]').click();role='admin';await page.reload();await page.waitForFunction(()=>CURRENT_ROLE==='admin');
-        salesRows = [{id: 1, product_id: 1, order_no: 'ORDER-COST-SOURCE-SKU', display_order_no:'00042-ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
+        const septemberSalesReport = {
+            store_id:7, store_name:'店铺A', currency:'MXN', exchange_rate_store_id:7,
+            exchange_rate_policy:'store_month_report_v1', exchange_rate_month:'2026-09',
+            exchange_rate_mode:'auto', exchange_rate_status:'available', exchange_rate_is_provisional:false,
+            exchange_rate_to_cny:'0.4', exchange_rate_date:'2026-09-30', exchange_rate_source:'Frankfurter/ECB',
+            impairment_policy:'sale_month_elapsed_v1',
+        };
+        salesRows = [{...septemberSalesReport, id: 1, product_id: 1, order_no: 'ORDER-COST-SOURCE-SKU', display_order_no:'00042-ORDER-COST', quantity: 2, sold_at: '2026-09-10T00:00:00',
             display_sku:'00123456789012345678',display_name:'商品*2+组合 '+ 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.repeat(10),
             source_sku_id:'00123456789012345678',source_product_name:'Juguete para Perro',transaction_type:'订单',source_quantity:2,
-            selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '60', platform_fee_cny: '5',
+            source_row_net_product_sales:'150', source_row_settlement_total:'137.50',
+            allocated_net_product_sales:'150', allocated_settlement_total:'137.50',
+            selling_price: '75', platform_fee:'12.50', selling_price_cny: '30', sales_revenue_cny: '60', platform_fee_cny: '5',
             profit_cny: '35', total_cost: '20', order_total_cost_cny: '20', cost_status: 'unverified',
             unit_purchase_cost_cny:'4',unit_head_shipping_cost_cny:'2',unit_last_mile_cost_cny:'1',unit_other_cost_cny:'3',unit_total_cost_cny:'10',
             purchase_cost_cny: '8', head_shipping_cost_cny: '4', last_mile_cost_cny: '2', other_cost_cny: '6', impairment_cny: '0.9'},
-            {id: 2, product_id: 1, order_no: 'UNKNOWN-COST', quantity: 1, sold_at: '2026-09-11T00:00:00',
-             selling_price: '30', selling_price_cny: '30', sales_revenue_cny: '30', platform_fee_cny: '0', profit_cny: '20', total_cost: '10',
+            {...septemberSalesReport, id: 2, product_id: 1, order_no: 'UNKNOWN-COST', quantity: 1, sold_at: '2026-09-11T00:00:00',
+             source_row_net_product_sales:'75', source_row_settlement_total:'75',
+             allocated_net_product_sales:'75', allocated_settlement_total:'75',
+             selling_price: '75', platform_fee:'0', selling_price_cny: '30', sales_revenue_cny: '30', platform_fee_cny: '0', profit_cny: '20', total_cost: '10',
              cost_breakdown_review_reason: '<script>unsafe</script>', impairment_review_reason: '<img onerror="unsafe">'},
-            {id: -3, record_type: 'settlement_adjustment', quantity: 0, sold_at: '2026-09-12T00:00:00',
+            {...septemberSalesReport, id: -3, record_type: 'settlement_adjustment', quantity: 0, sold_at: '2026-09-12T00:00:00',
+             source_row_net_product_sales:'-7.50', source_row_settlement_total:'-7.50',
+             allocated_net_product_sales:'-7.50', allocated_settlement_total:'-7.50',
              selling_price_cny: '-3', sales_revenue_cny: '-3', platform_fee_cny: '0', profit_cny: '-3', total_cost: '0',
              order_total_cost_cny: '0', purchase_cost_cny: '0', head_shipping_cost_cny: '0', last_mile_cost_cny: '0',
              other_cost_cny: '0', impairment_cny: '0'}];
@@ -1315,7 +1328,13 @@ async function main() {
             check(await saleValue('unit_purchase_cost_cny').innerText(),'¥4.0000');
             check(await saleValue('unit_total_cost_cny').innerText(),'¥10.0000');
             check(await saleValue('order_total_cost_cny').innerText(),'¥20.00');
+            check(await saleValue('exchange_rate_to_cny').innerText(),'0.40000000');
+            check(await saleValue('exchange_rate_date').innerText(),'2026-09-30');
+            check(await saleValue('exchange_rate_source').innerText(),'Frankfurter/ECB');
+            check(await saleValue('sales_revenue_cny').innerText(),'¥60.00');
             check(await saleValue('profit_cny').innerText(),'¥35.00');
+            check(await page.locator('[data-sales-total="profit_cny"]').innerText(),'¥52.00');
+            check(await page.locator('#sales-currency-status').isHidden(),true);
             check(await saleValue('impairment_cny').innerText(),'¥0.90');
             check(await page.locator('#sales-tbody tr').nth(1).locator('[data-sales-value="impairment_cny"]').innerText(),'待核对');
             check(await page.locator('[data-sales-total="impairment_cny"]').innerText(),'待核对');
@@ -1343,11 +1362,10 @@ async function main() {
             await firstSale.locator('[data-sale-calculation]').click();
             await page.locator('#sales-calc-body').getByText('订单创建日期缺失，不能使用结算日期计算出库跌价',{exact:true}).waitFor();
             const pendingImpairment=page.locator('.sales-calculation-section').filter({has:page.locator('#sales-calc-impairment')}).locator('tbody tr').first().locator('td');
-            check(await pendingImpairment.nth(2).innerText(),'待核对');
-            check(await pendingImpairment.nth(3).innerText(),'待核对');
-            check(await pendingImpairment.nth(6).innerText(),'¥20.00');
-            check(await pendingImpairment.nth(7).innerText(),'待核对');
-            check(await pendingImpairment.nth(8).innerText(),'待核对');
+            check(await pendingImpairment.allTextContents(),[
+                'COST-BATCH','2026-09-01','待核对','2026-09-10','2026-09-01','9',
+                '待核对','待核对','¥20.00','待核对','待核对',
+            ]);
             await page.locator('[data-sales-calc-close]').click();calculationMissingOrderDate=false;
             await firstSale.locator('[data-sale-calculation]').click();
             await page.locator('#sales-calc-body .sales-order-totals').waitFor();
@@ -1652,7 +1670,8 @@ async function main() {
             await page.waitForFunction(() => document.getElementById('profit-loss-policy').getAttribute('role') === 'alert' && !document.getElementById('profit-loss-policy').classList.contains('help-tip-source'));
             check(await policy.isVisible(), true);
             check(await help.isVisible(), false);
-            check(await policy.innerText().then(value => value.includes('后端尚未加载')), true);
+            check(await policy.innerText().then(value => value.includes('后端报表口径未识别')), true);
+            check(await page.locator('#profit-loss-save').isDisabled(), true);
             profitLossFixture.calculation_policy = 'month_end_fx_mxn8_v1';
             profitLossFixture.warnings = [];
             profitLossFixture.exchange_rates[0].rate_to_cny = null;

@@ -13,12 +13,18 @@ const batch = {id:1, product_id:1, product_name:product.name, product_sku:produc
 const sale = {id:1, product_id:1, store_id:7, store_name:store.name, order_no:'ORDER-001', display_order_no:'ORDER-001',
     display_sku:product.sku, display_name:product.name, local_sku:product.sku, local_product_name:product.name,
     source_specification:'蓝色', local_specification:'蓝色', transaction_type:'订单', sold_at:'2026-09-10T00:00:00',
-    quantity:2, source_quantity:2, currency:'MXN', exchange_rate_to_cny:'.3711', exchange_rate_date:'2026-09-30',
+    quantity:2, source_quantity:2, currency:'MXN', exchange_rate_to_cny:'.3711', exchange_rate_date:null,
+    exchange_rate_policy:'store_month_report_v1', exchange_rate_store_id:7, exchange_rate_month:'2026-09',
+    exchange_rate_mode:'manual', exchange_rate_status:'available', exchange_rate_is_provisional:false,
     exchange_rate_source:'manual', source_row_net_product_sales:'100', source_row_settlement_total:'90',
     allocated_net_product_sales:'100', allocated_settlement_total:'90', selling_price_cny:'18.555',
     sales_revenue_cny:'37.11', platform_fee_cny:'3.711', profit_cny:'19.399', total_cost:'14', order_total_cost_cny:'14',
     purchase_cost_cny:'10', head_shipping_cost_cny:'4', last_mile_cost_cny:'0', other_cost_cny:'0', impairment_cny:'0',
+    impairment_policy:'sale_month_elapsed_v1',
     unit_purchase_cost_cny:'5', unit_head_shipping_cost_cny:'2', unit_last_mile_cost_cny:'0', unit_other_cost_cny:'0', unit_total_cost_cny:'7'};
+const salesSummary = [{month:sale.exchange_rate_month, exchange_rate_policy:sale.exchange_rate_policy,
+    sales_count:1, sold_quantity:sale.quantity, sales_revenue_cny:sale.sales_revenue_cny,
+    sales_cost_cny:sale.total_cost, platform_fee_cny:sale.platform_fee_cny, gross_profit_cny:sale.profit_cny}];
 const report = {report_month:'2026-09-01', period_label:'2026年9月', store_id:7, store_name:store.name,
     can_edit:true, supports_manual_fx:true, calculation_policy:'order_created_fx_mxn8_income_only_v3',
     updated_at:'2026-11-25T11:34:50', warnings:['上月、本年累计存在历史流水异常，相关金额及利润待核对，未以0代替。'], rows:[],
@@ -150,7 +156,7 @@ async function main() {
                 summary:{quantity:100, inventory_amount:500, low_count:0, zero_count:0}, warnings:[]});
             if (p === '/sales') return ok(paged([sale]));
             if (p === '/sales/pending-confirmations') return ok(paged([]));
-            if (p === '/sales/monthly-summary') return ok({month:'2026-09', items:[], total_quantity:0});
+            if (p === '/sales/monthly-summary') return ok(salesSummary);
             if (p === '/reports/store-profit-loss') return ok(report);
             if (p === '/operation-logs/options') return ok({sources:['batch'], stores:[store], audit_enabled:true, audit_available:true});
             if (p === '/operation-logs') return ok(paged([{id:1, source:'batch', action:'edit', recorded_at:'2026-11-25T11:34:50',
