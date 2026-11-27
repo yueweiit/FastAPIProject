@@ -11,12 +11,14 @@
 | `GET /batches/{batch_id}/logs` | [list_batch_change_logs](../../../routers/batches.py) | admin | page≥1、page_size 1–100（默认20） | BatchChangeLogPageResponse |
 | `DELETE /batches/{batch_id}`（已停用） | [delete_batch](../../../routers/batches.py) | admin/operator | batch_id | 410 batch_delete_retired，不写入数据 |
 | `POST /batches/{batch_id}/void` | [void_batch](../../../routers/batches.py) | admin/operator | BatchVoidRequest：edit_version、reason | BatchResponse |
-| `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、batch_id、keyword、page、page_size、voided_only | list[BatchResponse] \| BatchPageResponse |
+| `GET /batches` | [list_batches](../../../routers/batches.py) | admin/operator/viewer | product_id、batch_id、keyword、page、page_size、voided_only | list[BatchListItemResponse] \| BatchPageResponse |
 | `GET /batches/export` | [export_batches](../../../routers/batches.py) | admin/operator/viewer | batch_ids、product_id、keyword、voided_only | Excel 文件 |
 
 ## 库存内归属管理API
 
-`PUT /batches/{batch_id}/impairment-stores`仅admin/operator。请求为`impairment_store_ids`（至少1项、最多100）、`edit_version`（64位内容版本）、`impairment_change_mode=from_arrival/from_change_date`（默认from_arrival），禁止额外字段。返回BatchResponse。父批次及关联锁内重验版本，冲突409，作废409，不存在404，无效/空/停用店铺422；不修改数量、剩余、单价、成本或日期，追加update日志。GET /batches?product_id=...&page=...&page_size=20用于分页读取；旧数组响应不变。新管理器按角色隐藏写入口，失败保留选择，保存期间锁表单、关闭/退出/同账号重登使旧请求失效。
+`PUT /batches/{batch_id}/impairment-stores`仅admin/operator。请求为`impairment_store_ids`（至少1项、最多100）、`edit_version`（64位内容版本）、`impairment_change_mode=from_arrival/from_change_date`（默认from_arrival），禁止额外字段。返回BatchResponse。父批次及关联锁内重验版本，冲突409，作废409，不存在404，无效/空/停用店铺422；不修改数量、剩余、单价、成本或日期，追加update日志。新管理器按角色隐藏写入口，失败保留选择，保存期间锁表单、关闭/退出/同账号重登使旧请求失效。
+
+`GET /batches` 的逐批数据新增 `effective_impairment`（`status`、`store_names`），供归属明细按上海当日显示，状态与库存总览一致。无日规则时先读取手工归属，再沿用创建人的绑定店铺。`impairment_store_ids` 仍用于编辑时回显手工选择，`impairment_store_history` 仍返回完整的生效记录。带 `page` 时返回分页对象，省略时返回数组。
 
 ## 库存查看 API
 
@@ -51,6 +53,8 @@ month_inbound沿用既有入库可见范围：viewer不包含作废批次，admi
 | GET /inventory/export | view=overview/daily/matrix（默认overview）、keyword、可选product_id；daily/matrix必传month | 总览共享，日结沿用绑定店铺权限；xlsx附件，不按页面分页截断 |
 
 overview.items沿用商品响应，旧safe_stock和stable正安全库存均显示stable；stock_status=zero/low/normal/pending，低库存预警针对稳健商品的安全库存字段。summary仍仅为本页小计，成本含启用的补差、不扣准备。
+
+`overview.items[].impairment_groups` 按上海当日生效归属，归并该商品未作废的批次（含已售完）。每组返回 `status`（`assigned` 已指定、`unassigned` 显式待分配、`legacy` 沿用历史归属）、`store_names` 及 `batch_count`。多店名属于同一批次的均分组合。没有有效批次时返回空数组。后端按当前页商品批量查找每批所用的规则，取当日或此前最近的一条，早于首条时使用首条。
 
 overview的可选product_id用于联想候选精确筛选，复用商品有效成本聚合；与keyword按AND组合，无匹配返回空页，页码归一为1。未传时保留原搜索/分页契约。联想继续复用`GET /products?keyword=...&page=1&page_size=20`，不新增候选API或变更商品接口；总览、日结和导出均携带所选ID。
 

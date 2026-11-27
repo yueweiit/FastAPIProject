@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from models import BatchImpairmentStore, BatchImpairmentRule, BatchImpairmentRuleStore, InventoryBatch, Store, User
-from services.batch_impairment_history import rule_at, rule_segments
+from services.batch_impairment_history import load_effective_rules, rule_at, rule_segments
 
 
 async def load_batch_store_allocations(db, batch_ids, *, lock=False):
@@ -27,13 +27,28 @@ async def load_batch_store_allocations(db, batch_ids, *, lock=False):
             store = stores[store_id]
             result[batch_id].append({"id": store.id, "name": store.name, "is_active": store.is_active})
         return dict(result)
+    return await _read_batch_store_allocations(db, BatchImpairmentStore.batch_id.in_(batch_ids))
+
+
+async def _read_batch_store_allocations(db, condition):
     stmt = select(BatchImpairmentStore.batch_id, Store.id, Store.name, Store.is_active).join(
-        Store, Store.id == BatchImpairmentStore.store_id).where(
-        BatchImpairmentStore.batch_id.in_(batch_ids)).order_by(BatchImpairmentStore.batch_id, Store.id)
+        Store, Store.id == BatchImpairmentStore.store_id).where(condition).order_by(BatchImpairmentStore.batch_id, Store.id)
     result = defaultdict(list)
     for batch_id, store_id, name, active in (await db.execute(stmt)).all():
         result[batch_id].append({"id": store_id, "name": name, "is_active": active})
     return dict(result)
+
+
+def with_batch_default_store(statement):
+    return (statement.add_columns(Store.id.label("default_store_id"), Store.name.label("default_store_name"))
+        .outerjoin(User, User.id == InventoryBatch.user_id)
+        .outerjoin(Store, Store.id == User.store_id))
+
+
+def batch_default_stores(row):
+    if row.default_store_id is None:
+        return []
+    return [{"id": row.default_store_id, "name": row.default_store_name}]
 
 
 def require_store_selection(stores):
@@ -85,13 +100,21 @@ async def replace_stores(db, batch_id, stores):
 
 
 class AssignedBatch:
-    def __init__(self, batch, stores=(), rules=(), default_stores=()):
+    def __init__(self, batch, stores=(), rules=(), default_stores=(), *, ownership_date: date | None = None):
         self.original = batch
         self.impairment_stores = list(stores)
         self.impairment_store_ids = [store["id"] for store in stores]
         self.impairment_store_names = [store["name"] for store in stores]
         self.allocation_rules = list(rules)
         self.default_stores = list(default_stores)
+        self._ownership_date = ownership_date
+
+    @property
+    def effective_impairment(self):
+        if self._ownership_date is None:
+            return None
+        rule = rule_at(self, self._ownership_date)
+        return {"status": rule.status, "store_names": rule.store_names}
 
     @property
     def impairment_store_history(self):
@@ -112,6 +135,33 @@ class AssignedBatch:
 
     def __getattr__(self, key):
         return getattr(self.original, key)
+
+
+async def load_impairment_groups(db, product_ids, as_of: date):
+    """按店铺组合汇总当前页商品的未作废批次，包括已售完批次。"""
+    if not product_ids:
+        return {}
+    batch_scope = select(InventoryBatch.id).where(
+        InventoryBatch.product_id.in_(product_ids), InventoryBatch.voided_at.is_(None))
+    statement = with_batch_default_store(batch_scope.add_columns(InventoryBatch.product_id))
+    rows = (await db.execute(statement)).all()
+    if not rows:
+        return {}
+    rules = await load_effective_rules(db, batch_scope, as_of)
+    # 旧手工关系只在没有日规则时使用；通过商品页限定范围，无需传回全部批次 ID。
+    has_history = select(BatchImpairmentRule.id).where(BatchImpairmentRule.batch_id == InventoryBatch.id).exists()
+    assignments = await _read_batch_store_allocations(db, BatchImpairmentStore.batch_id.in_(batch_scope.where(~has_history)))
+
+    grouped = defaultdict(dict)
+    for row in rows:
+        batch = AssignedBatch(row, assignments.get(row.id, []), rules.get(row.id, []), batch_default_stores(row))
+        rule = rule_at(batch, as_of)
+        key = (rule.status, tuple(store["id"] for store in rule.stores))
+        group = grouped[row.product_id].setdefault(key, {
+            "status": rule.status, "store_names": rule.store_names, "batch_count": 0,
+        })
+        group["batch_count"] += 1
+    return {product: [groups[key] for key in sorted(groups)] for product, groups in grouped.items()}
 
 
 def allocated_amount(amount, stores, store_id, *, quantum=Decimal("0.01")):

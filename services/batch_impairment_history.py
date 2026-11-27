@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from models import BatchImpairmentRule, BatchImpairmentRuleStore, Store, User
 
@@ -14,6 +14,16 @@ class StoreRule:
     effective_date: date
     stores: list[dict]
     is_explicit: bool = True
+
+    @property
+    def status(self):
+        if not self.is_explicit:
+            return "legacy"
+        return "assigned" if self.stores else "unassigned"
+
+    @property
+    def store_names(self):
+        return [store["name"] for store in self.stores]
 
 
 def business_today():
@@ -44,12 +54,28 @@ async def load_rules(db, batch_ids, *, lock=False):
         for row in headers:
             result[row.batch_id].append(StoreRule(row.effective_date, grouped[row.id], row.is_explicit))
         return dict(result)
+    return await _read_rules(db, BatchImpairmentRule.batch_id.in_(batch_ids))
+
+
+async def load_effective_rules(db, batch_scope, as_of: date):
+    """只取当前所需的一条规则，日期在首条规则之前时沿用首条。"""
+    batches = batch_scope.subquery()
+    dates = (select(BatchImpairmentRule.id).where(BatchImpairmentRule.batch_id == batches.c.id)
+             .correlate(batches))
+    current = (dates.where(BatchImpairmentRule.effective_date <= as_of)
+               .order_by(BatchImpairmentRule.effective_date.desc()).limit(1).scalar_subquery())
+    first = dates.order_by(BatchImpairmentRule.effective_date).limit(1).scalar_subquery()
+    rule_ids = select(func.coalesce(current, first)).select_from(batches)
+    return await _read_rules(db, BatchImpairmentRule.id.in_(rule_ids))
+
+
+async def _read_rules(db, condition):
     rows = (await db.execute(select(BatchImpairmentRule.batch_id, BatchImpairmentRule.id,
         BatchImpairmentRule.effective_date, BatchImpairmentRule.is_explicit,
         Store.id.label("store_id"), Store.name, Store.is_active)
         .outerjoin(BatchImpairmentRuleStore, BatchImpairmentRuleStore.rule_id == BatchImpairmentRule.id)
         .outerjoin(Store, Store.id == BatchImpairmentRuleStore.store_id)
-        .where(BatchImpairmentRule.batch_id.in_(batch_ids))
+        .where(condition)
         .order_by(BatchImpairmentRule.batch_id, BatchImpairmentRule.effective_date, Store.id))).all()
     grouped = {}
     for row in rows:

@@ -15,14 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import InventoryBatch, Product, User, Sale, SaleCostDetail, Store, BatchChangeLog
-from schemas import BatchCreate, BatchUpdate, BatchVoidRequest, BatchPageResponse, BatchResponse, BatchChangeLogPageResponse, BatchImpairmentUpdate
+from schemas import (BatchCreate, BatchUpdate, BatchVoidRequest, BatchPageResponse, BatchListItemResponse,
+                     BatchResponse, BatchChangeLogPageResponse, BatchImpairmentUpdate)
 from auth import get_current_user, RequireAdmin, RequireOperator, RequireAnyRole
 from services.cost_layers import load_cost_layers, AdjustedBatch
 from services.finance_config import financial_controls_enabled
 from services.batch_edits import freeze_cost_basis, restate_costs
-from services.batch_store_allocations import (AssignedBatch, load_batch_store_allocations, replace_stores,
-                                              validate_stores, lock_edit_stores)
-from services.batch_impairment_history import load_rules, save_change, initialize_unassigned
+from services.batch_store_allocations import (AssignedBatch, batch_default_stores, load_batch_store_allocations,
+                                              lock_edit_stores, replace_stores, validate_stores, with_batch_default_store)
+from services.batch_impairment_history import business_today, load_rules, save_change, initialize_unassigned
 
 from services.business_audit import BusinessAuditRoute
 
@@ -368,7 +369,7 @@ async def void_batch(
     return response
 
 
-@router.get("", response_model=list[BatchResponse] | BatchPageResponse)
+@router.get("", response_model=list[BatchListItemResponse] | BatchPageResponse)
 async def list_batches(
     product_id: int | None = None,
     batch_id: int | None = Query(default=None, ge=1),
@@ -397,10 +398,10 @@ async def list_batches(
             InventoryBatch.batch_no.ilike(pattern),
         ))
 
-    stmt = select(InventoryBatch)
+    stmt = with_batch_default_store(select(InventoryBatch))
     count_stmt = select(func.count()).select_from(InventoryBatch)
     if joins_product:
-        stmt = stmt.join(Product)
+        stmt = stmt.join(Product, Product.id == InventoryBatch.product_id)
         count_stmt = count_stmt.join(Product)
     if filters:
         stmt = stmt.where(*filters)
@@ -410,14 +411,19 @@ async def list_batches(
         total = (await db.execute(count_stmt)).scalar_one()
         page = min(page, max(1, (total + page_size - 1) // page_size))
         stmt = stmt.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(stmt)
-    batches = result.scalars().all()
-    cost_layers = await load_cost_layers(db, {batch.id for batch in batches})
-    if cost_layers:
-        batches = [AdjustedBatch(batch, cost_layers.get(batch.id, [])) for batch in batches]
-    assignments = await load_batch_store_allocations(db, {batch.id for batch in batches})
-    history = await load_rules(db, {batch.id for batch in batches})
-    batches = [AssignedBatch(batch, assignments.get(batch.id, []), history.get(batch.id, [])) for batch in batches]
+    rows = (await db.execute(stmt)).all()
+    batch_ids = {row[0].id for row in rows}
+    cost_layers = await load_cost_layers(db, batch_ids)
+    assignments = await load_batch_store_allocations(db, batch_ids)
+    history = await load_rules(db, batch_ids)
+    ownership_date = business_today()
+    batches = []
+    for row in rows:
+        batch = row[0]
+        if cost_layers:
+            batch = AdjustedBatch(batch, cost_layers.get(batch.id, []))
+        batches.append(AssignedBatch(batch, assignments.get(batch.id, []), history.get(batch.id, []),
+                                     batch_default_stores(row), ownership_date=ownership_date))
     if page is None:
         return batches
     return BatchPageResponse(items=batches, total=total, page=page, page_size=page_size)

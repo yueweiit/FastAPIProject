@@ -3,7 +3,7 @@
     'use strict';
     const messages = {'zh-CN': {
         title:'跌价归属管理', batch:'批次号', arrival:'入库日期', quantity:'入库数量', remaining:'剩余库存',
-        stores:'归属店铺', pending:'待分配', legacy:'未手工分配（兼容历史归属）', edit:'设置归属', save:'保存归属',
+        stores:'归属店铺', edit:'设置归属', save:'保存归属',
         close:'关闭', cancel:'取消编辑', refresh:'刷新', previous:'上一页', next:'下一页', loading:'正在读取…',
         empty:'该商品没有可管理的活动批次。', batchMissing:'该批次已不存在或已作废，请刷新批次列表。', failed:'操作失败：', saved:'归属已保存，库存数量及成本未修改。',
         savedRefreshFailed:'归属已保存，但列表刷新失败，请重试刷新。无需再次保存归属。', retryRefresh:'重试刷新',
@@ -27,7 +27,9 @@
     const controllers=new Set();
     const valid=token=>token===epoch&&!!state&&state.userId===CURRENT_USER_ID&&!!CURRENT_USER_ID;
     const canWrite=()=>CURRENT_ROLE==='admin'||CURRENT_ROLE==='operator';
-    const label=batch=>batch.impairment_store_names?.join(' / ')||t(batch.impairment_store_history?.some(rule=>rule.is_explicit)?'pending':'legacy');
+    const label=batch=>batch.effective_impairment
+        ? window.PageInteractions.batchStores.effectiveLabel(batch.effective_impairment)
+        : window.PageInteractions.batchStores.label(batch);
     function syncRefreshButtons(){
         node('dialog').querySelectorAll('[data-ial-edit],[data-ial-action="refresh"],[data-ial-action="retry-refresh"]').forEach(button=>button.disabled=refreshing);
         const data=state.data;

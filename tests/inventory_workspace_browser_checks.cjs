@@ -8,12 +8,22 @@ const {chromium} = require(process.env.INVENTORY_PLAYWRIGHT_MODULE || 'playwrigh
 let checks = 0;
 const check = (actual, expected) => {assert.deepEqual(actual, expected); checks++;};
 const wait = () => {let resolve; const promise = new Promise(done => resolve = done); return {promise, resolve};};
+const impairmentGroups = [
+    [{status:'assigned',store_names:['<店铺A>'],batch_count:2},
+     {status:'assigned',store_names:['店铺B'],batch_count:1},
+     {status:'assigned',store_names:['<店铺A>','店铺B'],batch_count:3},
+     {status:'unassigned',store_names:[],batch_count:1}],
+    [{status:'legacy',store_names:['<店铺B>'],batch_count:1},
+     {status:'legacy',store_names:[],batch_count:1}],
+    undefined, [],
+];
 const products = ['stable', 'new', 'safe_stock', 'no_impairment'].map((type, i) => ({
     id: i + 1, sku: `CW000${i + 1}`, name: ['狗狗咀嚼玩具', '猫咪自嗨转盘', '不倒翁羽毛款', '<库存安全测试>'][i],
     product_type: type, safe_stock_quantity: type === 'safe_stock' ? 100 : 0,
     stock_quantity: [7281, 1988, 80, 0][i], stock_value: [85842.99, 25495.35, 915.2, 0][i],
     image: null, last_batch_at: '2026-09-23 00:00:00', created_at: '2026-09-01T00:00:00',
     stock_status: i === 2 ? 'low' : i === 3 ? 'zero' : 'normal',
+    impairment_groups: impairmentGroups[i],
 }));
 const offPageProduct = {...products[1], id: 99, sku: 'CW0099', name: '猫咪测试商品（其他页）'};
 const prefixProduct = {...products[0], id: 100, sku: 'CW00010', name: '相近SKU商品'};
@@ -597,6 +607,12 @@ async function main() {
                 const readStatus=batchId?allocationReadStatus:batchListStatus;
                 if(!batchId&&batchListGate){const held=batchListGate;batchListGate=null;held.entered?.resolve();await held.promise;}
                 if(readStatus!==200)return route.fulfill({status:readStatus,contentType:'application/json',body:JSON.stringify({detail:'列表刷新失败测试'})});
+                if(url.searchParams.get('product_id')==='2'){
+                    const items=impairmentGroups[1].map(({status,store_names},i)=>({...batchFixture,
+                        id:50+i,product_id:2,batch_no:`IN-LEGACY-${i+1}`,impairment_store_ids:[],impairment_store_names:[],
+                        impairment_store_history:[],effective_impairment:{status,store_names}}));
+                    return fulfill({items,total:items.length,page:1,page_size:20});
+                }
                 if(batchId)return fulfill({items:batchId<=allocationTotal?[{...batchFixture,id:batchId,batch_no:batchId===1?batchFixture.batch_no:`IN-TEST-${batchId}`}]:[],total:batchId<=allocationTotal?1:0,page:1,page_size:20});
                 const pageNumber=Math.min(Number(url.searchParams.get('page')||1),Math.max(1,Math.ceil(allocationTotal/20)));
                 const start=(pageNumber-1)*20;
@@ -650,6 +666,20 @@ async function main() {
             await page.locator('[data-inventory-nav]').click();
             await page.locator('#iw-tbody tr').first().waitFor();
             check(await page.locator('#iw-tbody tr').count(), 4);
+            const owners = page.locator('#iw-tbody .inventory-allocation');
+            check(await page.locator('#iw-thead').getByRole('columnheader', {name:'跌价归属', exact:true}).count(), 1);
+            check(await owners.nth(0).locator('li').allTextContents(),
+                ['<店铺A> 2 批', '店铺B 1 批', '<店铺A> / 店铺B（均分） 3 批', '待分配 1 批']);
+            check(await owners.nth(1).locator('li').allTextContents(), ['<店铺B>（沿用原归属） 1 批', '未关联店铺 1 批']);
+            check(await owners.nth(2).textContent(), '—');
+            check(await owners.nth(3).textContent(), '无有效批次');
+            check(await page.locator('[data-iw-allocation="1"]').innerText(), '归属明细');
+            await page.locator('[data-iw-allocation="2"]').click();
+            await page.locator('#ial-rows [data-ial-edit="50"]').waitFor();
+            check(await page.locator('#ial-rows .allocation-store-label').allTextContents(), ['<店铺B>（沿用原归属）', '未关联店铺']);
+            await page.locator('#ial-rows [data-ial-edit="50"]').click();
+            check(await page.locator('#ial-editor input[name="store"]:checked').count(), 0);
+            await page.locator('[data-ial-action="close"]').click();
             // 清空每日月份后返回总览，隐藏月份不能阻止查询；每日仍保留必填校验。
             const validMonth = await page.locator('#iw-month').inputValue();
             await page.locator('[data-iw-action="daily"]').click();

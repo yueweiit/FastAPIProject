@@ -19,6 +19,7 @@ from routers.sales import _sale_store_scope
 from services.inventory_activity import activity_rows, build_activity, business_today, load_activity_sources, month_bounds
 from services.inventory_export import EXPORT_BATCH_SIZE, MAX_EXPORT_PRODUCTS, MIME, build_inventory_workbook, build_assessment_workbook
 from services.inventory_impairment import effective_product_type
+from services.batch_store_allocations import load_impairment_groups
 from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/inventory", tags=["库存查看"])
@@ -171,6 +172,9 @@ async def overview(
         products = [_product_summary_from_row(row) for row in result.all()]
         total, page = len(products), 1
     items = [overview_row(product) for product in products]
+    groups = await load_impairment_groups(db, [product.id for product in products], business_today())
+    for item in items:
+        item["impairment_groups"] = groups.get(item["id"], [])
     return {"items": items, "total": total, "page": page, "page_size": page_size,
             "scope": "shared", "summary": {"quantity": sum(p.stock_quantity for p in products),
             "inventory_amount": sum((p.stock_value for p in products), 0),

@@ -16,8 +16,11 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import Base, get_db
-from models import BatchChangeLog, InventoryBatch, Product, Sale, SaleCostDetail, Store, User
+from models import (BatchChangeLog, BatchImpairmentRule, BatchImpairmentRuleStore, BatchImpairmentStore,
+                    InventoryBatch, Product, Sale, SaleCostDetail, Store, User)
+from routers.batches import router as batch_router
 from routers.inventory import router
+from services import batch_impairment_history
 from services.inventory_activity import build_activity, local_audit_time
 from tests.test_batch_edit import AsyncFacade
 
@@ -62,6 +65,7 @@ class InventoryWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.actor = SimpleNamespace(id=10, role="admin", store_id=None)
         self.app = FastAPI()
         self.app.include_router(router)
+        self.app.include_router(batch_router)
 
         async def actor(): return self.actor
         async def db():
@@ -141,6 +145,100 @@ class InventoryWorkspaceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data["summary"]["quantity"], 80)
         self.assertEqual(data["summary"]["low_count"], 1)
         self.assertEqual(data["summary"]["zero_count"], 1)
+
+    async def test_overview_groups_impairment_owners_by_current_batch_rules(self):
+        self.session.add_all([
+            InventoryBatch(id=batch_id, product_id=1, user_id=creator_id, batch_no=f"OWN-{batch_id}",
+                quantity=10, remaining_quantity=0, purchase_price=1, unit_cost=1, arrived_at=datetime(2026, 9, 1))
+            for batch_id, creator_id in ((4, 7), (5, 7), (6, 7), (7, 7), (8, 8), (9, None))
+        ])
+        self.session.flush()
+        self.session.add_all([
+            BatchImpairmentStore(batch_id=batch_id, store_id=store_id)
+            for batch_id, store_id in ((2, 8), (4, 7), (4, 8), (5, 8), (6, 8), (7, 8))
+        ])
+        self.session.add_all([
+            BatchImpairmentRule(id=1, batch_id=5, effective_date=date(2026, 9, 1), is_explicit=True),
+            BatchImpairmentRule(id=2, batch_id=5, effective_date=date(2026, 10, 1), is_explicit=True),
+            BatchImpairmentRule(id=3, batch_id=6, effective_date=date(2026, 9, 1), is_explicit=True),
+        ])
+        self.session.flush()
+        self.session.add_all([
+            BatchImpairmentRuleStore(rule_id=rule_id, store_id=store_id)
+            for rule_id, store_id in ((1, 7), (1, 8), (2, 8))
+        ])
+        self.session.commit()
+        self.actor = SimpleNamespace(id=7, role="viewer", store_id=None)
+        self.queries.clear()
+        today = date(2026, 9, 30)
+        with patch("routers.inventory.business_today", return_value=today):
+            response = await self.client.get("/inventory/overview")
+        self.assertEqual(response.status_code, 200, response.text)
+        products = {row["id"]: row for row in response.json()["items"]}
+        self.assertEqual(products[1]["impairment_groups"], [
+            {"status": "assigned", "store_names": ["Store7", "Store8"], "batch_count": 2},
+            {"status": "assigned", "store_names": ["Store8"], "batch_count": 1},
+            {"status": "legacy", "store_names": [], "batch_count": 1},
+            {"status": "legacy", "store_names": ["Store7"], "batch_count": 1},
+            {"status": "legacy", "store_names": ["Store8"], "batch_count": 1},
+            {"status": "unassigned", "store_names": [], "batch_count": 1},
+        ])
+        self.assertEqual(products[1]["stock_quantity"], 70)
+        self.assertEqual(products[3]["impairment_groups"], [])
+        self.assertTrue(set(self.queries) <= {"SELECT"})
+        self.assertLessEqual(len(self.queries), 5)
+
+        with patch("routers.batches.business_today", return_value=today):
+            response = await self.client.get("/batches", params={"product_id": 1, "keyword": "SKU-1", "page": 1})
+        self.assertEqual(response.status_code, 200, response.text)
+        details = {row["id"]: row for row in response.json()["items"]}
+        expected = {
+            1: ("legacy", ["Store7"]), 4: ("assigned", ["Store7", "Store8"]),
+            5: ("assigned", ["Store7", "Store8"]), 6: ("unassigned", []),
+            7: ("assigned", ["Store8"]), 8: ("legacy", ["Store8"]), 9: ("legacy", []),
+        }
+        self.assertEqual(set(details), set(expected))
+        for batch_id, (status, names) in expected.items():
+            self.assertEqual(details[batch_id]["effective_impairment"], {"status": status, "store_names": names})
+        self.assertEqual(details[1]["impairment_store_ids"], [])
+        self.assertEqual(details[8]["impairment_store_ids"], [])
+        self.assertEqual(details[5]["impairment_store_ids"], [8])
+        self.assertEqual([rule["effective_date"] for rule in details[5]["impairment_store_history"]],
+                         ["2026-09-01", "2026-10-01"])
+        self.assertTrue(set(self.queries) <= {"SELECT"})
+
+    async def test_overview_loads_one_rule_per_batch_with_history(self):
+        self.session.add_all([BatchImpairmentRule(id=day, batch_id=1, effective_date=date(2026, 9, day))
+                              for day in range(1, 31)])
+        self.session.add_all([BatchImpairmentRule(id=31, batch_id=2, effective_date=date(2026, 9, 1)),
+                              BatchImpairmentRule(id=32, batch_id=3, effective_date=date(2026, 10, 1)),
+                              BatchImpairmentRule(id=33, batch_id=3, effective_date=date(2026, 11, 1))])
+        self.session.flush()
+        self.session.add_all([BatchImpairmentRuleStore(rule_id=15, store_id=8),
+                              BatchImpairmentRuleStore(rule_id=32, store_id=7)])
+        self.session.commit()
+        today = date(2026, 9, 15)
+        loaded_rules = []
+        read_rules = batch_impairment_history._read_rules
+
+        async def record_loaded_rules(db, condition):
+            rules = await read_rules(db, condition)
+            loaded_rules.append({batch_id: [rule.effective_date for rule in batch_rules]
+                                 for batch_id, batch_rules in rules.items()})
+            return rules
+
+        with (patch.object(batch_impairment_history, "_read_rules", new=record_loaded_rules),
+              patch("routers.inventory.business_today", return_value=today)):
+            response = await self.client.get("/inventory/overview")
+            restricted = await self.client.get("/inventory/overview", params={"product_id": 1})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(restricted.status_code, 200, restricted.text)
+        self.assertEqual(loaded_rules, [{1: [today], 3: [date(2026, 10, 1)]}, {1: [today]}])
+        products = {row["id"]: row for row in response.json()["items"]}
+        self.assertEqual(products[1]["impairment_groups"],
+                         [{"status": "assigned", "store_names": ["Store8"], "batch_count": 1}])
+        self.assertEqual(products[2]["impairment_groups"],
+                         [{"status": "assigned", "store_names": ["Store7"], "batch_count": 1}])
 
     async def test_overview_suggestion_filters_exact_product_without_prefix_collisions(self):
         self.session.add(Product(id=4, sku="SKU-10", name="相似商品", product_type="new"))

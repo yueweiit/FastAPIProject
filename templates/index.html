@@ -476,6 +476,10 @@
         .inventory-table-scroll { max-height:62vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
         .inventory-table { width:100%; margin:0; font-variant-numeric:tabular-nums; }
         .inventory-table td { white-space:nowrap; }
+        .inventory-table td.inventory-allocation { min-width:172px; max-width:250px; white-space:normal; overflow-wrap:anywhere; }
+        .inventory-allocation ul { margin:0; padding:0; list-style:none; }
+        .inventory-allocation li + li { margin-top:4px; }
+        .inventory-allocation-count { color:var(--muted); white-space:nowrap; }
         .inventory-table th { position:sticky; top:0; z-index:2; white-space:nowrap; }
         .inventory-table th:first-child { left:0; z-index:3; min-width:240px; }
         .inventory-fixed { position:sticky; left:0; z-index:1; min-width:240px; background:var(--surface); }

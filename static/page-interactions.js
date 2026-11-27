@@ -133,6 +133,8 @@
         batchSearchHint: '输入名称或SKU查看商品候选；点击或上下键后回车可精确查询该商品批次。不选候选时，按名称、SKU或批次号搜索。',
         batchImpairmentStores: '跌价归属店铺（必选）', batchImpairmentDefault: '待分配',
         batchImpairmentLegacy: '未手工分配（兼容历史归属）', batchImpairmentEdit: '修改归属',
+        batchImpairmentLegacyAssigned: '沿用原归属', batchImpairmentUnlinked: '未关联店铺',
+        batchImpairmentEqualSplit: '均分',
         batchImpairmentUnavailable: '归属管理组件尚未加载，请刷新页面后重试。',
         batchImpairmentHelp: '至少选择一家店铺，可多选；按剩余库存的跌价金额均分，不限制销售。编辑时可选择归属生效范围，旧月度版本保留。',
         batchImpairmentEmpty: '尚未选择，请至少选择一家店铺。',
@@ -461,6 +463,13 @@
         },
         label: batch => batch.impairment_store_names?.join(' / ') || text(batch.impairment_store_history?.some(rule => rule.is_explicit)
             ? 'batchImpairmentDefault' : 'batchImpairmentLegacy'),
+        effectiveLabel: ({status, store_names: stores}) => {
+            if (!stores.length) return text(status === 'unassigned' ? 'batchImpairmentDefault' : 'batchImpairmentUnlinked');
+            let label = stores.join(' / ');
+            if (status === 'legacy') label += `（${text('batchImpairmentLegacyAssigned')}）`;
+            if (stores.length > 1) label += `（${text('batchImpairmentEqualSplit')}）`;
+            return label;
+        },
         reset: () => {allocationSerial++; allocationStores = null; allocationSelections.b = []; allocationSelections.eb = [];
             allocationNames.b = []; allocationNames.eb = [];
             allocationMode = 'from_arrival'; allocationHistory = []; allocationHistorySupported = false;},

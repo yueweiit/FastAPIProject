@@ -33,6 +33,9 @@
         dataScope: '每日统计为本页商品合计', equation: '期末 = 期初 + 入库 − 出库 + 调整',
         matrixIn: '入', matrixOut: '出', matrixAdjustment: '调', matrixBalance: '余', noImage: '无图',
         stable: '稳健商品', new: '新品', safe_stock: '稳健商品', no_impairment: '不跌价商品', allocations:'跌价归属',
+        allocationDetails: '归属明细', allocationNoBatches: '无有效批次',
+        allocationBatchCount: '{count} 批',
+        allocationHint: '按未作废批次的当前归属汇总，含已售完批次。同一批归多家店铺时均分。',
         exportOverview: '导出库存 Excel', exportDaily: '导出整月 Excel', exportProduct: '导出所选商品 Excel',
         exportScope: '导出当前查询全部结果，不限当前页；每日进出包含所选月份。',
         exportLoading: '正在生成 Excel，请稍候…', exportReady: 'Excel 已生成，请查看浏览器下载列表。',
@@ -220,6 +223,16 @@
             ? `<img src="${h(product.image)}" alt="" loading="lazy">` : `<span class="inventory-image-empty">${h(text('noImage'))}</span>`;
         return `<div class="inventory-product">${image}<span>${h(product.name)}<small>${h(product.sku)}</small></span></div>`;
     }
+    function allocationSummary(groups) {
+        if (!Array.isArray(groups)) return '—';
+        if (!groups.length) return h(text('allocationNoBatches'));
+        const rows = groups.map(group => {
+            const label = window.PageInteractions.batchStores.effectiveLabel(group);
+            const count = text('allocationBatchCount', {count: number(group.batch_count)});
+            return `<li>${h(label)} <span class="inventory-allocation-count">${h(count)}</span></li>`;
+        });
+        return `<ul>${rows.join('')}</ul>`;
+    }
     const stat = (label, value) => `<div><span>${h(text(label))}</span><strong>${h(value)}</strong></div>`;
     function movementButton(productId, day, kind, value) {
         if (value == null || (kind === 'adjustment' && state.data?.scope !== 'global')) return h(number(value));
@@ -245,12 +258,14 @@
             node('stat-scope').textContent = text('allVisible');
             node('stats').innerHTML = stat('pageQuantity', number(data.summary.quantity)) + stat('pageAmount', money(data.summary.inventory_amount))
                 + stat('pageLow', number(data.summary.low_count)) + stat('pageZero', number(data.summary.zero_count));
-            node('thead').innerHTML = `<tr>${['product', 'type', 'safe', 'current', 'amount', 'lastArrival', 'status', 'detail'].map(key => `<th>${h(text(key))}</th>`).join('')}</tr>`;
+            const columns = ['product', 'type', 'safe', 'current', 'amount', 'lastArrival', 'status', 'allocations', 'detail'];
+            node('thead').innerHTML = `<tr>${columns.map(key => `<th${key === 'allocations' ? ` title="${h(text('allocationHint'))}"` : ''}>${h(text(key))}</th>`).join('')}</tr>`;
             node('tbody').innerHTML = data.items.map(product => `<tr><td class="inventory-fixed">${identity(product)}</td>
                 <td>${h(text(product.product_type))}</td><td>${['stable','safe_stock'].includes(product.product_type) ? h(number(product.safe_stock_quantity)) : '—'}</td>
                 <td class="inventory-balance">${h(number(product.stock_quantity))}</td><td>${h(money(product.stock_value))}</td>
                 <td>${h(product.last_batch_at || '—')}</td><td><span class="tag ${product.stock_status === 'low' || product.stock_status === 'pending' ? 'tag-orange' : product.stock_status === 'zero' ? 'tag-red' : 'tag-green'}">${h(text(product.stock_status))}</span></td>
-                <td><button type="button" class="btn btn-secondary" data-iw-trace="${Number(product.id)}">${h(text('trace'))}</button> <button type="button" class="btn btn-secondary" data-iw-allocation="${Number(product.id)}">${h(text('allocations'))}</button></td></tr>`).join('');
+                <td class="inventory-allocation">${allocationSummary(product.impairment_groups)}</td>
+                <td><button type="button" class="btn btn-secondary" data-iw-trace="${Number(product.id)}">${h(text('trace'))}</button> <button type="button" class="btn btn-secondary" data-iw-allocation="${Number(product.id)}">${h(text('allocationDetails'))}</button></td></tr>`).join('');
         } else {
             const warningKeys = [...new Set([...(data.warnings || []), ...data.items.flatMap(product => product.warnings || [])])];
             window.HelpTips?.setInline(node('help'), warningKeys.some(key => !['inventory_current_documents', 'inventory_scope_restricted'].includes(key)));

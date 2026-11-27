@@ -299,8 +299,17 @@ class BatchResponse(BaseModel):
         return value.replace(tzinfo=timezone.utc).isoformat() if value is not None else None
 
 
+class BatchEffectiveImpairmentResponse(BaseModel):
+    status: Literal["assigned", "unassigned", "legacy"]
+    store_names: list[str]
+
+
+class BatchListItemResponse(BatchResponse):
+    effective_impairment: BatchEffectiveImpairmentResponse
+
+
 class BatchPageResponse(BaseModel):
-    items: list[BatchResponse]
+    items: list[BatchListItemResponse]
     total: int
     page: int
     page_size: int
