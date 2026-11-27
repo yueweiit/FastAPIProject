@@ -3808,7 +3808,8 @@ function renderStoreProfitLoss(report) {
         const remark = `<td class="profit-loss-remark"><input type="text" maxlength="500" data-profit-remark="${row.key}" value="${escapeHtml(row.remark || '')}" ${editable ? '' : 'disabled'}></td>`;
         const detail = salaryBreakdownText(report, row, 'current');
         const help = detail ? `<span data-help-tip>${escapeHtml(detail).replace(/\n/g, '<br>')}</span>` : '';
-        return `<tr class="${row.is_formula ? 'profit-loss-formula-row' : ''}"><td class="profit-loss-label">${escapeHtml(row.label)}${help}</td>${amountCells}${remark}</tr>`;
+        const label = row.key === 'inventory_impairment' ? row.label.trimStart() : row.label;
+        return `<tr class="${row.is_formula ? 'profit-loss-formula-row' : ''}"><td class="profit-loss-label">${escapeHtml(label)}${help}</td>${amountCells}${remark}</tr>`;
     }).join('');
     if (window.ReportExchangeRates) {
         const fxRequestId = storeProfitLossRequestId;
