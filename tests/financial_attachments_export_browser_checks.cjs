@@ -56,10 +56,16 @@ async function verifyAmountSave(browser, file) {
             const report = () => ({
                 store_id: 7, store_name: '测试店铺', can_edit: true, report_month: '2026-10', period_label: '2026年10月',
                 calculation_policy: 'order_created_fx_mxn8_net_profit_v5', warnings: [],
-                rows: Object.entries(savedAmounts).map(([key, current]) => ({
-                    key, label: key, kind: 'manual', input_source: 'manual',
-                    manual_value: {current}, value: {current, ytd: current},
-                })),
+                rows: [
+                    ...Object.entries(savedAmounts).map(([key, current]) => ({
+                        key, label: key, kind: 'manual', input_source: 'manual',
+                        manual_value: {current}, value: {current, ytd: current},
+                    })),
+                    {key: 'inventory_writeoff', label: '  本期销售转销', kind: 'auto', is_auto: true,
+                        value: {current: '1840.58', ytd: '1840.58'}, remark: '转销原备注'},
+                    {key: 'asset_impairment_loss', label: '减：存货跌价净影响', kind: 'formula', is_formula: true,
+                        value: {current: '20481.15', ytd: '20481.15'}},
+                ],
             });
             window.fetch = async (url, options) => {
                 const payload = JSON.parse(options.body);
@@ -73,6 +79,17 @@ async function verifyAmountSave(browser, file) {
 
         const amountInput = key => page.locator(`[data-profit-key="${key}"]`);
         const button = page.locator('#profit-loss-save');
+        const detail = page.locator('#store-profit-loss-tbody');
+        assert.equal(await detail.getByText('本期销售转销', {exact:true}).count(), 0);
+        assert.equal(await detail.locator('[data-profit-remark="inventory_writeoff"]').count(), 0);
+        assert.equal(await detail.getByText('¥20,481.15', {exact:true}).count(), 2);
+        await page.locator('#profit-loss-title .help-tip-trigger').focus();
+        const policyHelp = page.locator('#profit-loss-policy');
+        await policyHelp.waitFor({state:'visible'});
+        const policy = await policyHelp.innerText();
+        assert.match(policy, /销售转销仍参与计算，明细可在「07-存货跌价准备明细表」核对/);
+        assert.doesNotMatch(policy, /分别保留明细/);
+        await page.keyboard.press('Escape');
         for (const [key, incomplete] of [
             ['non_operating_income', '-'], ['non_operating_expense', '1e'], ['income_tax_expense', '1e309'],
         ]) {
@@ -92,12 +109,14 @@ async function verifyAmountSave(browser, file) {
         await amountInput('non_operating_income').fill('');
         await amountInput('non_operating_expense').fill('0');
         await amountInput('income_tax_expense').fill('-5.25');
+        await detail.locator('[data-profit-remark="income_tax_expense"]').fill('所得税备注');
         await button.click();
         await page.locator('#msg .msg-ok').getByText('店铺损益表已保存').waitFor();
         assert.deepEqual(await page.evaluate(() => requests), [{
             url: '/reports/store-profit-loss', method: 'PUT',
             payload: {
-                store_id: 7, report_month: '2026-10-01', update_scope: 'current', remarks: {},
+                store_id: 7, report_month: '2026-10-01', update_scope: 'current_visible_remarks',
+                remarks: {income_tax_expense: '所得税备注'},
                 manual_values: {non_operating_income: {current: null}, non_operating_expense: {current: 0},
                     income_tax_expense: {current: -5.25}},
             },
@@ -154,8 +173,11 @@ async function verify(browser, file) {
             window.storeProfitLossSummaryRequestId = 0;
             window.api = async (_method, url) => {
                 if (url !== '/reports/store-profit-loss-summary?report_month=2026-10-01') throw Error(url);
-                return {stores:[{name:'甲店', warnings:[]}, {name:'乙店', warnings:[]}],
-                    rows:[{key:'operating_revenue', label:'营业收入', values:['80', '20'], total:'100', ratio:'1'}]};
+                return {stores:[{name:'甲店', warnings:[]}, {name:'乙店', warnings:[]}], rows:[
+                    {key:'operating_revenue', label:'营业收入', values:['80', '20'], total:'100', ratio:'1'},
+                    {key:'inventory_writeoff', label:'  本期销售转销', values:['1', '2'], total:'3', ratio:'.03'},
+                    {key:'asset_impairment_loss', label:'减：存货跌价净影响', values:['3', '4'], total:'7', ratio:'.07'},
+                ]};
             };
             document.getElementById('profit-loss-summary-details').hidden = false;
         });
@@ -163,6 +185,8 @@ async function verify(browser, file) {
         const summary = page.locator('#profit-loss-summary');
         await summary.getByText('¥100.00', {exact:true}).waitFor();
         assert.equal(await summary.getByText('依据').count(), 0);
+        assert.equal(await summary.getByText('本期销售转销', {exact:true}).count(), 0);
+        assert.equal(await summary.getByRole('row').filter({hasText:'存货跌价净影响'}).getByText('¥7.00').count(), 1);
 
         await button.click();
         await page.evaluate(hostile => requests[1].resolve(new Response(JSON.stringify({detail:hostile}), {status:403})), hostile);

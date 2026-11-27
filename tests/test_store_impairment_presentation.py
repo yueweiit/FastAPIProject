@@ -126,7 +126,7 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         with patch("routers.reports._store_profit_loss_auto_values", new=AsyncMock(return_value=auto or example())):
             return await _store_profit_loss_response(None, SimpleNamespace(role="admin"), STORE, MONTH, None)
 
-    async def test_api_and_both_exports_keep_gross_accrual_writeoff_and_net_in_one_section(self):
+    async def test_live_exports_omit_writeoff_and_keep_calculated_profit(self):
         response = await self.response()
         self.assertEqual(response.calculation_policy, STORE_PROFIT_LOSS_POLICY)
         keys = [row.key for row in response.rows]
@@ -136,13 +136,15 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(start, keys.index("gross_profit"))
         self.assertEqual([row.label for row in response.rows[start:start+4]],
                          ["减：存货跌价净影响", "  本期存货跌价计提", "  本期销售转销", "信用减值损失"])
+        self.assertEqual(response.rows[start+2].value.current, D("1840.58"))
         values = _build_store_profit_loss_values(example(), {})
         book = Workbook()
         _build_store_profit_loss_sheet(book, STORE, MONTH, values, {})
         _build_store_profit_loss_summary_sheet(book, [(STORE, values), (STORE, values)], MONTH)
         book = reload_book(book)
         detail, summary = book["09-店铺损益表"], book["10-各店铺损益汇总表"]
-        for number, row in enumerate(response.rows, 2):
+        display_rows = [row for row in response.rows if row.key != "inventory_writeoff"]
+        for number, row in enumerate(display_rows, 2):
             self.assertEqual(detail.cell(number, 1).value, row.label)
             self.assertEqual(summary.cell(number, 1).value, row.label)
             for column, period in enumerate(PERIODS, 2):
@@ -151,13 +153,18 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertAlmostEqual(detail.cell(number, column).value, float(value), places=14)
                 else:
                     self.assertEqual(detail.cell(number, column).value, None if value is None else float(value))
-        for label, expected in (("减：存货跌价净影响", 40962.30), ("  本期销售转销", 3681.16),
-                                ("毛利", 17593.34), ("二、营业利润", -23368.96)):
+        for label, expected in (("减：存货跌价净影响", 40962.30), ("  本期存货跌价计提", 44643.46),
+                                ("毛利", 17593.34), ("二、营业利润", -23368.96), ("三、净利润", -23368.96)):
             self.assertEqual(row_by_label(summary, label)[3].value, expected)
+        self.assertTrue(row_by_label(summary, "二、营业利润")[1].font.bold)
+        self.assertFalse(row_by_label(summary, "信用减值损失")[1].font.bold)
         for sheet, metadata in ((detail, ["店铺", "所属平台", "核算期间"]),
                                 (summary, ["店铺数量", "核算期间"])):
-            self.assertEqual([row[0].value for row in sheet.iter_rows(min_row=len(response.rows) + 2)],
+            self.assertNotIn("  本期销售转销", [row[0].value for row in sheet])
+            self.assertEqual(sheet.auto_filter.ref, f"A1:E{len(display_rows) + 1}")
+            self.assertEqual([row[0].value for row in sheet.iter_rows(min_row=len(display_rows) + 2)],
                              metadata)
+        book.close()
 
     def test_export_unknown_writeoff_keeps_cost_and_masks_net_and_aggregate(self):
         auto = example()
@@ -171,7 +178,7 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         detail, summary = book["09-店铺损益表"], book["10-各店铺损益汇总表"]
         self.assertEqual(row_by_label(detail, "毛利")[1].value, 8796.67)
         self.assertEqual(row_by_label(summary, "毛利")[3].value, 17593.34)
-        for label in ("  本期销售转销", "减：存货跌价净影响", "二、营业利润", "三、净利润"):
+        for label in ("减：存货跌价净影响", "二、营业利润", "三、净利润"):
             self.assertIsNone(row_by_label(detail, label)[1].value)
             for column in (1, 3, 4):
                 self.assertIsNone(row_by_label(summary, label)[column].value)

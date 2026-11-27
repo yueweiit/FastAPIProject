@@ -724,7 +724,7 @@ class StoreProfitLossRowResponse(BaseModel):
 class StoreProfitLossUpdateRequest(BaseModel):
     store_id: int = Field(..., ge=1)
     report_month: date
-    update_scope: Literal["all", "current"] = "all"
+    update_scope: Literal["all", "current", "current_visible_remarks"] = "all"
     manual_values: dict[str, StoreProfitLossCell] = Field(default_factory=dict)
     remarks: dict[str, str] = Field(default_factory=dict)
 

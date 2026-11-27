@@ -3784,7 +3784,8 @@ function renderStoreProfitLoss(report) {
     const fxDetails = document.getElementById('profit-loss-fx-details');
     fxDetails.open = false;
     fxDetails.hidden = !(report.exchange_rates || []).length;
-    tbody.innerHTML = report.rows.map(row => {
+    const displayRows = report.rows.filter(row => row.key !== 'inventory_writeoff');
+    tbody.innerHTML = displayRows.map(row => {
         const readOnlyClass = row.is_auto ? 'profit-loss-auto' : 'profit-loss-formula';
         const autoSource = (row.key === 'other_direct_cost' && window.PageInteractions?.text('profitLossOtherDirectCostHelp')) || row.source;
         const amountCells = ['current','ytd'].map(period => {
@@ -3839,7 +3840,7 @@ async function loadStoreProfitLossSummary() {
         if (!isCurrent()) return;
         const headings = [text('profitLossSummaryField'), ...data.stores.map(store => store.name),
             text('profitLossSummaryTotal'), text('profitLossSummaryRatio')];
-        const rows = data.rows.map(row => {
+        const rows = data.rows.filter(row => row.key !== 'inventory_writeoff').map(row => {
             const amounts = [...row.values, row.total].map(amount => `<td>${formatProfitLossAmount(amount, row)}</td>`).join('');
             return `<tr><th scope="row">${escapeHtml(row.label)}</th>${amounts}<td>${reportPercent(row.ratio)}</td></tr>`;
         }).join('');
@@ -3961,7 +3962,7 @@ async function saveStoreProfitLoss() {
     const pending = api('PUT', '/reports/store-profit-loss', {
             store_id: loadedReport.store_id,
             report_month: `${String(loadedReport.report_month).slice(0, 7)}-01`,
-            update_scope: 'current',
+            update_scope: 'current_visible_remarks',
             manual_values: manualValues,
             remarks,
         });

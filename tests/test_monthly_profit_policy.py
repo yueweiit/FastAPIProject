@@ -1,4 +1,5 @@
 """月末汇率、8 MXN履约费、真实累计与历史值保护；隔离SQLite，无外部请求。"""
+import asyncio
 import os
 import unittest
 from datetime import date, datetime
@@ -7,6 +8,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import delete
+from sqlalchemy.orm import Session
 
 from models import (Product, ProductLine, StoreProduct, Sale, SalesImportBatch, SettlementEntry,
                     SettlementEntryAllocation, Store, StoreProfitLossReport, FinancialExpenseSource)
@@ -287,6 +289,74 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(row.manual_values['non_operating_expense']['current'], '20')
                 self.assertEqual(row.manual_values['fulfillment_cost'], {'current':'123'})
 
+    async def test_concurrent_visible_remarks_save_keeps_latest_legacy_writeoff_edit_or_clear(self):
+        from services.financial_controls import scoped_store
+
+        month = date(2026, 9, 1)
+        actor = NS(id=1, role='operator', store_id=7)
+        legacy_db = Facade(self.session)
+        previous_values = {'advertising': {'current': '1', 'previous': '2', 'ytd': '99'}}
+        row = StoreProfitLossReport(store_id=7, report_month=month, manual_values=previous_values)
+        self.session.add(row)
+        self.session.commit()
+        changes = (
+            ({}, {'inventory_writeoff': '最新备注'}, '最新备注'),
+            ({'update_scope': 'current'}, {'inventory_writeoff': '核对后更正'}, '核对后更正'),
+            ({'update_scope': 'current'}, {}, None),
+            ({}, {'inventory_writeoff': '  '}, None),
+        )
+        for legacy_scope, legacy_remarks, expected in changes:
+            with self.subTest(scope=legacy_scope, remarks=legacy_remarks):
+                self.session.refresh(row)
+                row.remarks = {'inventory_writeoff': '页面加载时的备注', 'warehousing': '应被清空的可见备注'}
+                row.manual_values = previous_values
+                self.session.commit()
+                with Session(self.engine, expire_on_commit=False) as visible_session:
+                    visible_db = Facade(visible_session)
+                    stale_row = visible_session.get(StoreProfitLossReport, row.id)
+                    waiting_for_lock = asyncio.Event()
+                    legacy_committed = asyncio.Event()
+
+                    async def wait_for_legacy_commit(db, user, store_id, *, lock=False):
+                        # SQLite 不实现 FOR UPDATE，在测试中模拟等待旧请求释放店铺锁。
+                        if db is visible_db and lock:
+                            waiting_for_lock.set()
+                            await legacy_committed.wait()
+                        return await scoped_store(db, user, store_id, lock=lock)
+
+                    visible_remarks = {'advertising': '本页更新的备注'}
+                    if expected is None:
+                        visible_remarks['inventory_writeoff'] = stale_row.remarks['inventory_writeoff']
+                    visible_request = StoreProfitLossUpdateRequest(
+                        store_id=7, report_month=month, update_scope='current_visible_remarks',
+                        manual_values={'advertising': {'current': '11', 'previous': '999', 'ytd': '999'}},
+                        remarks=visible_remarks,
+                    )
+                    with patch('services.financial_controls.scoped_store', new=wait_for_legacy_commit):
+                        saving = asyncio.create_task(update_store_profit_loss(visible_request, visible_db, actor))
+                        try:
+                            await asyncio.wait_for(waiting_for_lock.wait(), timeout=2)
+                            legacy_result = await update_store_profit_loss(StoreProfitLossUpdateRequest(
+                                store_id=7, report_month=month, manual_values=previous_values,
+                                remarks={'warehousing': '旧客户端保存的可见备注', **legacy_remarks},
+                                **legacy_scope,
+                            ), legacy_db, actor)
+                            legacy_row = next(item for item in legacy_result.rows if item.key == 'inventory_writeoff')
+                            self.assertEqual(legacy_row.remark, expected or '')
+                            self.assertEqual(stale_row.remarks['inventory_writeoff'], '页面加载时的备注')
+                        finally:
+                            legacy_committed.set()
+                            saved = await saving
+
+                    saved_row = next(item for item in saved.rows if item.key == 'inventory_writeoff')
+                    self.assertEqual(saved_row.remark, expected or '')
+                    expected_remarks = {'advertising': '本页更新的备注'}
+                    if expected is not None:
+                        expected_remarks['inventory_writeoff'] = expected
+                    self.assertEqual(stale_row.remarks, expected_remarks)
+                    self.assertEqual(stale_row.manual_values['advertising'], {'current': '11', 'previous': '2', 'ytd': '99'})
+                    self.assertEqual(stale_row.report_metadata['manual_period_mode'], 'monthly')
+
     async def test_detail_and_summary_exports_agree_after_manual_save_clear_and_zero(self):
         from io import BytesIO
         from openpyxl import load_workbook
@@ -300,7 +370,7 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
         manual_keys = ('non_operating_income', 'non_operating_expense', 'income_tax_expense')
 
         async def save(report_month, current_values):
-            request = StoreProfitLossUpdateRequest(store_id=7, report_month=report_month, update_scope='current',
+            request = StoreProfitLossUpdateRequest(store_id=7, report_month=report_month, update_scope='current_visible_remarks',
                 manual_values={key: {'current': value} for key, value in current_values.items()})
             await update_store_profit_loss(request, db, user)
 
@@ -329,7 +399,8 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
                     detail = book[FINANCIAL_ATTACHMENT_SHEET]
                     summary = book[STORE_PROFIT_LOSS_SUMMARY_SHEET]
                     store_column = next(cell.column for cell in summary[1] if cell.value == report.store_name)
-                    for number, row in enumerate(report.rows, start=2):
+                    display_rows = [row for row in report.rows if row.key != 'inventory_writeoff']
+                    for number, row in enumerate(display_rows, start=2):
                         if row.key in (*manual_keys, 'net_profit'):
                             self.assertEqual(detail.cell(number, 1).value, row.label)
                             self.assertEqual(summary.cell(number, 1).value, row.label)

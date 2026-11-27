@@ -64,7 +64,8 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
     const context = vm.createContext({
         window: {PageInteractions: {text: key => {
             const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新',
-                profitLossNetImpairmentPolicy:'内部管理：计提减转销',profitLossLegacyImpairmentPolicy:'旧口径：转销抵成本',
+                profitLossNetImpairmentPolicy:localizedText('profitLossNetImpairmentPolicy'),
+                profitLossLegacyImpairmentPolicy:localizedText('profitLossLegacyImpairmentPolicy'),
                 profitLossManualNetProfitPolicy:localizedText('profitLossManualNetProfitPolicy'),
                 profitLossLegacyNetProfitPolicy:localizedText('profitLossLegacyNetProfitPolicy'),
                 profitLossPeriodCurrent:'本月',profitLossPeriodPrevious:'上月',profitLossPeriodYtd:'本年累计',profitLossPeriodSeparator:'、',
@@ -101,8 +102,10 @@ async function verify(file) {
             'month_end_fx_mxn8_compensation_v2', 'month_end_fx_mxn8_v1', 'unrecognized']) {
             const result = renderManualCell(file, null, 'manual', 'salary', 'manual', policy, null, true);
             const netImpairment = [currentPolicy, 'order_created_fx_mxn8_net_impairment_v4'].includes(policy);
-            equal(result.policy.includes('内部管理：计提减转销'), netImpairment);
-            equal(result.policy.includes('旧口径：转销抵成本'), !netImpairment && policy !== 'unrecognized');
+            equal(result.policy.includes('销售转销仍参与计算'), netImpairment);
+            equal(result.policy.includes('销售转销抵减营业成本'), !netImpairment && policy !== 'unrecognized');
+            equal(result.policy.includes('07-存货跌价准备明细表'), policy !== 'unrecognized');
+            equal(result.policy.includes('分别保留明细'), false);
             equal(result.policy.includes('净利润＝营业利润＋营业外收入－营业外支出－所得税费用'), policy === currentPolicy);
             equal(result.policy.includes('后端待更新'), policy === 'unrecognized');
             equal(result.html.includes('disabled'), policy === 'unrecognized');
@@ -172,7 +175,7 @@ async function verify(file) {
             const loading = ui.load(); await flush(); ui.queries()[0].resolve(report()); await loading;
             const saving = ui.save();
             equal(ui.writes()[0].body.manual_values.shared_admin.current, saved);
-            equal(ui.writes()[0].body.update_scope, 'current');
+            equal(ui.writes()[0].body.update_scope, 'current_visible_remarks');
             ui.writes()[0].resolve(report()); await saving;
         }
     }
@@ -185,7 +188,7 @@ async function verify(file) {
             const loading = ui.load(); await flush(); ui.queries()[0].resolve(report()); await loading;
             const saving = ui.save();
             equal(ui.writes()[0].body.manual_values[key].current, 12.34);
-            equal(ui.writes()[0].body.update_scope, 'current');
+            equal(ui.writes()[0].body.update_scope, 'current_visible_remarks');
             ui.writes()[0].resolve(report()); await saving;
         }
         const derived = renderManualCell(file, null, 'manual', 'net_profit', 'formula', currentPolicy);
@@ -207,7 +210,7 @@ async function verify(file) {
         ui.queries()[1].resolve(report('2026-10')); await next;
         const saving = ui.save();
         equal(ui.writes()[0].body.report_month, '2026-10-01');
-        equal(ui.writes()[0].body.update_scope, 'current');
+        equal(ui.writes()[0].body.update_scope, 'current_visible_remarks');
         equal(ui.writes()[0].body.manual_values.salary.current, 123);
         await ui.save(); equal(ui.writes().length, 1);
         equal(ui.element('profit-loss-save').disabled, true);

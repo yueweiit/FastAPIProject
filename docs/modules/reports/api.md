@@ -73,9 +73,9 @@ product-line-profit已改按本地商品ID分组，不再读取产品线映射�
 
 `shared_admin`（平摊人事＋财务管理费用）与`salary`一样是允许保存的人工科目，响应`kind="manual"`、`is_auto=false`。`manual_values.shared_admin.current`为本店本月覆盖总额，0有效，null恢复OA默认；`admin_expenses`仍是公式科目，不能直接保存。两项的`value`是最终金额，`manual_value`只含实际保存输入；前端把未填写的OA默认显示为占位值并提交null。上月/年累计及Excel逐月采用人工值或OA默认，接口字段和金额类型不变，已有客户端应根据kind渲染。
 
-StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks，以及可选update_scope（all/current，默认all）。金额单元StoreProfitLossCell有current/previous/ytd，可空；只保存允许的人工科目，自动/公式键忽略。默认all仍整体替换人工JSON，须提交完整要保留的值；current只替换本月人工列，保留原previous/ytd存储并忽略请求比较输入，未提交的本月人工科目清空为null；metadata标记monthly后，响应比较列根据各月current及OA月默认计算，上月取实际月记录、年累计自动汇总。all模式明确输入的比较值保留兼容，缺少时才推导。当前页面显式提交current，避免只编辑本月却清空比较值；OA薪资默认金额仅显示为输入框占位值，未人工填写时提交null，不会把本月/比较期间OA默认金额固化为人工值。已有报表保存时加行锁保护读取及合并。
+`StoreProfitLossUpdateRequest` 接收 `store_id`、`report_month`、`manual_values`、`remarks` 和可选的 `update_scope`。默认 `all` 整体替换人工金额 JSON。`current` 和 `current_visible_remarks` 都只替换本月人工列，保留存储中的上月和本年累计值，未提交的本月人工科目清空为 `null`。金额单元 `StoreProfitLossCell` 有 `current`、`previous`、`ytd`，保存范围为允许的人工科目。月度模式下，上月按实际月记录、本年累计按各月 `current` 和 OA 月默认值推导。`all` 模式保留对显式比较金额的兼容。页面使用 `current_visible_remarks`，OA 薪资默认金额显示为输入框占位值，人工留空提交 `null`。已有报表保存时加行锁保护读取及合并。
 
-remarks在两种scope下均为完整替换，只接受已定义科目、去空白后最多500字符。权限、店铺、月份校验不变；非法update_scope返回422。字段定义见[schemas.py](../../../schemas.py)，保存实现为[update_store_profit_loss](../../../routers/reports.py)。
+`remarks` 接受已定义的科目，去空白后最多保留 500 字符。`all` 和 `current` 完整替换备注，旧客户端提交新内容可编辑转销备注，省略对应键或传空字符串可清空。`current_visible_remarks` 替换可见科目的备注，转销备注以报表行锁内的最新存储值为准。无法识别的 `update_scope` 返回 422。字段定义见[schemas.py](../../../schemas.py)，保存实现为[update_store_profit_loss](../../../routers/reports.py)。
 
 响应StoreProfitLossResponse含warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。`inventory_impairment` 取期间总计提，`inventory_writeoff` 在存货跌价净影响中抵减计提。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/manual_value/remark。value为最终计算金额；人工行的manual_value只含实际保存的人工覆盖，未保存时为null；自动/公式行为null。两者不能混作保存输入。没有单独的审批/结账状态，公式由后端生成。UI 展示本月与只读本年累计，只有本月人工项目可编辑；API和单店Excel仍提供三个期间。每行追加is_reserved，响应追加exchange_rates（币种/月/请求月末日/实际日期/人民币汇率/来源/状态）与fulfillment_order_counts（各期间去重履约订单数）；新字段可缺省，旧版本仍可读取。
 

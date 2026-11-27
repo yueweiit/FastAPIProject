@@ -826,8 +826,14 @@ async def update_store_profit_loss(
             StoreProfitLossReport.report_month == data.report_month,
         ).with_for_update().execution_options(populate_existing=True)
     )
+    if data.update_scope == "current_visible_remarks":
+        remarks.pop("inventory_writeoff", None)
+        saved_remarks = (report.remarks or {}) if report else {}
+        if "inventory_writeoff" in saved_remarks:
+            remarks["inventory_writeoff"] = saved_remarks["inventory_writeoff"]
+    current_month_only = data.update_scope != "all"
     saved_values = report.manual_values if report else {}
-    if data.update_scope == "current":
+    if current_month_only:
         # 页面仅编辑本月；不能把未提交的上月/年累计人工值清空或固化OA默认值。
         keys = (set(saved_values) | set(manual_values)) & STORE_PROFIT_LOSS_MANUAL_KEYS
         manual_values = {
@@ -868,7 +874,7 @@ async def update_store_profit_loss(
         report.remarks = remarks
         report.updated_by_user_id = user.id
     metadata = dict(getattr(report, "report_metadata", None) or {})
-    metadata["manual_period_mode"] = "monthly" if data.update_scope == "current" else "legacy"
+    metadata["manual_period_mode"] = "monthly" if current_month_only else "legacy"
     report.report_metadata = metadata
     await db.commit()
     active_store_count, oa_values = await _prepare_profit_loss_oa_values(db, data.report_month, bool(store.name))
@@ -1162,7 +1168,10 @@ def _build_store_profit_loss_sheet(
     sheet = workbook.create_sheet(FINANCIAL_ATTACHMENT_SHEET)
     headers = ["项目", "本月金额", "上月金额", "本年累计", "备注"]
     sheet.append(headers)
-    definitions = [row for row in (row_definitions if row_definitions is not None else STORE_PROFIT_LOSS_ROWS) if row[0] in values]
+    # 固定月度版本传入归档行定义，实时附件采用当前展示行。
+    if row_definitions is None:
+        row_definitions = [row for row in STORE_PROFIT_LOSS_ROWS if row[0] != "inventory_writeoff"]
+    definitions = [row for row in row_definitions if row[0] in values]
     for key, label, _kind, _source in definitions:
         sheet.append([
             label,
@@ -1237,20 +1246,20 @@ def _build_store_profit_loss_summary_sheet(
     sheet = workbook.create_sheet(STORE_PROFIT_LOSS_SUMMARY_SHEET)
     headers = ["项目"] + [store.name for store, _values in store_reports] + ["合计", "占比"]
     sheet.append(headers)
-    for row in _store_profit_loss_summary_rows(store_reports):
+    rows = [row for row in _store_profit_loss_summary_rows(store_reports) if row["key"] != "inventory_writeoff"]
+    for row in rows:
         sheet.append([row["label"], *[_excel_number(value) for value in row["values"]],
                       _excel_number(row["total"]), _excel_number(row["ratio"])])
-    first_data_row = 2
-    last_data_row = 1 + len(STORE_PROFIT_LOSS_ROWS)
+    last_data_row = 1 + len(rows)
     _style_financial_sheet(sheet, headers)
-    for row_number in range(first_data_row, last_data_row + 1):
-        key = STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][0]
+    for row_number, row in enumerate(rows, start=2):
+        key = row["key"]
         for column in range(2, len(headers) + 1):
             sheet.cell(row_number, column).number_format = "0.00%" if key == "gross_margin" or column == len(headers) else '¥#,##0.00'
         if key == "gross_margin":
             sheet.cell(row_number, len(headers)).number_format = "General"
-        for cell in sheet[row_number]:
-            if STORE_PROFIT_LOSS_ROWS[row_number - first_data_row][2] == "formula":
+        if row["kind"] == "formula":
+            for cell in sheet[row_number]:
                 cell.fill = PatternFill("solid", fgColor="EEF3F8")
                 cell.font = Font(name="等线", size=10, bold=True)
     sheet.append(["店铺数量", len(store_reports)] + [None] * (len(headers) - 2))

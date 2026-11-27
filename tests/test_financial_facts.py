@@ -354,11 +354,13 @@ class FinancialFactsTests(unittest.IsolatedAsyncioTestCase):
         individual, cross_store = month_report.json(), summary.json()
         self.assertNotIn('evidence', individual)
         self.assertEqual([store['id'] for store in cross_store['stores']], [7, 8])
-        for number, row in enumerate(individual['rows'], 2):
+        individual_rows = [row for row in individual['rows'] if row['key'] != 'inventory_writeoff']
+        for number, row in enumerate(individual_rows, 2):
             sheet = book[reports_api.FINANCIAL_ATTACHMENT_SHEET]
             for cell, period in zip(sheet[number][1:4], ('current', 'previous', 'ytd')):
                 self.assertAlmostEqual(cell.value, value(row['value'][period]), places=10)
-        for number, row in enumerate(cross_store['rows'], 2):
+        summary_rows = [row for row in cross_store['rows'] if row['key'] != 'inventory_writeoff']
+        for number, row in enumerate(summary_rows, 2):
             sheet = book[reports_api.STORE_PROFIT_LOSS_SUMMARY_SHEET]
             for cell, amount in zip(sheet[number][1:], [*row['values'], row['total'], row['ratio']]):
                 self.assertAlmostEqual(cell.value, value(amount), places=10)
