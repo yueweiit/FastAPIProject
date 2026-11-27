@@ -1,6 +1,8 @@
 # 报表 API
 
-2026-11-26：当前`calculation_policy=order_created_fx_mxn8_net_impairment_v4`。店铺损益采用内部管理净列报：`operating_cost`不再抵减转销，`asset_impairment_loss=inventory_impairment-inventory_writeoff`。两个自动源字段仍分别是期间总计提、正数转销，转销行移到跌价区；行键、类型、人工保存和权限不变。本月/上月/本年累计均适用，任一跌价源未知则净影响及营业/净利润为null，已知成本/毛利可保留。新旧策略及行标签随响应保存，旧固定版本不重算或改名；09/10实时导出与页面同源，详见[跌价公式](calculation-formulas.md#损益的存货跌价准备)。
+2026-11-27：当前 `calculation_policy=order_created_fx_mxn8_net_profit_v5`。营业外收入、营业外支出、所得税费用按 `kind="manual"` 和 `is_reserved=false` 返回，默认通过 `manual_values` 保存。旧客户端省略这三个科目时保留已存值，显式提交本月 `null` 可以清空。三个期间的净利润见[报表公式](calculation-formulas.md#店铺损益全部项目)。旧固定版本按保存的策略与金额导出。
+
+2026-11-26：`calculation_policy=order_created_fx_mxn8_net_impairment_v4` 起采用存货跌价净列报。营业成本按原各成本科目合计，净影响按 `asset_impairment_loss=inventory_impairment-inventory_writeoff` 计算。两个自动源字段分别是期间总计提和正数转销，转销行位于跌价区。本月、上月和本年累计均适用，任一跌价源未知则净影响及营业、净利润为 null。已知成本和毛利可保留。09、10 实时导出与页面同源，详见[跌价公式](calculation-formulas.md#损益的存货跌价准备)。
 
 2026-11-24：该阶段`calculation_policy=order_created_fx_mxn8_income_only_v3`；`fulfillment_order_counts`改按交易类型为“订单”的原始订单号在同店同创建月去重，包含指定赠品/未出库订单。字段类型、权限和三个期间保持，旧固定版本不重算。指定赠品正常扣库并计实际销量，财务免商品成本和销售参考跌价；独立结算按订单创建日优先归月。以上订单/费用规则在当前策略继续沿用，完整规则见[流程](workflow.md)。
 
@@ -75,7 +77,7 @@ StoreProfitLossUpdateRequest：store_id、report_month、manual_values、remarks
 
 remarks在两种scope下均为完整替换，只接受已定义科目、去空白后最多500字符。权限、店铺、月份校验不变；非法update_scope返回422。字段定义见[schemas.py](../../../schemas.py)，保存实现为[update_store_profit_loss](../../../routers/reports.py)。
 
-响应StoreProfitLossResponse含warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。inventory_writeoff自动科目抵减营业成本，inventory_impairment取期间总计提，不用净余额差。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/manual_value/remark。value为最终计算金额；人工行的manual_value只含实际保存的人工覆盖，未保存时为null；自动/公式行为null。两者不能混作保存输入。没有单独的审批/结账状态，公式由后端生成。UI 展示本月与只读本年累计，只有本月人工项目可编辑；API和单店Excel仍提供三个期间。每行追加is_reserved，响应追加exchange_rates（币种/月/请求月末日/实际日期/人民币汇率/来源/状态）与fulfillment_order_counts（各期间去重履约订单数）；新字段可缺省，旧版本仍可读取。
+响应StoreProfitLossResponse含warnings数组，说明受影响期间的历史/归属异常；相关自动金额及衍生利润为null。`inventory_impairment` 取期间总计提，`inventory_writeoff` 在存货跌价净影响中抵减计提。其他响应含店铺、月份、can_edit、updated_at，以及每行 key/label/kind/is_auto/is_formula/source/value/manual_value/remark。value为最终计算金额；人工行的manual_value只含实际保存的人工覆盖，未保存时为null；自动/公式行为null。两者不能混作保存输入。没有单独的审批/结账状态，公式由后端生成。UI 展示本月与只读本年累计，只有本月人工项目可编辑；API和单店Excel仍提供三个期间。每行追加is_reserved，响应追加exchange_rates（币种/月/请求月末日/实际日期/人民币汇率/来源/状态）与fulfillment_order_counts（各期间去重履约订单数）；新字段可缺省，旧版本仍可读取。
 
 ## 导出与副作用
 

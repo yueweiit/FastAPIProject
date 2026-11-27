@@ -111,6 +111,17 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(values["asset_impairment_loss"], dict(zip(PERIODS, map(D, ("90", "-10", "80")))))
         self.assertEqual(values["net_profit"], dict(zip(PERIODS, map(D, ("-90", "10", "-80")))))
 
+    def test_net_profit_respects_unknown_inputs_and_keeps_known_operating_profit(self):
+        auto = example()
+        auto["inventory_writeoff"]["ytd"] = None
+        values = _build_store_profit_loss_values(auto, {
+            "non_operating_income": cells("10"), "non_operating_expense": cells("3"),
+            "income_tax_expense": cells("2"), "_unknown": {"current": ["income_tax_expense"]},
+        })
+        self.assertIsNone(values["income_tax_expense"]["current"])
+        self.assertEqual(values["operating_profit"]["current"], D("-11684.48"))
+        self.assertEqual(values["net_profit"], {"current": None, "previous": D("-11679.48"), "ytd": None})
+
     async def response(self, auto=None):
         with patch("routers.reports._store_profit_loss_auto_values", new=AsyncMock(return_value=auto or example())):
             return await _store_profit_loss_response(None, SimpleNamespace(role="admin"), STORE, MONTH, None)
@@ -206,6 +217,24 @@ class StoreImpairmentPresentationTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(sheet.cell(number, column).value, None if value is None else float(value))
                 self.assertFalse(any(row[0].value == "跌价列报口径" for row in sheet))
                 self.assertEqual(payload, original)
+
+    async def test_v4_frozen_version_preserves_previous_net_profit_and_reserved_amounts(self):
+        response = await self.response()
+        frozen = response.model_dump(mode="json")
+        frozen["calculation_policy"] = "order_created_fx_mxn8_net_impairment_v4"
+        reserved = next(row for row in frozen["rows"] if row["key"] == "non_operating_income")
+        reserved["is_reserved"] = True
+        reserved["manual_value"] = dict.fromkeys(PERIODS, "100")
+        payload = {"inventory": [], "product_lines": [], "warnings": [], "store": vars(STORE),
+                   "report_date": "2026-10-31", "profit_loss": frozen}
+        original = copy.deepcopy(payload)
+        version = SimpleNamespace(payload=payload, report_month=MONTH, version=1, status="confirmed")
+        book = load_workbook(version_workbook(version), data_only=True)
+        sheet = book["09-店铺损益表"]
+        self.assertIsNone(row_by_label(sheet, "加：营业外收入")[1].value)
+        self.assertEqual(row_by_label(sheet, "三、净利润")[1].value, -11684.48)
+        self.assertEqual(payload, original)
+        book.close()
 
     async def test_new_frozen_version_exports_its_saved_net_amount_and_version(self):
         response = await self.response()

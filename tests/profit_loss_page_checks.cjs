@@ -8,8 +8,9 @@ const localizedText = locale.window.PageInteractions.text;
 let checks = 0;
 const equal = (actual, expected) => { assert.equal(actual, expected); checks++; };
 const flush = () => new Promise(resolve => setImmediate(resolve));
+const currentPolicy = 'order_created_fx_mxn8_net_profit_v5';
 const report = (month = '2026-09', store = 7, editable = true) => ({
-    report_month: month, store_id: store, can_edit: editable, calculation_policy: "order_created_fx_mxn8_net_impairment_v4", rows: [], warnings: [],
+    report_month: month, store_id: store, can_edit: editable, calculation_policy: currentPolicy, rows: [], warnings: [],
 });
 
 function setup(file, {admin = false, deferStores = false, manualInput = '123', manualKey = 'salary'} = {}) {
@@ -21,7 +22,7 @@ function setup(file, {admin = false, deferStores = false, manualInput = '123', m
     };
     element('profit-loss-month').value = '2026-09';
     element('profit-loss-store').value = '7';
-    const inputs = [{dataset: {profitKey: manualKey, profitPeriod: 'current'}, value: manualInput}];
+    const inputs = [{dataset: {profitKey: manualKey, profitPeriod: 'current'}, value: manualInput, validity: {badInput: false}}];
     const calls = [], rendered = [], notices = [];
     const context = vm.createContext({URLSearchParams, isAdmin: () => admin,
         document: {getElementById: element, querySelectorAll: selector =>
@@ -64,8 +65,11 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
         window: {PageInteractions: {text: key => {
             const labels={profitLossLedger:'使用明细',profitLossYtdHelp:'各月累计',profitLossReserved:'暂未接入',profitLossPolicy:'新报表口径',profitLossBackendUpdate:'后端待更新',
                 profitLossNetImpairmentPolicy:'内部管理：计提减转销',profitLossLegacyImpairmentPolicy:'旧口径：转销抵成本',
+                profitLossManualNetProfitPolicy:localizedText('profitLossManualNetProfitPolicy'),
+                profitLossLegacyNetProfitPolicy:localizedText('profitLossLegacyNetProfitPolicy'),
                 profitLossPeriodCurrent:'本月',profitLossPeriodPrevious:'上月',profitLossPeriodYtd:'本年累计',profitLossPeriodSeparator:'、',
                 profitLossSalaryHelp:'本月薪资合计覆盖OA',profitLossSharedAdminHelp:'本店本月管理费覆盖OA',
+                profitLossManualHelp:localizedText('profitLossManualHelp'),
                 profitLossOtherDirectCostHelp:localizedText('profitLossOtherDirectCostHelp'),
                 profitLossSalaryBase:'工资',profitLossSalaryTax:'个税',profitLossSalaryFund:'公积金',profitLossSalaryOaTotal:'OA合计',
                 profitLossSalaryYtd:'报表累计',profitLossSalaryManual:'人工覆盖',profitLossSalaryLedger:'费用台账',profitLossSalaryDefault:'OA取值'};
@@ -93,11 +97,13 @@ function renderManualCell(file, manualValue, inputSource = 'manual', key = 'sala
 
 async function verify(file) {
     {
-        for (const policy of ['order_created_fx_mxn8_net_impairment_v4', 'order_created_fx_mxn8_income_only_v3',
+        for (const policy of [currentPolicy, 'order_created_fx_mxn8_net_impairment_v4', 'order_created_fx_mxn8_income_only_v3',
             'month_end_fx_mxn8_compensation_v2', 'month_end_fx_mxn8_v1', 'unrecognized']) {
             const result = renderManualCell(file, null, 'manual', 'salary', 'manual', policy, null, true);
-            equal(result.policy.includes('内部管理：计提减转销'), policy === 'order_created_fx_mxn8_net_impairment_v4');
-            equal(result.policy.includes('旧口径：转销抵成本'), !['order_created_fx_mxn8_net_impairment_v4', 'unrecognized'].includes(policy));
+            const netImpairment = [currentPolicy, 'order_created_fx_mxn8_net_impairment_v4'].includes(policy);
+            equal(result.policy.includes('内部管理：计提减转销'), netImpairment);
+            equal(result.policy.includes('旧口径：转销抵成本'), !netImpairment && policy !== 'unrecognized');
+            equal(result.policy.includes('净利润＝营业利润＋营业外收入－营业外支出－所得税费用'), policy === currentPolicy);
             equal(result.policy.includes('后端待更新'), policy === 'unrecognized');
             equal(result.html.includes('disabled'), policy === 'unrecognized');
         }
@@ -169,6 +175,23 @@ async function verify(file) {
             equal(ui.writes()[0].body.update_scope, 'current');
             ui.writes()[0].resolve(report()); await saving;
         }
+    }
+    {
+        for (const key of ['non_operating_income', 'non_operating_expense', 'income_tax_expense']) {
+            const html = renderManualCell(file, {current: 0}, 'manual', key, 'manual', currentPolicy);
+            equal(html.includes(`data-profit-key="${key}" data-profit-period="current" value="0"`), true);
+            equal(html.includes('data-profit-period="ytd"'), false);
+            const ui = setup(file, {manualKey: key, manualInput: '12.34'});
+            const loading = ui.load(); await flush(); ui.queries()[0].resolve(report()); await loading;
+            const saving = ui.save();
+            equal(ui.writes()[0].body.manual_values[key].current, 12.34);
+            equal(ui.writes()[0].body.update_scope, 'current');
+            ui.writes()[0].resolve(report()); await saving;
+        }
+        const derived = renderManualCell(file, null, 'manual', 'net_profit', 'formula', currentPolicy);
+        equal(derived.includes('data-profit-key="net_profit"'), false);
+        equal(derived.includes('>100</td>'), true);
+        equal(derived.includes('>321</td>'), true);
     }
     {
         const ui = setup(file);

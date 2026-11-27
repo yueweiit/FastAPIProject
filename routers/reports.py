@@ -129,7 +129,7 @@ INVENTORY_IMPAIRMENT_SUMMARY_COLUMNS = (
     ("monthly_transfer_out_amount", "本月准备转出(元)"),
 )
 
-STORE_PROFIT_LOSS_POLICY = "order_created_fx_mxn8_net_impairment_v4"
+STORE_PROFIT_LOSS_POLICY = "order_created_fx_mxn8_net_profit_v5"
 STORE_PROFIT_LOSS_IMPAIRMENT_NOTE = (
     "内部管理口径：存货跌价净影响＝本期计提－本期销售转销；销售转销不再抵减营业成本。"
     "净影响可为负数，不等同期末准备余额；仅调整列报，营业利润不变。"
@@ -175,7 +175,7 @@ STORE_PROFIT_LOSS_ROWS = (
     ("income_tax_expense", "减：所得税费用", "manual", None),
     ("net_profit", "三、净利润", "formula", None),
 )
-STORE_PROFIT_LOSS_RESERVED_KEYS = {"non_operating_income", "non_operating_expense", "income_tax_expense"}
+STORE_PROFIT_LOSS_NET_PROFIT_INPUTS = {"non_operating_income", "non_operating_expense", "income_tax_expense"}
 STORE_PROFIT_LOSS_OA_DEFAULT_KEYS = {"salary", "shared_admin"}
 
 STORE_PROFIT_LOSS_AUTO_KEYS = {
@@ -325,9 +325,6 @@ def _build_store_profit_loss_values(
             - get("asset_impairment_loss")
             - get("credit_impairment_loss")
         )
-        values["net_profit"][period] = values["operating_profit"][period]
-        for key in STORE_PROFIT_LOSS_RESERVED_KEYS:
-            values[key][period] = None
         revenue_keys = ("product_sales_revenue", "shipping_revenue", "compensation_revenue", "other_revenue")
         cost_keys = ("product_purchase_cost", "head_logistics_cost", "inventory_other_cost",
                      "customs_import_tax", "local_logistics_cost", "fulfillment_cost",
@@ -348,14 +345,16 @@ def _build_store_profit_loss_values(
         if any(values[key][period] is None for key in
                ("gross_profit", "admin_expenses", "selling_expenses", "asset_impairment_loss")) or unknown((
                    "tax_surcharge", "research_development", "finance_expenses", "credit_impairment_loss")):
-            values["operating_profit"][period] = values["net_profit"][period] = None
+            values["operating_profit"][period] = None
+        if values["operating_profit"][period] is not None and not unknown(STORE_PROFIT_LOSS_NET_PROFIT_INPUTS):
+            values["net_profit"][period] = (
+                get("operating_profit") + get("non_operating_income")
+                - get("non_operating_expense") - get("income_tax_expense")
+            )
     values["_warnings"] = [*auto_values.get("_warnings", []), *manual_values.get("_warnings", [])]
     values["_exchange_rates"] = auto_values.get("_exchange_rates", [])
     values["_fulfillment_counts"] = auto_values.get("_fulfillment_counts", {})
     values["_calculation_policy"] = STORE_PROFIT_LOSS_POLICY
-    if any(_decimal_or_zero(manual_values.get(key, {}).get(period))
-           for key in STORE_PROFIT_LOSS_RESERVED_KEYS for period in STORE_PROFIT_LOSS_PERIODS):
-        values["_warnings"].append("营业外收支、所得税暂未接入；历史保存金额保留，本轮净利润按营业利润计算。")
     values["_unknown"] = manual_values.get("_unknown", {})
     return values
 
@@ -701,7 +700,6 @@ async def _store_profit_loss_response(
             manual_value=StoreProfitLossCell(**saved_manual_values.get(key, {}))
             if kind == "manual" and isinstance(saved_manual_values.get(key), dict) else None,
             input_source=manual_values.get("_sources", {}).get(key, "manual"),
-            is_reserved=key in STORE_PROFIT_LOSS_RESERVED_KEYS,
             remark=str(remarks.get(key, "")),
         )
         for key, label, kind, source in STORE_PROFIT_LOSS_ROWS
@@ -807,7 +805,7 @@ async def update_store_profit_loss(
     await scoped_store(db, user, store.id, lock=True)
     manual_values = {}
     for key, cell in data.manual_values.items():
-        if key not in STORE_PROFIT_LOSS_MANUAL_KEYS or key in STORE_PROFIT_LOSS_RESERVED_KEYS:
+        if key not in STORE_PROFIT_LOSS_MANUAL_KEYS:
             continue
         manual_values[key] = {
             period: (
@@ -828,9 +826,9 @@ async def update_store_profit_loss(
             StoreProfitLossReport.report_month == data.report_month,
         ).with_for_update().execution_options(populate_existing=True)
     )
+    saved_values = report.manual_values if report else {}
     if data.update_scope == "current":
         # 页面仅编辑本月；不能把未提交的上月/年累计人工值清空或固化OA默认值。
-        saved_values = report.manual_values if report else {}
         keys = (set(saved_values) | set(manual_values)) & STORE_PROFIT_LOSS_MANUAL_KEYS
         manual_values = {
             key: {
@@ -840,9 +838,9 @@ async def update_store_profit_loss(
             }
             for key in keys
         }
-    # 保留历史人工代发及预留项目；新页面只更新本轮接入的人工项目。
-    saved_values = report.manual_values if report else {}
-    for key in STORE_PROFIT_LOSS_RESERVED_KEYS | {"fulfillment_cost"}:
+    # 兼容未提交新科目的旧客户端，显式提交空值仍可清除手填金额。
+    preserved_keys = {"fulfillment_cost"} | (STORE_PROFIT_LOSS_NET_PROFIT_INPUTS - data.manual_values.keys())
+    for key in preserved_keys:
         if key in saved_values:
             manual_values[key] = saved_values[key]
     if financial_controls_enabled():
@@ -851,7 +849,6 @@ async def update_store_profit_loss(
             FinancialExpenseSource.store_id == store.id,
             FinancialExpenseSource.report_month == data.report_month,
             FinancialExpenseSource.mode == "ledger").with_for_update())).scalars().all()
-        saved_values = report.manual_values if report else {}
         for key in ledger_keys:
             if key in saved_values:
                 manual_values[key] = saved_values[key]
@@ -1217,7 +1214,7 @@ def _store_profit_loss_summary_rows(store_reports):
     revenue_total = _sum_known(values["operating_revenue"].get("current") for _store, values in store_reports)
     for key, label, _kind, _source in STORE_PROFIT_LOSS_ROWS:
         store_values = [
-            (values[key].get("current") if key in STORE_PROFIT_LOSS_AUTO_KEYS | STORE_PROFIT_LOSS_FORMULA_KEYS | STORE_PROFIT_LOSS_RESERVED_KEYS
+            (values[key].get("current") if key in STORE_PROFIT_LOSS_AUTO_KEYS | STORE_PROFIT_LOSS_FORMULA_KEYS
              or key in values.get("_unknown", {}).get("current", [])
              else _decimal_or_zero(values[key].get("current"))) for _store, values in store_reports
         ]

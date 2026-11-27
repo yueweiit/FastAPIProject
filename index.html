@@ -3644,7 +3644,8 @@ function profitLossSelectionMatches(report) {
 }
 
 function profitLossPolicyReady(report) {
-    return ['month_end_fx_mxn8_v1', 'month_end_fx_mxn8_compensation_v2', 'order_created_fx_mxn8_income_only_v3', 'order_created_fx_mxn8_net_impairment_v4'].includes(report?.calculation_policy);
+    return ['month_end_fx_mxn8_v1', 'month_end_fx_mxn8_compensation_v2', 'order_created_fx_mxn8_income_only_v3',
+        'order_created_fx_mxn8_net_impairment_v4', 'order_created_fx_mxn8_net_profit_v5'].includes(report?.calculation_policy);
 }
 
 function updateProfitLossSaveState() {
@@ -3751,9 +3752,13 @@ function renderStoreProfitLoss(report) {
         const ready = profitLossPolicyReady(report);
         policy.textContent = window.PageInteractions?.text(ready ? 'profitLossPolicy' : 'profitLossBackendUpdate') || '';
         if (ready) {
-            const impairmentKey = report.calculation_policy === 'order_created_fx_mxn8_net_impairment_v4'
+            const hasNetProfitInputs = report.calculation_policy === 'order_created_fx_mxn8_net_profit_v5';
+            const impairmentKey = hasNetProfitInputs || report.calculation_policy === 'order_created_fx_mxn8_net_impairment_v4'
                 ? 'profitLossNetImpairmentPolicy' : 'profitLossLegacyImpairmentPolicy';
-            policy.textContent += '\n' + (window.PageInteractions?.text(impairmentKey) || '');
+            const netProfitKey = hasNetProfitInputs ? 'profitLossManualNetProfitPolicy' : 'profitLossLegacyNetProfitPolicy';
+            for (const key of [impairmentKey, netProfitKey]) {
+                policy.textContent += '\n' + (window.PageInteractions?.text(key) || '');
+            }
         }
         policy.classList.toggle('msg', !ready);
         policy.classList.toggle('msg-err', !ready);
@@ -3935,12 +3940,19 @@ async function saveStoreProfitLoss() {
     const loadedReport = storeProfitLossReport;
     const requestId = storeProfitLossRequestId;
     const manualValues = {};
-    document.querySelectorAll('#store-profit-loss-tbody .profit-loss-amount').forEach(input => {
+    for (const input of document.querySelectorAll('#store-profit-loss-tbody .profit-loss-amount')) {
+        const amount = input.value.trim() === '' ? null : Number(input.value);
+        if (input.validity.badInput || (amount !== null && !Number.isFinite(amount))) {
+            const message = window.PageInteractions?.text('profitLossInvalidAmount') || input.validationMessage;
+            showMsg(escapeHtml(message), false);
+            input.reportValidity();
+            return;
+        }
         const key = input.dataset.profitKey;
         const period = input.dataset.profitPeriod;
         if (!manualValues[key]) manualValues[key] = {};
-        manualValues[key][period] = input.value.trim() === '' ? null : Number(input.value);
-    });
+        manualValues[key][period] = amount;
+    }
     const remarks = {};
     document.querySelectorAll('#store-profit-loss-tbody [data-profit-remark]').forEach(input => {
         const value = input.value.trim();

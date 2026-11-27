@@ -224,49 +224,123 @@ class MonthlyProfitPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(auto['product_sales_revenue']['current'],D(50))
         self.assertEqual(auto['compensation_revenue']['current'],D(5))
 
-    async def test_true_manual_ytd_samples_reserved_and_legacy_fulfillment(self):
+    async def test_true_manual_ytd_includes_non_operating_items_and_keeps_auto_fulfillment(self):
         august=StoreProfitLossReport(store_id=7,report_month=date(2026,8,1),manual_values={
-            'advertising':{'current':'7'},'sample_expenses':{'current':'3'}},remarks={})
+            'advertising':{'current':'7'},'sample_expenses':{'current':'3'},
+            'non_operating_income':{'current':'40'},'non_operating_expense':{'current':'15'},
+            'income_tax_expense':{'current':'3'}},remarks={})
         september=StoreProfitLossReport(store_id=7,report_month=date(2026,9,1),manual_values={
             'advertising':{'current':'11','ytd':'9999'},'sample_expenses':{'current':'5'},
-            'non_operating_income':{'current':'100'},'income_tax_expense':{'current':'9'},'fulfillment_cost':{'current':'123'}},remarks={})
+            'non_operating_income':{'current':'100','ytd':'9999'},'non_operating_expense':{'current':'20'},
+            'income_tax_expense':{'current':'9'},'fulfillment_cost':{'current':'123'}},remarks={})
         self.session.add_all([august,september]);self.session.commit()
         response=await _store_profit_loss_response(self.db,NS(role='admin'),self.session.get(Store,7),date(2026,9,1),september)
         rows={r.key:r for r in response.rows}
         self.assertEqual(rows['advertising'].value.ytd,D(18))
         self.assertEqual(rows['sample_expenses'].value.ytd,D(8))
         self.assertEqual(rows['selling_expenses'].value.ytd,D(26))
-        self.assertTrue(rows['non_operating_income'].is_reserved)
-        self.assertIsNone(rows['non_operating_income'].value.current)
-        self.assertEqual(rows['net_profit'].value.current,rows['operating_profit'].value.current)
+        for key, amounts in (('non_operating_income', (100, 40, 140)),
+                             ('non_operating_expense', (20, 15, 35)),
+                             ('income_tax_expense', (9, 3, 12))):
+            self.assertEqual(rows[key].kind, 'manual')
+            self.assertFalse(rows[key].is_reserved)
+            self.assertEqual(rows[key].value.model_dump(), dict(zip(('current', 'previous', 'ytd'), map(D, amounts))))
+        self.assertTrue(rows['net_profit'].is_formula)
+        for period, adjustment in (('current', 71), ('previous', 22), ('ytd', 93)):
+            self.assertEqual(getattr(rows['net_profit'].value, period),
+                             getattr(rows['operating_profit'].value, period) + D(adjustment))
         self.assertEqual(rows['fulfillment_cost'].value.current,D('2.4'))
         self.assertEqual(september.manual_values['advertising']['ytd'],'9999')
         self.assertEqual(september.manual_values['fulfillment_cost']['current'],'123')
         self.assertTrue(response.exchange_rates)
 
-    async def test_save_keeps_reserved_and_retired_manual_values(self):
-        row=StoreProfitLossReport(store_id=7,report_month=date(2026,9,1),manual_values={
-            'income_tax_expense':{'current':'9'},'fulfillment_cost':{'current':'123'}},remarks={})
+    async def test_save_accepts_net_profit_inputs_and_keeps_omitted_legacy_values(self):
+        saved = {'income_tax_expense': {'current': '9'}, 'fulfillment_cost': {'current': '123'}}
+        row=StoreProfitLossReport(store_id=7,report_month=date(2026,9,1),manual_values=saved,remarks={})
         self.session.add(row);self.session.commit()
         for scope in ('current','all'):
-            request=StoreProfitLossUpdateRequest(store_id=7,report_month=date(2026,9,1),update_scope=scope,
-                manual_values={'sample_expenses':{'current':'5'},'income_tax_expense':{'current':'0'}})
-            with patch('routers.reports._store_profit_loss_response',new=AsyncMock(return_value='saved')):
-                await update_store_profit_loss(request,Facade(self.session),NS(id=1,role='operator',store_id=7))
-            self.assertEqual(row.manual_values['income_tax_expense'],{'current':'9'})
-            self.assertEqual(row.manual_values['fulfillment_cost'],{'current':'123'})
-            self.assertEqual(row.manual_values['sample_expenses']['current'],'5')
+            with self.subTest(scope=scope):
+                row.manual_values = saved
+                self.session.commit()
+                options = dict(store_id=7, report_month=date(2026, 9, 1), update_scope=scope)
+                db = Facade(self.session)
+                user = NS(id=1, role='operator', store_id=7)
+                original_tax = row.manual_values['income_tax_expense']
+                request = StoreProfitLossUpdateRequest(**options, manual_values={'sample_expenses':{'current':'5'}})
+                await update_store_profit_loss(request, db, user)
+                self.assertEqual(row.manual_values['income_tax_expense'], original_tax)
 
-    async def test_summary_export_keeps_unintegrated_reserved_items_blank(self):
-        from openpyxl import Workbook
-        from routers.reports import _build_store_profit_loss_summary_sheet, STORE_PROFIT_LOSS_ROWS
-        values = _build_store_profit_loss_values(await self.auto(), {})
-        book = Workbook()
-        _build_store_profit_loss_summary_sheet(book, [(self.session.get(Store, 7), values)], date(2026, 9, 1))
-        for index, (key, *_rest) in enumerate(STORE_PROFIT_LOSS_ROWS, start=2):
-            if key in {'non_operating_income', 'non_operating_expense', 'income_tax_expense'}:
-                self.assertEqual([book.worksheets[-1].cell(index, column).value for column in (2, 3, 4)],
-                                 [None, None, None])
+                request = StoreProfitLossUpdateRequest(**options, manual_values={
+                    'non_operating_income':{'current':'100'}, 'non_operating_expense':{'current':'20'},
+                    'income_tax_expense':{'current':'0'}, 'net_profit':{'current':'9999'},
+                })
+                result = await update_store_profit_loss(request, db, user)
+                rows = {item.key: item for item in result.rows}
+                self.assertEqual(rows['income_tax_expense'].manual_value.current, D(0))
+                self.assertEqual(rows['net_profit'].value.current, rows['operating_profit'].value.current + D(80))
+                self.assertNotIn('net_profit', row.manual_values)
+
+                request = StoreProfitLossUpdateRequest(**options, manual_values={'income_tax_expense':{'current':None}})
+                await update_store_profit_loss(request, db, user)
+                self.assertIsNone(row.manual_values['income_tax_expense']['current'])
+                self.assertEqual(row.manual_values['non_operating_income']['current'], '100')
+                self.assertEqual(row.manual_values['non_operating_expense']['current'], '20')
+                self.assertEqual(row.manual_values['fulfillment_cost'], {'current':'123'})
+
+    async def test_detail_and_summary_exports_agree_after_manual_save_clear_and_zero(self):
+        from io import BytesIO
+        from openpyxl import load_workbook
+        from routers.reports import (FINANCIAL_ATTACHMENT_SHEET, STORE_PROFIT_LOSS_SUMMARY_SHEET,
+                                     export_financial_attachments, get_store_profit_loss)
+
+        db = Facade(self.session)
+        user = NS(id=1, role='admin', store_id=None)
+        month = date(2026, 9, 1)
+        periods = ('current', 'previous', 'ytd')
+        manual_keys = ('non_operating_income', 'non_operating_expense', 'income_tax_expense')
+
+        async def save(report_month, current_values):
+            request = StoreProfitLossUpdateRequest(store_id=7, report_month=report_month, update_scope='current',
+                manual_values={key: {'current': value} for key, value in current_values.items()})
+            await update_store_profit_loss(request, db, user)
+
+        await save(date(2026, 8, 1), dict(zip(manual_keys, ('40', '15', '3'))))
+        cases = (
+            (dict(zip(manual_keys, ('100.25', '20.10', '9.05'))), ('71.10', '22', '93.10')),
+            ({'non_operating_income': None}, ('-29.15', '22', '-7.15')),
+            ({'income_tax_expense': '0'}, ('-20.10', '22', '1.90')),
+        )
+        for changes, adjustments in cases:
+            with self.subTest(changes=changes):
+                await save(month, changes)
+                report = await get_store_profit_loss(report_month=month, store_id=7, db=db, user=user)
+                rows = {row.key: row for row in report.rows}
+                for key, amount in changes.items():
+                    self.assertEqual(rows[key].manual_value.current, None if amount is None else D(amount))
+                for period, adjustment in zip(periods, adjustments):
+                    self.assertEqual(getattr(rows['net_profit'].value, period),
+                                     getattr(rows['operating_profit'].value, period) + D(adjustment))
+
+                export = await export_financial_attachments(report_date=date(2026, 9, 30), report_month=month,
+                                                             store_id=7, db=db, user=user)
+                content = b''.join([chunk async for chunk in export.body_iterator])
+                book = load_workbook(BytesIO(content), data_only=True)
+                try:
+                    detail = book[FINANCIAL_ATTACHMENT_SHEET]
+                    summary = book[STORE_PROFIT_LOSS_SUMMARY_SHEET]
+                    store_column = next(cell.column for cell in summary[1] if cell.value == report.store_name)
+                    for number, row in enumerate(report.rows, start=2):
+                        if row.key in (*manual_keys, 'net_profit'):
+                            self.assertEqual(detail.cell(number, 1).value, row.label)
+                            self.assertEqual(summary.cell(number, 1).value, row.label)
+                            for column, period in enumerate(periods, start=2):
+                                amount = getattr(row.value, period)
+                                self.assertAlmostEqual(detail.cell(number, column).value,
+                                                       None if amount is None else float(amount), places=10)
+                            self.assertAlmostEqual(summary.cell(number, store_column).value,
+                                                   float(row.value.current or 0), places=10)
+                finally:
+                    book.close()
 
     async def test_old_ledger_fulfillment_selection_does_not_override_or_break_auto_fee(self):
         self.session.add(FinancialExpenseSource(store_id=7,report_month=date(2026,9,1),

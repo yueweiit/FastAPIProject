@@ -682,7 +682,7 @@ class StoreProfitLossTests(unittest.IsolatedAsyncioTestCase):
             "current": Decimal("0"), "previous": Decimal("5"), "ytd": Decimal("44"),
         })
         self.assertEqual(values["net_profit"], {
-            "current": Decimal("0"), "previous": Decimal("5"), "ytd": Decimal("44"),
+            "current": Decimal("3"), "previous": Decimal("5"), "ytd": Decimal("46"),
         })
 
     def test_saved_salary_overrides_oa_default_and_blank_uses_default(self):
